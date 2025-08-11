@@ -3,12 +3,13 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "homepage": "https://theeveeye.github.io/BackroadsApp",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "build:pages": "tsc -b && vite build && cp docs/index.html docs/404.html && touch docs/.nojekyll",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+  "deploy": "npm run build && cp build/index.html build/404.html && gh-pages -d build"
   },
   "dependencies": {
     "react": "^19.1.1",
@@ -23,6 +24,7 @@
     "eslint": "^9.32.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
+    "gh-pages": "^6.3.0",
     "globals": "^16.3.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
