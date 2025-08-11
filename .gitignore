@@ -1,1 +1,25 @@
-/.DS_Store
+# Node
+node_modules/
+
+# Vite/React build output
+dist/
+docs/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env*
+
+# IDE
+.vscode/
+.idea/
+
+# Misc
+*.local
