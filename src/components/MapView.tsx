@@ -84,6 +84,51 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
     return m;
   }, [projected]);
 
+  // Cohen–Sutherland line clipping test: does segment (x1,y1)-(x2,y2) intersect rect [xMin,xMax]x[yMin,yMax]?
+  function segmentIntersectsRect(x1: number, y1: number, x2: number, y2: number, xMin: number, yMin: number, xMax: number, yMax: number): boolean {
+    const LEFT = 1, RIGHT = 2, BOTTOM = 4, TOP = 8;
+    const code = (x: number, y: number) => ((x < xMin ? LEFT : 0) | (x > xMax ? RIGHT : 0) | (y < yMin ? BOTTOM : 0) | (y > yMax ? TOP : 0));
+    let c1 = code(x1, y1);
+    let c2 = code(x2, y2);
+    while (true) {
+      if ((c1 | c2) === 0) return true; // both inside
+      if ((c1 & c2) !== 0) return false; // trivially outside on same side
+      const co = c1 ? c1 : c2;
+      let x = 0, y = 0;
+      if (co & TOP) { x = x1 + (x2 - x1) * (yMax - y1) / (y2 - y1); y = yMax; }
+      else if (co & BOTTOM) { x = x1 + (x2 - x1) * (yMin - y1) / (y2 - y1); y = yMin; }
+      else if (co & RIGHT) { y = y1 + (y2 - y1) * (xMax - x1) / (x2 - x1); x = xMax; }
+      else { y = y1 + (y2 - y1) * (xMin - x1) / (x2 - x1); x = xMin; }
+      if (co === c1) { x1 = x; y1 = y; c1 = code(x1, y1); } else { x2 = x; y2 = y; c2 = code(x2, y2); }
+    }
+  }
+
+  // Determine which nodes are on-screen to avoid rendering off-screen nodes
+  const visibleIds = useMemo(() => {
+    const ids = new Set<number>();
+    // small margin so dots near edges still render
+    const pad = 8;
+    for (const p of projected) {
+      const X = sx(p.px);
+      const Y = sy(p.py);
+      if (X >= -pad && X <= w + pad && Y >= -pad && Y <= h + pad) ids.add(p.id);
+    }
+    return ids;
+  }, [projected, startProj, scale]);
+
+  const renderedNodes = useMemo(() => projected.filter(p => visibleIds.has(p.id)), [projected, visibleIds]);
+  const renderedEdges = useMemo(() => {
+    return edges.filter(([u, v]) => {
+      if (visibleIds.has(u) || visibleIds.has(v)) return true;
+      const a = idx[String(u)];
+      const b = idx[String(v)];
+      if (!a || !b) return false;
+      const x1 = sx(a.px), y1 = sy(a.py);
+      const x2 = sx(b.px), y2 = sy(b.py);
+      return segmentIntersectsRect(x1, y1, x2, y2, 0, 0, w, h);
+    });
+  }, [edges, visibleIds, idx, scale, startProj]);
+
   const selected = useMemo(() => {
     if (selectedId == null) return null;
     const p = projected.find(n => n.id === selectedId);
@@ -136,9 +181,9 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
           })()}
         </g>
 
-        {/* edges */}
+        {/* edges (render only when at least one endpoint is visible) */}
         <g stroke="#aaa" strokeWidth={1} opacity={0.6}>
-          {edges.map(([u, v], i) => {
+          {renderedEdges.map(([u, v], i) => {
             const a = idx[String(u)];
             const b = idx[String(v)];
             if (!a || !b) return null;
@@ -160,7 +205,7 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
         </g>
         {/* nodes */}
         <g>
-          {projected.map(p => {
+          {renderedNodes.map(p => {
             const r = p.id === startId ? 5 : 3;
             const inLy = Math.hypot(p.x - startPos.x, p.y - startPos.y, p.z - startPos.z) <= lyRadius * LY;
             let fill: string;
