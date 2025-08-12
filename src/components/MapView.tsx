@@ -142,9 +142,14 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
     const sys = graph.systems[String(selectedId)];
     const jumps = p.dist;
     const ly = Math.hypot(p.x - startPos.x, p.y - startPos.y, p.z - startPos.z) / LY;
-    const name = namesById?.[String(selectedId)] ?? String(selectedId);
+  const name = namesById?.[String(selectedId)] ?? String(selectedId);
+  const secColors = ['#833862','#692623','#AC2822','#BD4E26','#CC722C','#F5FD93','#90E56A','#82D8A8','#73CBF3','#5698E5','#4173DB'];
+  const sVal = typeof sys.security === 'number' ? sys.security : 0;
+  const sIdx = sVal <= 0 ? 0 : Math.min(10, Math.ceil(sVal * 10));
+  const secColor = secColors[sIdx] || secColors[0];
+  const secLabel = sVal.toFixed(1);
     const regionName = graph.regionsById?.[String(sys.regionId)] ?? String(sys.regionId);
-    const line = `${name} • ${regionName} • ${jumps}j • ${ly.toFixed(2)}ly`;
+  const line = `${name} ${secLabel} • ${regionName} • ${jumps}j • ${ly.toFixed(2)}ly`;
     // Measure text width precisely to size the popover tightly
     let measured = line.length * 7; // fallback heuristic
     if (typeof document !== 'undefined') {
@@ -159,7 +164,7 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
     // Add padding (px-2 => 8px each side) + borders; clamp to sane bounds
     const approxWidth = Math.max(40, Math.min(800, Math.ceil(measured + 16 + 2)));
     const approxHeight = 32;
-    return { p, sys, jumps, ly, name, regionName, line, approxWidth, approxHeight };
+  return { p, sys, jumps, ly, name, regionName, line, approxWidth, approxHeight, secColor, secLabel };
   }, [selectedId, projected, graph, startPos, namesById]);
 
   // Build a quick lookup for ansiblex directed edges (u->v) to detect segments in the route
@@ -330,11 +335,18 @@ if (p.id === startId) {
                     {label}
                   </text>
                 )}
-                {p.id !== startId && hoveredId === p.id && selectedId !== p.id && (
-                  <text x={sx(p.px)+8} y={sy(p.py)-8} className="text-xs fill-current pointer-events-none">
-                    {label}
-                  </text>
-                )}
+                {p.id !== startId && hoveredId === p.id && selectedId !== p.id && (() => {
+                  const sys = graph.systems[String(p.id)];
+                  const sVal = typeof sys.security === 'number' ? sys.security : 0;
+                  const idx = sVal <= 0 ? 0 : Math.min(10, Math.ceil(sVal * 10));
+                  const colors = ['#833862','#692623','#AC2822','#BD4E26','#CC722C','#F5FD93','#90E56A','#82D8A8','#73CBF3','#5698E5','#4173DB'];
+                  const color = colors[idx] || colors[0];
+                  return (
+                    <text x={sx(p.px)+8} y={sy(p.py)-8} className="text-xs fill-current pointer-events-none">
+                      {label} <tspan style={{ fill: color, fontWeight: 700 }}>{sVal.toFixed(1)}</tspan>
+                    </text>
+                  );
+                })()}
               </g>
             );
           })}
@@ -342,7 +354,11 @@ if (p.id === startId) {
 
         {selected && (
           <foreignObject onClick={(e) => e.stopPropagation()} x={sx(selected.p.px)+10} y={Math.round(sy(selected.p.py) - 12)} width={selected.approxWidth} height={selected.approxHeight}>
-            <div className="rounded-md border border-solid border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1 shadow text-xs whitespace-nowrap" style={{ fontSize: 12, fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif' }}>{selected.line}</div>
+            <div className="rounded-md border border-solid border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1 shadow text-xs whitespace-nowrap" style={{ fontSize: 12, fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif' }}>
+              <span>{selected.name} </span>
+              <span style={{ color: selected.secColor, fontWeight: 700 }}>{selected.secLabel}</span>
+              <span>{` • ${selected.regionName} • ${selected.jumps}j • ${selected.ly.toFixed(2)}ly`}</span>
+            </div>
           </foreignObject>
         )}
 

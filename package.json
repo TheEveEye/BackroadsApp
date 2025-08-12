@@ -9,7 +9,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-  "deploy": "npm run build && cp build/index.html build/404.html && gh-pages -d build"
+    "deploy": "npm run build && cp build/index.html build/404.html && gh-pages -d build"
   },
   "dependencies": {
     "react": "^19.1.1",

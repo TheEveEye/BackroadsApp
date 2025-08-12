@@ -85,13 +85,13 @@ export function SearchForm({
             <input type="checkbox" className="accent-blue-600" checked={!!settings.allowAnsiblex} onChange={(e)=> setSettings({ ...settings, allowAnsiblex: e.target.checked })} />
             <span>Allow Ansiblex jump bridges</span>
           </label>
-          <button type="button" className="px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center gap-1" onClick={() => {
+          <button type="button" className="px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center justify-center gap-1 leading-none" onClick={() => {
             // Placeholder for opening modal; actual modal implemented in App
             const ev = new CustomEvent('open-ansiblex-modal');
             window.dispatchEvent(ev);
           }}>
-            <Icon name="gear" size={14} />
-            Configure…
+            <Icon name="gear" size={16} />
+            <span className="inline-block align-middle">Configure…</span>
           </button>
         </div>
       </fieldset>

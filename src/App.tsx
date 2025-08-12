@@ -206,9 +206,9 @@ function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ from: numb
             </div>
           <div className="flex gap-2 items-center ml-auto flex-shrink-0 flex-wrap mt-2 sm:mt-0">
             <button
-              className={(needsOverride
-                ? 'text-orange-600 border-orange-500 border-2 '
-                : 'border border-gray-300 dark:border-gray-700 ') + 'w-9 h-9 rounded-full inline-flex items-center justify-center hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50'}
+              className={'w-9 h-9 rounded-md inline-flex items-center justify-center leading-none disabled:opacity-50 ' + (needsOverride
+                ? 'bg-orange-600 text-white hover:bg-orange-700'
+                : 'bg-blue-600 text-white hover:bg-blue-700')}
               onClick={add}
               disabled={!(resolvedFromId != null && resolvedToId != null)}
               title={(() => {
@@ -220,23 +220,23 @@ function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ from: numb
                 return msgs.join(' • ') || 'Add bridge';
               })()}
             >
-              <Icon name="plus" size={16} color={needsOverride ? '#ea580c' : undefined} />
+              <Icon name="plus" size={36} />
             </button>
             <button
-              className="w-9 h-9 rounded-full inline-flex items-center justify-center border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
+              className="w-9 h-9 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
               onClick={exportToClipboard}
               title="Export bridges to clipboard"
               aria-label="Export bridges to clipboard"
             >
-              <Icon name="export" size={16} />
+              <Icon name="export" size={36} />
             </button>
             <button
-              className="w-9 h-9 rounded-full inline-flex items-center justify-center border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
+              className="w-9 h-9 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
               onClick={importFromClipboard}
               title="Import bridges from clipboard"
               aria-label="Import bridges from clipboard"
             >
-              <Icon name="import" size={16} />
+              <Icon name="import" size={36} />
             </button>
           </div>
         </div>

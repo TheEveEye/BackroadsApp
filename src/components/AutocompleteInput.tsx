@@ -22,6 +22,19 @@ export function AutocompleteInput({
 
   const normalize = (s: string) => s.toLowerCase().replace(/[-\s]/g, '');
 
+  // Security color map: 0.0 or less to 1.0
+  const SEC_COLORS = ['#833862','#692623','#AC2822','#BD4E26','#CC722C','#F5FD93','#90E56A','#82D8A8','#73CBF3','#5698E5','#4173DB'];
+  const secColorLabel = (id: number) => {
+    try {
+      const systems: any = (graph as any)?.systems || {};
+      const sVal = typeof systems[String(id)]?.security === 'number' ? systems[String(id)].security : 0;
+      const idx = sVal <= 0 ? 0 : Math.min(10, Math.ceil(sVal * 10));
+      return { color: SEC_COLORS[idx] || SEC_COLORS[0], label: sVal.toFixed(1) };
+    } catch {
+      return { color: SEC_COLORS[0], label: '0.0' };
+    }
+  };
+
   const candidates = useMemo(() => {
     if (!graph?.namesById) return [] as Array<{ id: number; name: string; nameNorm: string; regionName: string }>;
     const systems: any = (graph as any).systems || {};
@@ -78,7 +91,12 @@ export function AutocompleteInput({
               onMouseEnter={() => setHighlight(idx)}
               onMouseDown={(e) => { e.preventDefault(); onChange(s.name); setOpen(false); }}
             >
-              <span>{s.name}</span>
+              {(() => { const { color, label } = secColorLabel(s.id); return (
+                <span className="flex items-center gap-1">
+                  <span>{s.name}</span>
+                  <span style={{ color, fontWeight: 700 }}>{label}</span>
+                </span>
+              ); })()}
               <span className="text-gray-500 dark:text-gray-400 ml-3">{s.regionName}</span>
             </li>
           ))}

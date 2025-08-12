@@ -16,6 +16,8 @@ export function Icon({
   className,
   ariaLabel,
   title,
+  // optional vertical nudge in pixels for optical centering
+  offsetY,
 }: {
   name?: keyof typeof NAME_TO_STEM | string;
   src?: string;
@@ -24,10 +26,11 @@ export function Icon({
   className?: string;
   ariaLabel?: string;
   title?: string;
+  offsetY?: number;
 }) {
   const base = (import.meta as any).env?.BASE_URL || '/';
   const [selectedUrl, setSelectedUrl] = useState('');
-  const [ratio, setRatio] = useState<number | null>(null);
+  // Keep icons square for reliable centering in flex containers
 
   // Resolve URL: prefer provided src; otherwise try SVG then PNG for known name
   useEffect(() => {
@@ -43,32 +46,31 @@ export function Icon({
     probe.src = trySvg;
   }, [src, name, base]);
 
-  // Measure to preserve aspect ratio
-  useEffect(() => {
-    if (!selectedUrl) return;
-    const img = new Image();
-    img.onload = () => {
-      if (img.naturalWidth && img.naturalHeight) {
-        setRatio(img.naturalWidth / img.naturalHeight);
-      }
-    };
-    img.src = selectedUrl;
-  }, [selectedUrl]);
+  // No aspect-ratio adjustments: use a square box so it's centered next to text
+
+  // optical adjustments for some glyphs
+  const OFFSET_BY_NAME: Record<string, number> = {
+    export: 0.5,
+    import: 0.5,
+  };
+  const yNudge = typeof offsetY === 'number' ? offsetY : (name ? OFFSET_BY_NAME[String(name)] ?? 0 : 0);
 
   const style: CSSProperties = {
     display: 'inline-block',
     width: size,
-    height: ratio ? Math.round(size / ratio) : size,
+    height: size,
     backgroundColor: color,
-  WebkitMaskImage: `url(${selectedUrl})`,
+    WebkitMaskImage: `url(${selectedUrl})`,
     WebkitMaskRepeat: 'no-repeat',
     WebkitMaskPosition: 'center',
-    WebkitMaskSize: 'contain',
-  maskImage: `url(${selectedUrl})`,
+  WebkitMaskSize: '100% 100%',
+    maskImage: `url(${selectedUrl})`,
     maskRepeat: 'no-repeat',
     maskPosition: 'center',
-    maskSize: 'contain',
+  maskSize: '100% 100%',
     verticalAlign: 'middle',
+    flexShrink: 0,
+    transform: yNudge ? `translateY(${yNudge}px)` : undefined,
   } as CSSProperties;
 
   const ariaProps = ariaLabel ? { role: 'img', 'aria-label': ariaLabel } : { 'aria-hidden': true } as any;
