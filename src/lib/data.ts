@@ -30,10 +30,27 @@ export async function loadData(): Promise<GraphData> {
     if (namesResp.ok) {
       const names = (await namesResp.json()) as {
         byId: Record<string, string>;
-        byName: Record<string, number>;
+        byName?: Record<string, number>;
       };
       namesById = names.byId;
-      idsByName = names.byName;
+      // Build a normalized idsByName map once: uppercase and strip spaces/dashes
+      const norm = (s: string) => s.toUpperCase().replace(/[-\s]/g, '');
+      const map: Record<string, number> = {};
+      for (const [idStr, name] of Object.entries(names.byId || {})) {
+        const id = Number(idStr);
+        if (!Number.isFinite(id)) continue;
+        const key = norm(String(name || ''));
+        if (key) map[key] = id;
+      }
+      // If a byName map exists, fold it in (normalize keys), but prefer byId-derived entries
+      if (names.byName) {
+        for (const [k, v] of Object.entries(names.byName)) {
+          const key = norm(k);
+          const id = Number(v);
+          if (key && Number.isFinite(id) && map[key] == null) map[key] = id;
+        }
+      }
+      idsByName = map;
     }
   } catch (_) {
     // optional

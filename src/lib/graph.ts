@@ -1,4 +1,5 @@
 import type { GraphData } from './data';
+import { LRUCache, fnv1aHex } from './lru';
 
 export type ObservatoryHit = {
   systemId: number;
@@ -16,6 +17,47 @@ export type FinderSettings = {
 };
 
 const LY = 9.4607e15; // meters per lightyear
+
+// ---- Caching helpers ----
+const observatoriesCache = new LRUCache<ObservatoryHit[]>(100);
+const pathCache = new LRUCache<{ path: number[] | null; usedTitan: boolean }>(100);
+
+function bridgesVersion(ansiblexes?: AnsiblexBridge[]): string {
+  if (!ansiblexes || ansiblexes.length === 0) return '0';
+  // Build normalized pair list (unordered pairs, enabled only)
+  const pairs: string[] = [];
+  for (const b of ansiblexes) {
+    if (!b || b.enabled === false) continue;
+    const a = Number(b.from);
+    const c = Number(b.to);
+    if (!Number.isFinite(a) || !Number.isFinite(c)) continue;
+    const lo = Math.min(a, c);
+    const hi = Math.max(a, c);
+    pairs.push(`${lo}-${hi}`);
+  }
+  pairs.sort();
+  return fnv1aHex(pairs.join('|'));
+}
+
+function buildObsKey(startId: number, maxJumps: number, lyRadius: number, settings?: FinderSettings): string {
+  const z = settings?.excludeZarzakh ? 1 : 0;
+  const r = settings?.sameRegionOnly ? 1 : 0;
+  const t = settings?.titanBridgeFirstJump ? 1 : 0;
+  const a = settings?.allowAnsiblex ? 1 : 0;
+  const ly = Math.round((lyRadius || 0) * 1000); // 3 decimal precision
+  const bv = a ? bridgesVersion(settings?.ansiblexes) : '0';
+  return `OBS|${startId}|${maxJumps}|${ly}|${z}${r}${t}${a}|${bv}`;
+}
+
+function buildPathKey(startId: number, targetId: number, maxJumps: number, lyRadius: number, settings?: FinderSettings): string {
+  const z = settings?.excludeZarzakh ? 1 : 0;
+  const r = settings?.sameRegionOnly ? 1 : 0;
+  const t = settings?.titanBridgeFirstJump ? 1 : 0;
+  const a = settings?.allowAnsiblex ? 1 : 0;
+  const ly = Math.round((lyRadius || 0) * 1000);
+  const bv = a ? bridgesVersion(settings?.ansiblexes) : '0';
+  return `PATH|${startId}->${targetId}|${maxJumps}|${ly}|${z}${r}${t}${a}|${bv}`;
+}
 
 function computeBridgeTargets({ graph, startId, lyRadius, sameRegionOnly, excludeIds }: { graph: GraphData; startId: number; lyRadius: number; sameRegionOnly: boolean; excludeIds: Set<number> }) {
   const systems = graph.systems;
@@ -36,6 +78,10 @@ function computeBridgeTargets({ graph, startId, lyRadius, sameRegionOnly, exclud
 }
 
 export function bfsObservatories({ startId, maxJumps, graph, settings, lyRadius }: { startId: number; maxJumps: number; graph: GraphData; settings?: FinderSettings; lyRadius: number }): ObservatoryHit[] {
+  // Cache check
+  const cacheKey = buildObsKey(startId, maxJumps, lyRadius, settings);
+  const cached = observatoriesCache.get(cacheKey);
+  if (cached) return cached;
   const systems = graph.systems;
   const start = systems[String(startId)];
   if (!start) return [];
@@ -123,16 +169,18 @@ export function bfsObservatories({ startId, maxJumps, graph, settings, lyRadius 
     }
   }
 
-  return Array.from(hits.values()).sort((a, b) => a.distance - b.distance || a.systemId - b.systemId);
+  const result = Array.from(hits.values()).sort((a, b) => a.distance - b.distance || a.systemId - b.systemId);
+  observatoriesCache.set(cacheKey, result);
+  return result;
 }
 
 export function resolveQueryToId(query: string, graph: GraphData): number | null {
   const trimmed = query.trim();
   if (!trimmed) return null;
-  // name lookup
   const byName = graph.idsByName;
   if (byName) {
-    const id = byName[trimmed.toLowerCase()];
+    const key = trimmed.toUpperCase().replace(/[-\s]/g, '');
+    const id = byName[key];
     if (typeof id === 'number') return id;
   }
   return null;
@@ -240,6 +288,10 @@ export function exploreFrontier({ startId, maxJumps, graph, settings, lyRadius }
 
 // Find shortest path to a specific target with the same exploration rules, including optional titan bridge as first jump.
 export function findPathTo({ startId, targetId, maxJumps, graph, settings, lyRadius }: { startId: number; targetId: number; maxJumps: number; graph: GraphData; settings?: FinderSettings; lyRadius: number }): { path: number[] | null; usedTitan: boolean } {
+  // Cache check
+  const cacheKey = buildPathKey(startId, targetId, maxJumps, lyRadius, settings);
+  const cached = pathCache.get(cacheKey);
+  if (cached) return cached;
   const systems = graph.systems;
   const start = systems[String(startId)];
   const target = systems[String(targetId)];
@@ -322,5 +374,7 @@ export function findPathTo({ startId, targetId, maxJumps, graph, settings, lyRad
     }
   }
 
-  return { path: null, usedTitan: false };
+  const miss = { path: null, usedTitan: false };
+  pathCache.set(cacheKey, miss);
+  return miss;
 }
