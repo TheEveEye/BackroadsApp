@@ -58,16 +58,22 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
   // Scale so the farthest node fits within the radius (minus padding)
   const baseScale = useMemo(() => {
     if (projected.length === 0) return 1;
-    let maxD = 0;
+    // Farthest node distance from start in world units (projected XZ plane)
+    let maxDNodes = 0;
     for (const p of projected) {
       const dx = p.px - startProj.px;
       const dy = p.py - startProj.py;
       const d = Math.hypot(dx, dy);
-      if (d > maxD) maxD = d;
+      if (d > maxDNodes) maxDNodes = d;
     }
-    const radius = Math.max(1, Math.min(w, h) / 2 - pad);
-    return maxD > 0 ? radius / maxD : 1;
-  }, [projected, startProj]);
+    // Target radius in screen pixels
+    const radiusPx = Math.max(1, Math.min(w, h) / 2 - pad);
+    // When maxJumps is 0 the frontier contains only the start node, so maxDNodes≈0.
+    // In that case, also consider the LY radius circle so we don't render an enormous SVG circle.
+    const lyWorld = lyRadius * LY;
+    const maxWorld = maxJumps === 0 ? Math.max(maxDNodes, lyWorld) : maxDNodes;
+    return maxWorld > 0 ? radiusPx / maxWorld : 1;
+  }, [projected, startProj, maxJumps, lyRadius]);
 
   const [zoom, setZoom] = useState(1);
   const [selectedId, setSelectedId] = useState<number | null>(null);
