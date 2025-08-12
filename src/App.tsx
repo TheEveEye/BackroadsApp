@@ -15,7 +15,7 @@ function App() {
   const [maxJumps, setMaxJumps] = useState(5);
   const [lyRadius, setLyRadius] = useState(6);
   const [startId, setStartId] = useState<number | null>(null);
-  const [settings, setSettings] = useState<{ excludeZarzakh: boolean }>({ excludeZarzakh: false });
+  const [settings, setSettings] = useState<{ excludeZarzakh: boolean; sameRegionOnly: boolean }>({ excludeZarzakh: false, sameRegionOnly: false });
 
   const results = useMemo<ObservatoryHit[]>(() => {
     if (!graph || startId == null) return [];

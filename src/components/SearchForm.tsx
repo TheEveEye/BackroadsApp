@@ -22,8 +22,8 @@ export function SearchForm({
   setLyRadius: (v: number) => void;
   graph: GraphData | null;
   onStartId: (id: number | null) => void;
-  settings: { excludeZarzakh: boolean };
-  setSettings: (s: { excludeZarzakh: boolean }) => void;
+  settings: { excludeZarzakh: boolean; sameRegionOnly: boolean };
+  setSettings: (s: { excludeZarzakh: boolean; sameRegionOnly: boolean }) => void;
 }) {
   // Autocomplete state
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -118,8 +118,13 @@ export function SearchForm({
       <fieldset className="md:col-span-2 border border-gray-200 dark:border-gray-700 rounded-md p-3">
         <legend className="px-1 text-sm text-gray-700 dark:text-gray-300">Settings</legend>
         <label className="inline-flex items-center gap-2 mr-4">
-          <input type="checkbox" className="accent-blue-600" checked={settings.excludeZarzakh} onChange={(e)=> setSettings({ excludeZarzakh: e.target.checked })} />
+          <input type="checkbox" className="accent-blue-600" checked={settings.excludeZarzakh} onChange={(e)=> setSettings({ ...settings, excludeZarzakh: e.target.checked })} />
           <span>Exclude Zarzakh</span>
+        </label>
+      
+        <label className="inline-flex items-center gap-2">
+          <input type="checkbox" className="accent-blue-600" checked={settings.sameRegionOnly} onChange={(e)=> setSettings({ ...settings, sameRegionOnly: e.target.checked })} />
+          <span>Only show systems in same region</span>
         </label>
       </fieldset>
 

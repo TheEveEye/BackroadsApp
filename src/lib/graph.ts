@@ -6,13 +6,18 @@ export type ObservatoryHit = {
   path: number[];
 };
 
-export function bfsObservatories({ startId, maxJumps, graph, settings }: { startId: number; maxJumps: number; graph: GraphData; settings?: { excludeZarzakh?: boolean } }): ObservatoryHit[] {
+export type FinderSettings = { excludeZarzakh?: boolean; sameRegionOnly?: boolean };
+
+export function bfsObservatories({ startId, maxJumps, graph, settings }: { startId: number; maxJumps: number; graph: GraphData; settings?: FinderSettings }): ObservatoryHit[] {
   const systems = graph.systems;
   const start = systems[String(startId)];
   if (!start) return [];
 
   const exclude = new Set<number>();
   if (settings?.excludeZarzakh) exclude.add(30100000);
+  const sameRegionOnly = !!settings?.sameRegionOnly;
+  const startRegion = start.regionId;
+
   const queue: { id: number; dist: number; path: number[] }[] = [{ id: startId, dist: 0, path: [startId] }];
   const visited = new Set<number>([startId]);
   const hits: Map<number, ObservatoryHit> = new Map();
@@ -22,6 +27,7 @@ export function bfsObservatories({ startId, maxJumps, graph, settings }: { start
     const node = systems[String(id)];
     if (!node) continue;
     if (exclude.has(id)) continue;
+    if (sameRegionOnly && node.regionId !== startRegion) continue;
 
     if (node.hasObservatory) {
       const existing = hits.get(id);
@@ -34,6 +40,9 @@ export function bfsObservatories({ startId, maxJumps, graph, settings }: { start
 
     for (const next of node.adjacentSystems) {
       if (exclude.has(next)) continue;
+      const nextNode = systems[String(next)];
+      if (!nextNode) continue;
+      if (sameRegionOnly && nextNode.regionId !== startRegion) continue;
       if (visited.has(next)) continue;
       visited.add(next);
       queue.push({ id: next, dist: dist + 1, path: [...path, next] });
@@ -64,13 +73,16 @@ export type ExploreResult = {
 };
 
 // Explore graph up to maxJumps (BFS) returning frontier nodes and connecting edges.
-export function exploreFrontier({ startId, maxJumps, graph, settings }: { startId: number; maxJumps: number; graph: GraphData; settings?: { excludeZarzakh?: boolean } }): ExploreResult {
+export function exploreFrontier({ startId, maxJumps, graph, settings }: { startId: number; maxJumps: number; graph: GraphData; settings?: FinderSettings }): ExploreResult {
   const systems = graph.systems;
   const start = systems[String(startId)];
   if (!start) return { nodes: [], edges: [], maxDist: 0 };
 
   const exclude = new Set<number>();
   if (settings?.excludeZarzakh) exclude.add(30100000);
+  const sameRegionOnly = !!settings?.sameRegionOnly;
+  const startRegion = start.regionId;
+
   const queue: { id: number; dist: number }[] = [{ id: startId, dist: 0 }];
   const visited = new Set<number>([startId]);
   const nodes: FrontierNode[] = [];
@@ -79,13 +91,20 @@ export function exploreFrontier({ startId, maxJumps, graph, settings }: { startI
 
   while (queue.length) {
     const { id, dist } = queue.shift()!;
+    const cur = systems[String(id)];
+    if (!cur) continue;
+    if (exclude.has(id)) continue;
+    if (sameRegionOnly && cur.regionId !== startRegion) continue;
+
     nodes.push({ id, dist });
     maxDist = Math.max(maxDist, dist);
     if (dist >= maxJumps) continue;
-    const node = systems[String(id)];
-    if (!node) continue;
-    for (const next of node.adjacentSystems) {
+
+    for (const next of cur.adjacentSystems) {
       if (exclude.has(next)) continue;
+      const nextNode = systems[String(next)];
+      if (!nextNode) continue;
+      if (sameRegionOnly && nextNode.regionId !== startRegion) continue;
       edges.push([id, next]);
       if (!visited.has(next)) {
         visited.add(next);

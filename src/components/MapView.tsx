@@ -15,7 +15,7 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
   graph: any;
   namesById?: Record<string, string>;
   lyRadius: number;
-  settings: { excludeZarzakh?: boolean };
+  settings: { excludeZarzakh?: boolean; sameRegionOnly?: boolean };
 }) {
   const startSystem = graph.systems[String(startId)];
   if (!startSystem) {
@@ -71,6 +71,7 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
 
   const [zoom, setZoom] = useState(1);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [hoveredId, setHoveredId] = useState<number | null>(null);
   const scale = baseScale * zoom;
 
   const sx = (x: number) => cx + (x - startProj.px) * scale;
@@ -141,7 +142,20 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
             const a = idx[String(u)];
             const b = idx[String(v)];
             if (!a || !b) return null;
-            return <line key={i} x1={sx(a.px)} y1={sy(a.py)} x2={sx(b.px)} y2={sy(b.py)} />;
+            // Use long dashes for inter-region connections
+            const ur = graph.systems[String(u)]?.regionId;
+            const vr = graph.systems[String(v)]?.regionId;
+            const interRegion = ur != null && vr != null && ur !== vr;
+            return (
+              <line
+                key={i}
+                x1={sx(a.px)}
+                y1={sy(a.py)}
+                x2={sx(b.px)}
+                y2={sy(b.py)}
+                strokeDasharray={interRegion ? '12 8' : undefined}
+              />
+            );
           })}
         </g>
         {/* nodes */}
@@ -160,10 +174,21 @@ if (p.id === startId) {
             const opacity = inLy || p.id === startId ? 1 : 0.6;
             const label = namesById?.[String(p.id)] ?? String(p.id);
             return (
-              <g key={p.id} onClick={(e) => { e.stopPropagation(); setSelectedId(prev => (prev === p.id ? null : p.id)); }} style={{cursor: "pointer"}}>
+              <g
+                key={p.id}
+                onClick={(e) => { e.stopPropagation(); setSelectedId(prev => (prev === p.id ? null : p.id)); }}
+                onMouseEnter={() => setHoveredId(p.id)}
+                onMouseLeave={() => setHoveredId(h => (h === p.id ? null : h))}
+                style={{cursor: "pointer"}}
+              >
                 <circle cx={sx(p.px)} cy={sy(p.py)} r={r} fill={fill} opacity={opacity} className="transition-transform duration-150 ease-out origin-center transform-gpu hover:scale-150" style={{ transformBox: "fill-box", transformOrigin: "center" }} />
                 {p.id === startId && (
                   <text x={sx(p.px)+8} y={sy(p.py)-8} className="text-xs fill-current">
+                    {label}
+                  </text>
+                )}
+                {p.id !== startId && hoveredId === p.id && selectedId !== p.id && (
+                  <text x={sx(p.px)+8} y={sy(p.py)-8} className="text-xs fill-current pointer-events-none">
                     {label}
                   </text>
                 )}
@@ -183,6 +208,7 @@ if (p.id === startId) {
         <span className="inline-flex items-center mr-4"><span className="w-2 h-2 rounded-full inline-block mr-1" style={{background:'#2563eb'}}></span>Start</span>
         <span className="inline-flex items-center mr-4"><span className="w-2 h-2 rounded-full inline-block mr-1" style={{background:'#16a34a'}}></span>Observatory</span>
         <span className="inline-flex items-center"><span className="w-2 h-2 rounded-full inline-block mr-1" style={{background:'#64748b'}}></span>System</span>
+        <span className="inline-flex items-center ml-4"><span className="inline-block border-t border-gray-500" style={{ width: 16, borderTopStyle: 'dashed' }}></span><span className="ml-1">Inter-region edge</span></span>
       </div>
       <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">Distances are computed in 3D; the circle is a 2D projection guide.</div>
     </section>
