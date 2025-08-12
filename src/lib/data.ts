@@ -3,6 +3,7 @@ export type SystemNode = {
   constellationId: number;
   regionId: number;
   position: { x: number; y: number; z: number };
+  security?: number;
   adjacentSystems: number[];
   hasObservatory: boolean;
   isRegional: boolean;

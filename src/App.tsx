@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
 import { loadData, type GraphData } from './lib/data';
 import { bfsObservatories, type ObservatoryHit } from './lib/graph';
@@ -21,6 +21,17 @@ function App() {
   const [settings, setSettings] = useState<{ excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; bidirectional?: boolean; enabled?: boolean }> }>({ excludeZarzakh: true, sameRegionOnly: false, titanBridgeFirstJump: false, allowAnsiblex: false, ansiblexes: [] });
   const [showAnsiblexModal, setShowAnsiblexModal] = useState(false);
 
+  // Toasts (top-rightish)
+  const toastSeq = useRef(1);
+  const [toasts, setToasts] = useState<Array<{ id: number; msg: string; type: 'warn' | 'info' | 'success'; visible: boolean }>>([]);
+  const pushToast = (msg: string, type: 'warn' | 'info' | 'success' = 'info') => {
+    const id = toastSeq.current++;
+    setToasts((ts) => [...ts, { id, msg, type, visible: false }]);
+    requestAnimationFrame(() => setToasts((ts) => ts.map(t => t.id === id ? { ...t, visible: true } : t)));
+    setTimeout(() => setToasts((ts) => ts.map(t => t.id === id ? { ...t, visible: false } : t)), 3500);
+    setTimeout(() => setToasts((ts) => ts.filter(t => t.id !== id)), 4000);
+  };
+
   // Open modal when SearchForm dispatches event
   useEffect(() => {
     const onOpen = () => setShowAnsiblexModal(true);
@@ -32,6 +43,22 @@ function App() {
     if (!graph || startId == null) return [];
     return bfsObservatories({ startId, maxJumps, graph, settings, lyRadius });
   }, [graph, startId, maxJumps, settings, lyRadius]);
+
+  // Wrap settings setter to show a warning when enabling titan bridge from high-sec
+  const setSettingsWithGuard = (next: { excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; bidirectional?: boolean; enabled?: boolean }> }) => {
+    try {
+      if (!settings.titanBridgeFirstJump && next.titanBridgeFirstJump) {
+        if (startId != null && graph) {
+          const s = graph.systems[String(startId)];
+          const sec = typeof s?.security === 'number' ? s.security : 0;
+          if (sec >= 0.5) {
+            pushToast('Titan bridges cannot be used to or from high-sec systems.', 'warn');
+          }
+        }
+      }
+    } catch {}
+    setSettings(next);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -61,6 +88,20 @@ function App() {
         <h1 className="text-3xl font-semibold">Jove Observatory Finder</h1>
       </header>
       <main className="grid gap-6 md:grid-cols-2">
+        {/* Toast container */}
+        <div className="fixed top-3 left-0 right-0 z-50 pointer-events-none">
+          <div className="mx-auto w-full max-w-md px-3 flex flex-col items-center">
+            {toasts.map(t => (
+              <div
+                key={t.id}
+                className={`pointer-events-auto mb-2 px-3 py-2 rounded-md border shadow flex items-center gap-2 transition-all duration-300 transform ${t.visible ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2'} ${t.type === 'warn' ? 'bg-amber-100 border-amber-300 text-amber-900' : t.type === 'success' ? 'bg-green-100 border-green-300 text-green-900' : 'bg-blue-100 border-blue-300 text-blue-900'}`}
+              >
+                <Icon name={t.type === 'warn' ? 'warn' : 'export'} size={16} color={t.type === 'warn' ? '#b45309' : t.type === 'success' ? '#166534' : '#1d4ed8'} />
+                <span className="text-sm">{t.msg}</span>
+              </div>
+            ))}
+          </div>
+        </div>
         <section className="grid gap-6">
           <SearchForm
             query={query}
@@ -73,7 +114,7 @@ function App() {
             onStartId={(id) => setStartId(id)}
           
             settings={settings}
-            setSettings={setSettings}
+            setSettings={setSettingsWithGuard}
           
             />
           {loading && <p>Loading data…</p>}
@@ -149,6 +190,8 @@ function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ from: numb
   let hasExistingFrom = false;
   let hasExistingTo = false;
   let sameEndpoints = false;
+  let notNullFrom = false;
+  let notNullTo = false;
   if (resolvedFromId != null && resolvedToId != null && graphForNames) {
     const a = graphForNames.systems[String(resolvedFromId)]?.position;
     const b = graphForNames.systems[String(resolvedToId)]?.position;
@@ -160,8 +203,17 @@ function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ from: numb
     hasExistingFrom = list.some(b => b.from === resolvedFromId || b.to === resolvedFromId);
     hasExistingTo = list.some(b => b.from === resolvedToId || b.to === resolvedToId);
     sameEndpoints = resolvedFromId === resolvedToId;
+    // Nullsec check: EVE considers nullsec as security <= 0.0; low/high sec are > 0.0
+    try {
+      const sFrom = graphForNames.systems[String(resolvedFromId)]?.security;
+      const sTo = graphForNames.systems[String(resolvedToId)]?.security;
+      const secFrom = typeof sFrom === 'number' ? sFrom : 0;
+      const secTo = typeof sTo === 'number' ? sTo : 0;
+      notNullFrom = secFrom > 0.0;
+      notNullTo = secTo > 0.0;
+    } catch {}
   }
-  const needsOverride = tooLong || hasExistingFrom || hasExistingTo || sameEndpoints;
+  const needsOverride = tooLong || hasExistingFrom || hasExistingTo || sameEndpoints || notNullFrom || notNullTo;
 
   const exportToClipboard = async () => {
     const payload = JSON.stringify(list, null, 2);
@@ -206,7 +258,7 @@ function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ from: numb
             </div>
           <div className="flex gap-2 items-center ml-auto flex-shrink-0 flex-wrap mt-2 sm:mt-0">
             <button
-              className={'w-9 h-9 rounded-md inline-flex items-center justify-center leading-none disabled:opacity-50 ' + (needsOverride
+              className={'w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none disabled:opacity-50 ' + (needsOverride
                 ? 'bg-orange-600 text-white hover:bg-orange-700'
                 : 'bg-blue-600 text-white hover:bg-blue-700')}
               onClick={add}
@@ -217,26 +269,28 @@ function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ from: numb
                 if (sameEndpoints && resolvedFromId != null) msgs.push('From and To are the same system');
                 if (hasExistingFrom && resolvedFromId != null) msgs.push(`System ${getName(resolvedFromId)} already has an Ansiblex`);
                 if (hasExistingTo && resolvedToId != null && resolvedToId !== resolvedFromId) msgs.push(`System ${getName(resolvedToId)} already has an Ansiblex`);
+                if (notNullFrom && resolvedFromId != null) msgs.push(`${getName(resolvedFromId)} is not nullsec (Ansiblex anchoring is nullsec-only)`);
+                if (notNullTo && resolvedToId != null) msgs.push(`${getName(resolvedToId)} is not nullsec (Ansiblex anchoring is nullsec-only)`);
                 return msgs.join(' • ') || 'Add bridge';
               })()}
             >
-              <Icon name="plus" size={36} />
+              <Icon name="plus" size={24} />
             </button>
             <button
-              className="w-9 h-9 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
+              className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
               onClick={exportToClipboard}
               title="Export bridges to clipboard"
               aria-label="Export bridges to clipboard"
             >
-              <Icon name="export" size={36} />
+              <Icon name="export" size={24} />
             </button>
             <button
-              className="w-9 h-9 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
+              className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
               onClick={importFromClipboard}
               title="Import bridges from clipboard"
               aria-label="Import bridges from clipboard"
             >
-              <Icon name="import" size={36} />
+              <Icon name="import" size={24} />
             </button>
           </div>
         </div>
@@ -251,6 +305,12 @@ function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ from: numb
         )}
         {hasExistingTo && resolvedToId != null && resolvedToId !== resolvedFromId && (
           <div className="mt-1 mb-2 text-sm text-orange-600 inline-flex items-center gap-2"><Icon name="warn" size={16} color="#ea580c" /> Warning: {getName(resolvedToId)} already has an Ansiblex in this list.</div>
+        )}
+        {notNullFrom && resolvedFromId != null && (
+          <div className="mt-1 mb-1 text-sm text-orange-600 inline-flex items-center gap-2"><Icon name="warn" size={16} color="#ea580c" /> Warning: {getName(resolvedFromId)} is not in nullsec. Ansiblex can only be anchored in nullsec.</div>
+        )}
+        {notNullTo && resolvedToId != null && (
+          <div className="mt-1 mb-2 text-sm text-orange-600 inline-flex items-center gap-2"><Icon name="warn" size={16} color="#ea580c" /> Warning: {getName(resolvedToId)} is not in nullsec. Ansiblex can only be anchored in nullsec.</div>
         )}
         <ul className="flex-1 overflow-auto divide-y divide-gray-200 dark:divide-gray-800">
           {list.map((b, idx) => (
