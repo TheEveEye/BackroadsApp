@@ -10,6 +10,7 @@ import { Icon } from './components/Icon';
 import { resolveQueryToId } from './lib/graph';
 
 function App() {
+  const SETTINGS_STORAGE_KEY = 'br.settings.v1';
   const [graph, setGraph] = useState<GraphData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -18,7 +19,34 @@ function App() {
   const [maxJumps, setMaxJumps] = useState(5);
   const [lyRadius, setLyRadius] = useState(6);
   const [startId, setStartId] = useState<number | null>(null);
-  const [settings, setSettings] = useState<{ excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }> }>({ excludeZarzakh: true, sameRegionOnly: false, titanBridgeFirstJump: false, allowAnsiblex: false, ansiblexes: [] });
+  const [settings, setSettings] = useState<{ excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }> }>(() => {
+    const defaults = { excludeZarzakh: true, sameRegionOnly: false, titanBridgeFirstJump: false, allowAnsiblex: false, ansiblexes: [] as Array<{ from: number; to: number; enabled?: boolean }> };
+    try {
+      const raw = localStorage.getItem('br.settings.v1');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          return {
+            ...defaults,
+            excludeZarzakh: typeof parsed.excludeZarzakh === 'boolean' ? parsed.excludeZarzakh : defaults.excludeZarzakh,
+            sameRegionOnly: typeof parsed.sameRegionOnly === 'boolean' ? parsed.sameRegionOnly : defaults.sameRegionOnly,
+            titanBridgeFirstJump: typeof parsed.titanBridgeFirstJump === 'boolean' ? parsed.titanBridgeFirstJump : defaults.titanBridgeFirstJump,
+            allowAnsiblex: typeof parsed.allowAnsiblex === 'boolean' ? parsed.allowAnsiblex : defaults.allowAnsiblex,
+            ansiblexes: Array.isArray(parsed.ansiblexes) ? parsed.ansiblexes : defaults.ansiblexes,
+          };
+        }
+      }
+      // Fallback: dedicated Ansiblex key
+      const rawAX = localStorage.getItem('br.ansiblex.v1');
+      if (rawAX) {
+        const arr = JSON.parse(rawAX);
+        if (Array.isArray(arr) && arr.length > 0) {
+          return { ...defaults, ansiblexes: arr, allowAnsiblex: true };
+        }
+      }
+    } catch {}
+    return defaults;
+  });
   const [showAnsiblexModal, setShowAnsiblexModal] = useState(false);
 
   // Toasts (top-rightish)
@@ -38,6 +66,22 @@ function App() {
     window.addEventListener('open-ansiblex-modal', onOpen as any);
     return () => window.removeEventListener('open-ansiblex-modal', onOpen as any);
   }, []);
+
+  // removed load-on-mount effect; initialization now reads localStorage synchronously
+
+  // Persist settings on change
+  useEffect(() => {
+    try {
+      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+    } catch {}
+  }, [settings]);
+
+  // Persist Ansiblex list separately as well (for robustness and portability)
+  useEffect(() => {
+    try {
+      localStorage.setItem('br.ansiblex.v1', JSON.stringify(settings.ansiblexes || []));
+    } catch {}
+  }, [settings.ansiblexes]);
 
   const results = useMemo<ObservatoryHit[]>(() => {
     if (!graph || startId == null) return [];
