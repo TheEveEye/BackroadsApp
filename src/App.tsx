@@ -18,7 +18,7 @@ function App() {
   const [maxJumps, setMaxJumps] = useState(5);
   const [lyRadius, setLyRadius] = useState(6);
   const [startId, setStartId] = useState<number | null>(null);
-  const [settings, setSettings] = useState<{ excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; bidirectional?: boolean; enabled?: boolean }> }>({ excludeZarzakh: false, sameRegionOnly: false, titanBridgeFirstJump: false, allowAnsiblex: false, ansiblexes: [] });
+  const [settings, setSettings] = useState<{ excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; bidirectional?: boolean; enabled?: boolean }> }>({ excludeZarzakh: true, sameRegionOnly: false, titanBridgeFirstJump: false, allowAnsiblex: false, ansiblexes: [] });
   const [showAnsiblexModal, setShowAnsiblexModal] = useState(false);
 
   // Open modal when SearchForm dispatches event
