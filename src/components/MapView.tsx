@@ -1,6 +1,6 @@
 
 import { useMemo, useState } from 'react';
-import { exploreFrontier } from '../lib/graph';
+import { exploreFrontier, findPathTo } from '../lib/graph';
 
 const LY = 9.4607e15;
 
@@ -15,7 +15,7 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
   graph: any;
   namesById?: Record<string, string>;
   lyRadius: number;
-  settings: { excludeZarzakh?: boolean; sameRegionOnly?: boolean };
+  settings: { excludeZarzakh?: boolean; sameRegionOnly?: boolean; titanBridgeFirstJump?: boolean };
 }) {
   const startSystem = graph.systems[String(startId)];
   if (!startSystem) {
@@ -27,7 +27,7 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
     );
   }
 
-  const { nodes, edges } = useMemo(() => exploreFrontier({ startId, maxJumps, graph, settings }), [startId, maxJumps, graph, settings]);
+  const { nodes, edges } = useMemo(() => exploreFrontier({ startId, maxJumps, graph, settings, lyRadius }), [startId, maxJumps, graph, settings, lyRadius]);
 
   const projected = useMemo(() => {
     return nodes.map(n => {
@@ -180,6 +180,7 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
             return <circle cx={cx} cy={cy} r={r} fill="none" stroke="#60a5fa" strokeDasharray="6 6" strokeWidth={1.5} />;
           })()}
         </g>
+  {/* (moved bridge rendering after edges) */}
 
         {/* edges (render only when at least one endpoint is visible) */}
         <g stroke="#aaa" strokeWidth={1} opacity={0.6}>
@@ -203,6 +204,47 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
             );
           })}
         </g>
+
+        {/* Titan bridge and route highlight (hover-conditional, above edges, below nodes) */}
+        {hoveredId != null && settings.titanBridgeFirstJump && (() => {
+          const res = findPathTo({ startId, targetId: hoveredId!, maxJumps, graph, settings, lyRadius });
+          if (!res.path || !res.usedTitan) return null;
+          const path = res.path;
+          if (!path || path.length < 2) return null;
+          const getPt = (id: number) => {
+            const sys = graph.systems[String(id)];
+            const p2 = project2D(sys.position.x, sys.position.y, sys.position.z);
+            return { x: sx(p2.px), y: sy(p2.py) };
+          };
+          // Bridge curve: start -> bridged system (path[1])
+          const A = getPt(path[0]);
+          const B = getPt(path[1]);
+            const mx = (A.x + B.x) / 2;
+            const my = (A.y + B.y) / 2;
+            const dx = B.x - A.x, dy = B.y - A.y;
+            const len = Math.hypot(dx, dy) || 1;
+            // Base normal
+            let nx = -dy / len, ny = dx / len;
+            // Always bulge upwards (negative screen Y): if ny >= 0, flip; if ny ~ 0 (vertical line), force upward normal
+            if (Math.abs(ny) < 1e-6) { nx = 0; ny = -1; }
+            else if (ny > 0) { nx = -nx; ny = -ny; }
+            const amp = Math.min(80, Math.max(20, len * 0.15));
+            const cxp = mx + nx * amp;
+            const cyp = my + ny * amp;
+          const d = `M ${A.x} ${A.y} Q ${cxp} ${cyp} ${B.x} ${B.y}`;
+          const segs: any[] = [];
+          for (let i = 1; i < path.length - 1; i++) {
+            const P = getPt(path[i]);
+            const Q = getPt(path[i + 1]);
+            segs.push(<line key={`hl-${i}`} x1={P.x} y1={P.y} x2={Q.x} y2={Q.y} stroke="#facc15" strokeWidth={2.5} strokeLinecap="round" />);
+          }
+          return (
+            <g>
+              <path d={d} stroke="#9333ea" strokeWidth={2} fill="none" strokeDasharray="4 3" opacity={0.95} />
+              {segs}
+            </g>
+          );
+        })()}
         {/* nodes */}
         <g>
           {renderedNodes.map(p => {

@@ -22,8 +22,8 @@ export function SearchForm({
   setLyRadius: (v: number) => void;
   graph: GraphData | null;
   onStartId: (id: number | null) => void;
-  settings: { excludeZarzakh: boolean; sameRegionOnly: boolean };
-  setSettings: (s: { excludeZarzakh: boolean; sameRegionOnly: boolean }) => void;
+  settings: { excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean };
+  setSettings: (s: { excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean }) => void;
 }) {
   // Autocomplete state
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -122,9 +122,14 @@ export function SearchForm({
           <span>Exclude Zarzakh</span>
         </label>
       
-        <label className="inline-flex items-center gap-2">
+        <label className="inline-flex items-center gap-2 mr-4">
           <input type="checkbox" className="accent-blue-600" checked={settings.sameRegionOnly} onChange={(e)=> setSettings({ ...settings, sameRegionOnly: e.target.checked })} />
           <span>Only show systems in same region</span>
+        </label>
+
+        <label className="inline-flex items-center gap-2">
+          <input type="checkbox" className="accent-blue-600" checked={settings.titanBridgeFirstJump} onChange={(e)=> setSettings({ ...settings, titanBridgeFirstJump: e.target.checked })} />
+          <span>Count Titan bridge from start as first jump</span>
         </label>
       </fieldset>
 

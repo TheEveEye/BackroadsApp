@@ -15,12 +15,12 @@ function App() {
   const [maxJumps, setMaxJumps] = useState(5);
   const [lyRadius, setLyRadius] = useState(6);
   const [startId, setStartId] = useState<number | null>(null);
-  const [settings, setSettings] = useState<{ excludeZarzakh: boolean; sameRegionOnly: boolean }>({ excludeZarzakh: false, sameRegionOnly: false });
+  const [settings, setSettings] = useState<{ excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean }>({ excludeZarzakh: false, sameRegionOnly: false, titanBridgeFirstJump: false });
 
   const results = useMemo<ObservatoryHit[]>(() => {
     if (!graph || startId == null) return [];
-    return bfsObservatories({ startId, maxJumps, graph, settings });
-  }, [graph, startId, maxJumps, settings]);
+    return bfsObservatories({ startId, maxJumps, graph, settings, lyRadius });
+  }, [graph, startId, maxJumps, settings, lyRadius]);
 
   useEffect(() => {
     let cancelled = false;
