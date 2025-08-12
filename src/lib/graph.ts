@@ -6,7 +6,14 @@ export type ObservatoryHit = {
   path: number[];
 };
 
-export type FinderSettings = { excludeZarzakh?: boolean; sameRegionOnly?: boolean; titanBridgeFirstJump?: boolean };
+export type AnsiblexBridge = { from: number; to: number; bidirectional?: boolean; enabled?: boolean };
+export type FinderSettings = {
+  excludeZarzakh?: boolean;
+  sameRegionOnly?: boolean;
+  titanBridgeFirstJump?: boolean;
+  allowAnsiblex?: boolean;
+  ansiblexes?: AnsiblexBridge[];
+};
 
 const LY = 9.4607e15; // meters per lightyear
 
@@ -46,6 +53,24 @@ export function bfsObservatories({ startId, maxJumps, graph, settings, lyRadius 
   const allowTitan = !!settings?.titanBridgeFirstJump && lyRadius > 0;
   const titanTargets = allowTitan ? computeBridgeTargets({ graph, startId, lyRadius, sameRegionOnly, excludeIds: exclude }) : [];
 
+  // Build quick lookup for Ansiblex expansions
+  const allowAnsiblex = !!settings?.allowAnsiblex;
+  const ansiFrom: Map<number, number[]> = new Map();
+  if (allowAnsiblex && settings?.ansiblexes?.length) {
+    for (const b of settings.ansiblexes) {
+      if (b && b.enabled !== false) {
+        const from = Number(b.from), to = Number(b.to);
+        if (!Number.isFinite(from) || !Number.isFinite(to)) continue;
+        if (!ansiFrom.has(from)) ansiFrom.set(from, []);
+        ansiFrom.get(from)!.push(to);
+        if (b.bidirectional !== false) {
+          if (!ansiFrom.has(to)) ansiFrom.set(to, []);
+          ansiFrom.get(to)!.push(from);
+        }
+      }
+    }
+  }
+
   while (queue.length) {
     const { id, dist, path } = queue.shift()!;
     const node = systems[String(id)];
@@ -80,6 +105,20 @@ export function bfsObservatories({ startId, maxJumps, graph, settings, lyRadius 
         if (visited.has(next)) continue;
         visited.add(next);
         queue.push({ id: next, dist: 1, path: [...path, next] });
+      }
+    }
+
+    // Ansiblex expansions (count as 1 jump)
+    if (allowAnsiblex) {
+      const outs = ansiFrom.get(id) || [];
+      for (const next of outs) {
+        if (exclude.has(next)) continue;
+        const nextNode = systems[String(next)];
+        if (!nextNode) continue;
+        if (sameRegionOnly && nextNode.regionId !== startRegion) continue;
+        if (visited.has(next)) continue;
+        visited.add(next);
+        queue.push({ id: next, dist: dist + 1, path: [...path, next] });
       }
     }
   }
@@ -128,6 +167,24 @@ export function exploreFrontier({ startId, maxJumps, graph, settings, lyRadius }
   const startAdj = new Set<number>(start.adjacentSystems);
   const titanTargets = allowTitan ? computeBridgeTargets({ graph, startId, lyRadius, sameRegionOnly, excludeIds: exclude }) : [];
 
+  // Build Ansiblex adjacency for frontier exploration
+  const allowAnsiblex = !!settings?.allowAnsiblex;
+  const ansiFrom: Map<number, number[]> = new Map();
+  if (allowAnsiblex && settings?.ansiblexes?.length) {
+    for (const b of settings.ansiblexes) {
+      if (b && b.enabled !== false) {
+        const from = Number(b.from), to = Number(b.to);
+        if (!Number.isFinite(from) || !Number.isFinite(to)) continue;
+        if (!ansiFrom.has(from)) ansiFrom.set(from, []);
+        ansiFrom.get(from)!.push(to);
+        if (b.bidirectional !== false) {
+          if (!ansiFrom.has(to)) ansiFrom.set(to, []);
+          ansiFrom.get(to)!.push(from);
+        }
+      }
+    }
+  }
+
   while (queue.length) {
     const { id, dist } = queue.shift()!;
     const cur = systems[String(id)];
@@ -139,7 +196,7 @@ export function exploreFrontier({ startId, maxJumps, graph, settings, lyRadius }
     maxDist = Math.max(maxDist, dist);
     if (dist >= maxJumps) continue;
 
-    for (const next of cur.adjacentSystems) {
+  for (const next of cur.adjacentSystems) {
       if (exclude.has(next)) continue;
       const nextNode = systems[String(next)];
       if (!nextNode) continue;
@@ -158,6 +215,21 @@ export function exploreFrontier({ startId, maxJumps, graph, settings, lyRadius }
         if (!visited.has(next)) {
           visited.add(next);
           queue.push({ id: next, dist: 1 });
+        }
+      }
+    }
+
+  // enqueue ansiblex bridges (count as 1 jump)
+    if (allowAnsiblex) {
+      const outs = ansiFrom.get(id) || [];
+      for (const next of outs) {
+        if (exclude.has(next)) continue;
+        const nextNode = systems[String(next)];
+        if (!nextNode) continue;
+        if (sameRegionOnly && nextNode.regionId !== startRegion) continue;
+        if (!visited.has(next)) {
+          visited.add(next);
+          queue.push({ id: next, dist: dist + 1 });
         }
       }
     }
@@ -182,6 +254,23 @@ export function findPathTo({ startId, targetId, maxJumps, graph, settings, lyRad
   const startAdj = new Set<number>(start.adjacentSystems);
   const titanTargets = allowTitan ? computeBridgeTargets({ graph, startId, lyRadius, sameRegionOnly, excludeIds: exclude }) : [];
 
+  const allowAnsiblex = !!settings?.allowAnsiblex;
+  const ansiFrom: Map<number, number[]> = new Map();
+  if (allowAnsiblex && settings?.ansiblexes?.length) {
+    for (const b of settings.ansiblexes) {
+      if (b && b.enabled !== false) {
+        const from = Number(b.from), to = Number(b.to);
+        if (!Number.isFinite(from) || !Number.isFinite(to)) continue;
+        if (!ansiFrom.has(from)) ansiFrom.set(from, []);
+        ansiFrom.get(from)!.push(to);
+        if (b.bidirectional !== false) {
+          if (!ansiFrom.has(to)) ansiFrom.set(to, []);
+          ansiFrom.get(to)!.push(from);
+        }
+      }
+    }
+  }
+
   const queue: { id: number; dist: number; path: number[] }[] = [{ id: startId, dist: 0, path: [startId] }];
   const visited = new Set<number>([startId]);
 
@@ -197,7 +286,7 @@ export function findPathTo({ startId, targetId, maxJumps, graph, settings, lyRad
     }
     if (dist >= maxJumps) continue;
 
-    for (const next of node.adjacentSystems) {
+  for (const next of node.adjacentSystems) {
       if (exclude.has(next)) continue;
       const nextNode = systems[String(next)];
       if (!nextNode) continue;
@@ -214,6 +303,20 @@ export function findPathTo({ startId, targetId, maxJumps, graph, settings, lyRad
         if (!visited.has(next)) {
           visited.add(next);
           queue.push({ id: next, dist: 1, path: [...path, next] });
+        }
+      }
+    }
+
+    if (allowAnsiblex) {
+      const outs = ansiFrom.get(id) || [];
+      for (const next of outs) {
+        if (exclude.has(next)) continue;
+        const nextNode = systems[String(next)];
+        if (!nextNode) continue;
+        if (sameRegionOnly && nextNode.regionId !== startRegion) continue;
+        if (!visited.has(next)) {
+          visited.add(next);
+          queue.push({ id: next, dist: dist + 1, path: [...path, next] });
         }
       }
     }

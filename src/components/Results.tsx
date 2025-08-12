@@ -18,7 +18,8 @@ export function Results({ results, namesById, lyRadius, graph }: { results: Obse
   if (!results.length) return <p>No observatories found within the selected jump range.</p>;
 
   const base = (import.meta as any).env?.BASE_URL || '/';
-  const titanImg = `${base}titan.png`;
+  const titanSvg = `${base}titan.svg`;
+  const titanPng = `${base}titan.png`;
 
   return (
     <section className="bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
@@ -56,11 +57,19 @@ export function Results({ results, namesById, lyRadius, graph }: { results: Obse
                         chips.push(
                           <img
                             key={`sep-${i}`}
-                            src={titanImg}
+                            src={titanSvg}
                             alt="Titan bridge"
                             title="Titan bridge"
                             style={{ display: 'inline-block', verticalAlign: 'middle', width: 18, height: 18, margin: '0 6px' }}
-                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                            onError={(e) => {
+                              const img = e.target as HTMLImageElement;
+                              if (!img.dataset.fallback) {
+                                img.dataset.fallback = '1';
+                                img.src = titanPng;
+                              } else {
+                                img.style.display = 'none';
+                              }
+                            }}
                           />
                         );
                       } else {

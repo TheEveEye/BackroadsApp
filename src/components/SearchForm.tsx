@@ -1,6 +1,8 @@
 import type { GraphData } from '../lib/data';
 import { resolveQueryToId } from '../lib/graph';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect } from 'react';
+import { AutocompleteInput } from './AutocompleteInput';
+import { Icon } from './Icon';
 
 export function SearchForm({
   query,
@@ -22,41 +24,18 @@ export function SearchForm({
   setLyRadius: (v: number) => void;
   graph: GraphData | null;
   onStartId: (id: number | null) => void;
-  settings: { excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean };
-  setSettings: (s: { excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean }) => void;
+  settings: { excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; bidirectional?: boolean; enabled?: boolean }>; };
+  setSettings: (s: { excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; bidirectional?: boolean; enabled?: boolean }>; }) => void;
 }) {
   // Autocomplete state
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const [open, setOpen] = useState(false);
-  const [highlight, setHighlight] = useState(0);
+  // no-op
 
-  // Normalize by lowercasing and removing dashes/spaces
-  const normalize = (s: string) => s.toLowerCase().replace(/[-\s]/g, '');
+  // Autocomplete handled by AutocompleteInput component
 
   // Build candidate list: id, name, normalized name, region name
-  const candidates = useMemo(() => {
-    if (!graph?.namesById) return [] as Array<{ id: number; name: string; nameNorm: string; regionName: string }>;
-    const systems: any = (graph as any).systems || {};
-    const regionsById: any = (graph as any).regionsById || {};
-    return Object.entries(graph.namesById).map(([id, name]) => {
-      const sys = systems[String(id)];
-      const regionName = sys ? (regionsById[String(sys.regionId)] ?? String(sys.regionId)) : '';
-      return { id: Number(id), name: String(name), nameNorm: normalize(String(name)), regionName };
-    });
-  }, [graph]);
+  // candidates and query normalization are handled inside AutocompleteInput
 
-  const qNorm = useMemo(() => normalize(query), [query]);
-
-  const suggestions = useMemo(() => {
-    if (!qNorm) return [] as Array<{ id: number; name: string; nameNorm: string; regionName: string }>;
-    const list = candidates.filter(c => c.nameNorm.includes(qNorm));
-    list.sort((a, b) => {
-      const ap = a.nameNorm.startsWith(qNorm) ? 0 : 1;
-      const bp = b.nameNorm.startsWith(qNorm) ? 0 : 1;
-      return ap - bp || a.name.localeCompare(b.name);
-    });
-    return list.slice(0, 12);
-  }, [candidates, qNorm]);
+  // suggestions handled by AutocompleteInput
 
   // Keep startId in sync with query
   useEffect(() => {
@@ -67,40 +46,9 @@ export function SearchForm({
 
   return (
     <section className="grid gap-4 grid-cols-1 md:grid-cols-2 bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
-      <label className="grid gap-2 relative">
+      <label className="grid gap-2">
         Start system (name):
-        <input
-          type="text"
-          className="px-3 py-2 text-base rounded-md border border-gray-300 dark:border-gray-700 bg-white/80 dark:bg-gray-900"
-          placeholder='e.g. Jita'
-          value={query}
-          ref={inputRef}
-          onFocus={() => { if (query) setOpen(true); }}
-          onChange={(e) => { setQuery(e.target.value); setOpen(true); setHighlight(0); }}
-          onKeyDown={(e) => {
-            if (!suggestions.length) return;
-            if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); setHighlight(h => Math.min(h + 1, suggestions.length - 1)); }
-            else if (e.key === 'ArrowUp') { e.preventDefault(); setOpen(true); setHighlight(h => Math.max(h - 1, 0)); }
-            else if (e.key === 'Enter') { if (open) { e.preventDefault(); const s = suggestions[highlight]; if (s) { setQuery(s.name); setOpen(false); } } }
-            else if (e.key === 'Escape') { setOpen(false); }
-          }}
-          onBlur={() => { setTimeout(() => setOpen(false), 120); }}
-        />
-        {open && suggestions.length > 0 && (
-          <ul className="absolute left-0 right-0 top-full mt-1 z-20 max-h-64 overflow-auto rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow">
-            {suggestions.map((s, idx) => (
-              <li
-                key={s.id}
-                className={(idx === highlight ? 'bg-blue-600 text-white ' : 'hover:bg-gray-100 dark:hover:bg-gray-800 ') + 'px-3 py-1.5 text-sm cursor-pointer flex justify-between'}
-                onMouseEnter={() => setHighlight(idx)}
-                onMouseDown={(e) => { e.preventDefault(); setQuery(s.name); setOpen(false); }}
-              >
-                <span>{s.name}</span>
-                <span className="text-gray-500 dark:text-gray-400 ml-3">{s.regionName}</span>
-              </li>
-            ))}
-          </ul>
-        )}
+        <AutocompleteInput graph={graph} value={query} onChange={setQuery} placeholder="e.g. Jita" />
       </label>
 
       <label className="grid gap-2">
@@ -131,6 +79,21 @@ export function SearchForm({
           <input type="checkbox" className="accent-blue-600" checked={settings.titanBridgeFirstJump} onChange={(e)=> setSettings({ ...settings, titanBridgeFirstJump: e.target.checked })} />
           <span>Count Titan bridge from start as first jump</span>
         </label>
+
+        <div className="mt-3 flex items-center gap-3">
+          <label className="inline-flex items-center gap-2">
+            <input type="checkbox" className="accent-blue-600" checked={!!settings.allowAnsiblex} onChange={(e)=> setSettings({ ...settings, allowAnsiblex: e.target.checked })} />
+            <span>Allow Ansiblex jump bridges</span>
+          </label>
+          <button type="button" className="px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center gap-1" onClick={() => {
+            // Placeholder for opening modal; actual modal implemented in App
+            const ev = new CustomEvent('open-ansiblex-modal');
+            window.dispatchEvent(ev);
+          }}>
+            <Icon name="gear" size={14} />
+            Configure…
+          </button>
+        </div>
       </fieldset>
 
       <label className="grid gap-2 md:col-span-2">

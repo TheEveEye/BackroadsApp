@@ -15,7 +15,7 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
   graph: any;
   namesById?: Record<string, string>;
   lyRadius: number;
-  settings: { excludeZarzakh?: boolean; sameRegionOnly?: boolean; titanBridgeFirstJump?: boolean };
+  settings: { excludeZarzakh?: boolean; sameRegionOnly?: boolean; titanBridgeFirstJump?: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; bidirectional?: boolean; enabled?: boolean }>; };
 }) {
   const startSystem = graph.systems[String(startId)];
   if (!startSystem) {
@@ -162,6 +162,21 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
     return { p, sys, jumps, ly, name, regionName, line, approxWidth, approxHeight };
   }, [selectedId, projected, graph, startPos, namesById]);
 
+  // Build a quick lookup for ansiblex directed edges (u->v) to detect segments in the route
+  const ansiSet = useMemo(() => {
+    const set = new Set<string>();
+    if (settings.allowAnsiblex && Array.isArray(settings.ansiblexes)) {
+      for (const b of settings.ansiblexes) {
+        if (!b || b.enabled === false) continue;
+        const from = Number(b.from), to = Number(b.to);
+        if (!Number.isFinite(from) || !Number.isFinite(to)) continue;
+        set.add(`${from}->${to}`);
+        if (b.bidirectional !== false) set.add(`${to}->${from}`);
+      }
+    }
+    return set;
+  }, [settings.allowAnsiblex, settings.ansiblexes]);
+
   return (
     <section className="bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
       <h2 className="text-xl font-medium mb-3">Map (range: {maxJumps} jump(s))</h2>
@@ -211,10 +226,37 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
           })}
         </g>
 
-        {/* Titan bridge and route highlight (hover-conditional, above edges, below nodes) */}
-        {hoveredId != null && settings.titanBridgeFirstJump && (() => {
-          const res = findPathTo({ startId, targetId: hoveredId!, maxJumps, graph, settings, lyRadius });
-          if (!res.path || !res.usedTitan) return null;
+        {/* Ansiblex bridges (green arcs). Render when enabled in settings. */}
+        {settings.allowAnsiblex && Array.isArray(settings.ansiblexes) && settings.ansiblexes.filter(b=>b.enabled!==false).map((b, idxArc) => {
+          const fromSys = graph.systems[String(b.from)];
+          const toSys = graph.systems[String(b.to)];
+          if (!fromSys || !toSys) return null;
+          const p1 = project2D(fromSys.position.x, fromSys.position.y, fromSys.position.z);
+          const p2 = project2D(toSys.position.x, toSys.position.y, toSys.position.z);
+          const A = { x: sx(p1.px), y: sy(p1.py) };
+          const B = { x: sx(p2.px), y: sy(p2.py) };
+          const mx = (A.x + B.x) / 2;
+          const my = (A.y + B.y) / 2;
+          const dx = B.x - A.x, dy = B.y - A.y;
+          const len = Math.hypot(dx, dy) || 1;
+          let nx = -dy / len, ny = dx / len;
+          if (Math.abs(ny) < 1e-6) { nx = 0; ny = -1; }
+          else if (ny > 0) { nx = -nx; ny = -ny; }
+          const amp = Math.min(120, Math.max(30, len * 0.22));
+          const cxp = mx + nx * amp;
+          const cyp = my + ny * amp;
+          const d = `M ${A.x} ${A.y} Q ${cxp} ${cyp} ${B.x} ${B.y}`;
+          return (
+            <g key={`ansi-${idxArc}`}>
+              <path d={d} stroke="#00ff00" strokeWidth={2} fill="none" opacity={0.95} />
+            </g>
+          );
+        })}
+
+        {/* Route highlight (selected or hover): draw titan arc if used, ansiblex arcs for ansiblex segments, and yellow lines for gate segments */}
+        {(selectedId != null || hoveredId != null) && (() => {
+          const targetId = selectedId ?? hoveredId!;
+          const res = findPathTo({ startId, targetId, maxJumps, graph, settings, lyRadius });
           const path = res.path;
           if (!path || path.length < 2) return null;
           const getPt = (id: number) => {
@@ -222,34 +264,42 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
             const p2 = project2D(sys.position.x, sys.position.y, sys.position.z);
             return { x: sx(p2.px), y: sy(p2.py) };
           };
-          // Bridge curve: start -> bridged system (path[1])
-          const A = getPt(path[0]);
-          const B = getPt(path[1]);
+
+          const arcPath = (A: {x:number;y:number}, B: {x:number;y:number}, ampScale = 0.18, minAmp = 24, maxAmp = 120) => {
             const mx = (A.x + B.x) / 2;
             const my = (A.y + B.y) / 2;
             const dx = B.x - A.x, dy = B.y - A.y;
             const len = Math.hypot(dx, dy) || 1;
-            // Base normal
             let nx = -dy / len, ny = dx / len;
-            // Always bulge upwards (negative screen Y): if ny >= 0, flip; if ny ~ 0 (vertical line), force upward normal
             if (Math.abs(ny) < 1e-6) { nx = 0; ny = -1; }
             else if (ny > 0) { nx = -nx; ny = -ny; }
-            const amp = Math.min(80, Math.max(20, len * 0.15));
+            const amp = Math.min(maxAmp, Math.max(minAmp, len * ampScale));
             const cxp = mx + nx * amp;
             const cyp = my + ny * amp;
-          const d = `M ${A.x} ${A.y} Q ${cxp} ${cyp} ${B.x} ${B.y}`;
+            return `M ${A.x} ${A.y} Q ${cxp} ${cyp} ${B.x} ${B.y}`;
+          };
+
           const segs: any[] = [];
-          for (let i = 1; i < path.length - 1; i++) {
-            const P = getPt(path[i]);
-            const Q = getPt(path[i + 1]);
-            segs.push(<line key={`hl-${i}`} x1={P.x} y1={P.y} x2={Q.x} y2={Q.y} stroke="#facc15" strokeWidth={2.5} strokeLinecap="round" />);
+          // First segment: if usedTitan (and titan is allowed), draw purple dashed arc; otherwise handle as gate/ansiblex
+          for (let i = 0; i < path.length - 1; i++) {
+            const u = path[i];
+            const v = path[i + 1];
+            const P = getPt(u);
+            const Q = getPt(v);
+            if (i === 0 && res.usedTitan && settings.titanBridgeFirstJump) {
+              const d = arcPath(P, Q, 0.15, 20, 80);
+              segs.push(<path key={`hl-titan-${i}`} d={d} stroke="#9333ea" strokeWidth={2} fill="none" strokeDasharray="4 3" opacity={0.95} />);
+              continue;
+            }
+            const isAnsi = ansiSet.has(`${u}->${v}`);
+            if (isAnsi) {
+              const d = arcPath(P, Q, 0.22, 30, 120);
+              segs.push(<path key={`hl-ansi-${i}`} d={d} stroke="#facc15" strokeWidth={2.5} fill="none" opacity={0.95} />);
+            } else {
+              segs.push(<line key={`hl-line-${i}`} x1={P.x} y1={P.y} x2={Q.x} y2={Q.y} stroke="#facc15" strokeWidth={2.5} strokeLinecap="round" />);
+            }
           }
-          return (
-            <g>
-              <path d={d} stroke="#9333ea" strokeWidth={2} fill="none" strokeDasharray="4 3" opacity={0.95} />
-              {segs}
-            </g>
-          );
+          return <g>{segs}</g>;
         })()}
         {/* nodes */}
         <g>
