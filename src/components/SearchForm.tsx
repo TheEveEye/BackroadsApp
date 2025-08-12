@@ -15,6 +15,7 @@ export function SearchForm({
   setLyRadius,
   graph,
   onStartId,
+  onClearAll,
 }: {
   query: string;
   setQuery: (v: string) => void;
@@ -26,6 +27,7 @@ export function SearchForm({
   onStartId: (id: number | null) => void;
   settings: { excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }>; };
   setSettings: (s: { excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }>; }) => void;
+  onClearAll: () => void;
 }) {
   // Autocomplete state
   // no-op
@@ -92,6 +94,14 @@ export function SearchForm({
           }}>
             <Icon name="gear" size={16} />
             <span className="inline-block align-middle">Configure…</span>
+          </button>
+          <button
+            type="button"
+            className="ml-auto px-2 py-1 text-sm rounded border border-red-300 text-red-700 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20 leading-none"
+            onClick={onClearAll}
+            title="Clear all saved settings"
+          >
+            Clear settings
           </button>
         </div>
       </fieldset>

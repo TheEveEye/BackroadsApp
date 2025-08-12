@@ -11,13 +11,41 @@ import { resolveQueryToId } from './lib/graph';
 
 function App() {
   const SETTINGS_STORAGE_KEY = 'br.settings.v1';
+  const UI_STORAGE_KEY = 'br.ui.v1';
   const [graph, setGraph] = useState<GraphData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [query, setQuery] = useState('');
-  const [maxJumps, setMaxJumps] = useState(5);
-  const [lyRadius, setLyRadius] = useState(6);
+  const [query, setQuery] = useState<string>(() => {
+    try {
+      const raw = localStorage.getItem(UI_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.query === 'string') return parsed.query;
+      }
+    } catch {}
+    return '';
+  });
+  const [maxJumps, setMaxJumps] = useState<number>(() => {
+    try {
+      const raw = localStorage.getItem(UI_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && Number.isFinite(parsed.maxJumps)) return Number(parsed.maxJumps);
+      }
+    } catch {}
+    return 5;
+  });
+  const [lyRadius, setLyRadius] = useState<number>(() => {
+    try {
+      const raw = localStorage.getItem(UI_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && Number.isFinite(parsed.lyRadius)) return Number(parsed.lyRadius);
+      }
+    } catch {}
+    return 6;
+  });
   const [startId, setStartId] = useState<number | null>(null);
   const [settings, setSettings] = useState<{ excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }> }>(() => {
     const defaults = { excludeZarzakh: true, sameRegionOnly: false, titanBridgeFirstJump: false, allowAnsiblex: false, ansiblexes: [] as Array<{ from: number; to: number; enabled?: boolean }> };
@@ -126,6 +154,26 @@ function App() {
     };
   }, []);
 
+  // Persist basic UI state (query, maxJumps, lyRadius)
+  useEffect(() => {
+    try {
+      localStorage.setItem(UI_STORAGE_KEY, JSON.stringify({ query, maxJumps, lyRadius }));
+    } catch {}
+  }, [query, maxJumps, lyRadius]);
+
+  const onClearAll = () => {
+    try {
+      localStorage.removeItem(SETTINGS_STORAGE_KEY);
+      localStorage.removeItem('br.ansiblex.v1');
+      localStorage.removeItem(UI_STORAGE_KEY);
+    } catch {}
+    setSettings({ excludeZarzakh: true, sameRegionOnly: false, titanBridgeFirstJump: false, allowAnsiblex: false, ansiblexes: [] });
+    setQuery('');
+    setMaxJumps(5);
+    setLyRadius(6);
+    pushToast('Settings cleared', 'success');
+  };
+
   return (
     <div className="max-w-7xl mx-auto p-6">
       <header className="mb-6">
@@ -159,6 +207,7 @@ function App() {
           
             settings={settings}
             setSettings={setSettingsWithGuard}
+            onClearAll={onClearAll}
           
             />
           {loading && <p>Loading data…</p>}
