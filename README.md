@@ -1,69 +1,71 @@
-# React + TypeScript + Vite
+## Jove Observatory Finder (EVE Online)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Find nearby Jove Observatories from any starting system within a chosen number of gate jumps. The app provides an autocomplete search for systems, a jump limit slider, a lightyear radius overlay on a simple map, and an option to exclude Zarzakh.
 
-Currently, two official plugins are available:
+Live app: https://theeveeye.github.io/BackroadsApp
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+### Features
 
-## Expanding the ESLint configuration
+- Search for a start system (autocomplete by name)
+- Set maximum gate jumps to explore
+- Optional: exclude Zarzakh
+- Map view of the explored frontier with a configurable LY radius overlay
+- Results list with shortest paths to observatories
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### Tech stack
 
-```js
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+- React + TypeScript + Vite
+- Tailwind CSS
 
-      // Remove tseslint.configs.recommended and replace with this
-      ...tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      ...tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      ...tseslint.configs.stylisticTypeChecked,
+## Quick start (development)
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+Prerequisites: Node.js 18+ and npm.
+
+1) Install dependencies
+
+```bash
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+2) Start the dev server
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run dev
 ```
+
+Vite will print a local URL (typically http://localhost:5173). Open it in your browser.
+
+## Build and preview
+
+```bash
+npm run build    # builds to ./build
+npm run preview  # serves the production build locally
+```
+
+## Deploy to GitHub Pages
+
+This repo is configured to deploy a static build to GitHub Pages using the `gh-pages` branch and a project subpath.
+
+```bash
+npm run deploy
+```
+
+Notes:
+- The app base path is set to `/BackroadsApp/` in `vite.config.ts` and `homepage` in `package.json` points to the Pages URL. If you fork/rename the repo, update both.
+- Pages should be configured to serve from the `gh-pages` branch (root).
+
+## Data files
+
+All data is loaded client-side from `public/data`:
+
+- `systems_index.json` (required)
+- `system_names.json` (optional; improves name lookup)
+  - Shape: `{ byId: Record<string,string>, byName: Record<string, number> }`
+- `region_names.json` (optional; shows region names)
+  - Shape: `{ byId: Record<string,string> }`
+
+If `systems_index.json` is missing, the app will show an error on load.
+
+## License
+
+MIT
