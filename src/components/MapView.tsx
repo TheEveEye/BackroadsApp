@@ -15,7 +15,7 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
   graph: any;
   namesById?: Record<string, string>;
   lyRadius: number;
-  settings: { excludeZarzakh?: boolean; sameRegionOnly?: boolean; titanBridgeFirstJump?: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; bidirectional?: boolean; enabled?: boolean }>; };
+  settings: { excludeZarzakh?: boolean; sameRegionOnly?: boolean; titanBridgeFirstJump?: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }>; };
 }) {
   const startSystem = graph.systems[String(startId)];
   if (!startSystem) {
@@ -176,7 +176,8 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
         const from = Number(b.from), to = Number(b.to);
         if (!Number.isFinite(from) || !Number.isFinite(to)) continue;
         set.add(`${from}->${to}`);
-        if (b.bidirectional !== false) set.add(`${to}->${from}`);
+  // Always treat bridges as bidirectional
+  set.add(`${to}->${from}`);
       }
     }
     return set;

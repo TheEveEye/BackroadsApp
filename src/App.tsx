@@ -18,7 +18,7 @@ function App() {
   const [maxJumps, setMaxJumps] = useState(5);
   const [lyRadius, setLyRadius] = useState(6);
   const [startId, setStartId] = useState<number | null>(null);
-  const [settings, setSettings] = useState<{ excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; bidirectional?: boolean; enabled?: boolean }> }>({ excludeZarzakh: true, sameRegionOnly: false, titanBridgeFirstJump: false, allowAnsiblex: false, ansiblexes: [] });
+  const [settings, setSettings] = useState<{ excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }> }>({ excludeZarzakh: true, sameRegionOnly: false, titanBridgeFirstJump: false, allowAnsiblex: false, ansiblexes: [] });
   const [showAnsiblexModal, setShowAnsiblexModal] = useState(false);
 
   // Toasts (top-rightish)
@@ -45,7 +45,7 @@ function App() {
   }, [graph, startId, maxJumps, settings, lyRadius]);
 
   // Wrap settings setter to show a warning when enabling titan bridge from high-sec
-  const setSettingsWithGuard = (next: { excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; bidirectional?: boolean; enabled?: boolean }> }) => {
+  const setSettingsWithGuard = (next: { excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }> }) => {
     try {
       if (!settings.titanBridgeFirstJump && next.titanBridgeFirstJump) {
         if (startId != null && graph) {
@@ -143,7 +143,7 @@ function App() {
         </section>
       </main>
       {showAnsiblexModal && (
-        <AnsiblexModal
+  <AnsiblexModal
           onClose={() => setShowAnsiblexModal(false)}
           value={settings.ansiblexes || []}
           onChange={(list) => setSettings(s => ({ ...s, ansiblexes: list }))}
@@ -158,7 +158,7 @@ function App() {
 
 export default App;
 
-function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ from: number; to: number; bidirectional?: boolean; enabled?: boolean }>; onChange: (v: Array<{ from: number; to: number; bidirectional?: boolean; enabled?: boolean }>) => void; onClose: () => void }) {
+function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ from: number; to: number; enabled?: boolean }>; onChange: (v: Array<{ from: number; to: number; enabled?: boolean }>) => void; onClose: () => void }) {
   const LY = 9.4607e15; // meters per lightyear
   const [fromQuery, setFromQuery] = useState('');
   const [toQuery, setToQuery] = useState('');
@@ -174,7 +174,7 @@ function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ from: numb
     const fromId = resolveQueryToId(fromQuery, graph);
     const toId = resolveQueryToId(toQuery, graph);
     if (fromId != null && toId != null) {
-      setList(l => [...l, { from: fromId, to: toId, bidirectional: true, enabled: true }]);
+  setList(l => [...l, { from: fromId, to: toId, enabled: true }]);
       setFromQuery('');
       setToQuery('');
     }
@@ -229,11 +229,64 @@ function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ from: numb
   const importFromClipboard = async () => {
     try {
       const text = await navigator.clipboard.readText();
-      const parsed = JSON.parse(text);
-      if (Array.isArray(parsed)) {
-        const cleaned = parsed.map((b: any) => ({ from: Number(b.from), to: Number(b.to), bidirectional: b.bidirectional !== false, enabled: b.enabled !== false })).filter((b: any) => Number.isFinite(b.from) && Number.isFinite(b.to));
-        setList(cleaned);
+      // First try JSON array import
+      try {
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed)) {
+          const cleaned = parsed
+            .map((b: any) => ({ from: Number(b.from), to: Number(b.to), enabled: true }))
+            .filter((b: any) => Number.isFinite(b.from) && Number.isFinite(b.to));
+          if (cleaned.length > 0) {
+            setList(cleaned);
+            return;
+          }
+        }
+      } catch {}
+
+      // Fallback: parse "The Webway" tabular format. Lines contain tokens like:
+      // Region<TAB>FROM @ 1-1<TAB>TO @ 1-1<TAB>...
+      const graph: GraphData | null = (window as any).appGraph || null;
+      const idsByName = graph?.idsByName || {};
+      const fixName = (n: string) => {
+        const v = (n || '').trim().toUpperCase();
+        if (v === 'TM-OP2') return 'TM-0P2';
+        if (v === '07-VJ5') return 'O7-VJ5';
+        return v;
+      };
+      const toId = (name: string): number | null => {
+        const v = fixName(name);
+        const id = (idsByName as any)[v];
+        if (Number.isFinite(id)) return Number(id);
+        if (graph) {
+          const r = resolveQueryToId(v, graph);
+          return Number.isFinite(r) ? Number(r) : null;
+        }
+        return null;
+      };
+      const lines = text.split(/\r?\n/);
+      const pairs: Array<{ from: number; to: number; enabled: true }> = [];
+      const seen = new Set<string>(); // canonical unordered key
+      for (const raw of lines) {
+        const line = raw.trim();
+        if (!line) continue;
+        if (/^the webway/i.test(line)) continue;
+        if (/^region\b/i.test(line)) continue;
+        // Extract first two occurrences of NAME @, where NAME is alnum/dash
+        const matches = Array.from(line.matchAll(/([A-Z0-9-]{2,})\s*@/gi)).map(m => m[1]);
+        if (matches.length >= 2) {
+          const a = toId(matches[0]);
+          const b = toId(matches[1]);
+          if (Number.isFinite(a) && Number.isFinite(b)) {
+            const from = Number(a), to = Number(b);
+            const key = from < to ? `${from}-${to}` : `${to}-${from}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              pairs.push({ from, to, enabled: true });
+            }
+          }
+        }
       }
+      if (pairs.length > 0) setList(pairs);
     } catch {}
   };
 
@@ -313,11 +366,11 @@ function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ from: numb
           <div className="mt-1 mb-2 text-sm text-orange-600 inline-flex items-center gap-2"><Icon name="warn" size={16} color="#ea580c" /> Warning: {getName(resolvedToId)} is not in nullsec. Ansiblex can only be anchored in nullsec.</div>
         )}
         <ul className="flex-1 overflow-auto divide-y divide-gray-200 dark:divide-gray-800">
-          {list.map((b, idx) => (
+      {list.map((b, idx) => (
             <li key={idx} className="py-2 flex items-center gap-2">
               <input type="checkbox" className="accent-blue-600" checked={b.enabled !== false} onChange={(e)=> setList(ls => ls.map((x,i)=> i===idx ? { ...x, enabled: e.target.checked } : x))} />
               <span className="text-sm">{getName(b.from)} <span className="text-gray-500">⇄</span> {getName(b.to)}</span>
-              <label className="ml-auto inline-flex items-center gap-1 text-xs"><input type="checkbox" className="accent-blue-600" checked={b.bidirectional !== false} onChange={(e)=> setList(ls => ls.map((x,i)=> i===idx ? { ...x, bidirectional: e.target.checked } : x))} /> Bidirectional</label>
+        <span className="ml-auto" />
               <button className="ml-2 text-xs text-red-600 hover:underline" onClick={() => setList(ls => ls.filter((_,i)=> i!==idx))}>Remove</button>
             </li>
           ))}
