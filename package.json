@@ -12,6 +12,7 @@
     "deploy": "npm run build && cp build/index.html build/404.html && gh-pages -d build"
   },
   "dependencies": {
+  "react-router-dom": "^6.26.2",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },

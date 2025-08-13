@@ -8,6 +8,7 @@ export function AutocompleteInput({
   placeholder,
   className,
   compact,
+  items,
 }: {
   graph: GraphData | null;
   value: string;
@@ -15,6 +16,7 @@ export function AutocompleteInput({
   placeholder?: string;
   className?: string;
   compact?: boolean;
+  items?: Array<{ id: number; name: string; regionName?: string }>;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -36,15 +38,20 @@ export function AutocompleteInput({
   };
 
   const candidates = useMemo(() => {
+    // Prefer explicitly provided items
+    if (Array.isArray(items) && items.length) {
+      return items.map((it) => ({ id: Number(it.id), name: String(it.name), nameNorm: normalize(String(it.name)), regionName: String(it.regionName ?? '') }));
+    }
     if (!graph?.namesById) return [] as Array<{ id: number; name: string; nameNorm: string; regionName: string }>;
     const systems: any = (graph as any).systems || {};
     const regionsById: any = (graph as any).regionsById || {};
-    return Object.entries(graph.namesById).map(([id, name]) => {
+    const list = Object.entries(graph.namesById).map(([id, name]) => {
       const sys = systems[String(id)];
       const regionName = sys ? (regionsById[String(sys.regionId)] ?? String(sys.regionId)) : '';
       return { id: Number(id), name: String(name), nameNorm: normalize(String(name)), regionName };
     });
-  }, [graph]);
+    return list;
+  }, [items, graph]);
 
   const qNorm = useMemo(() => normalize(value), [value]);
 

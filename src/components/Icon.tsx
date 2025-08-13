@@ -6,6 +6,8 @@ const NAME_TO_STEM: Record<string, string> = {
   export: 'square.and.arrow.up',
   gear: 'gear',
   warn: 'exclamationmark.triangle.fill',
+  discord: 'discord',
+  link: 'link',
 };
 
 export function Icon({
