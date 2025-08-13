@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import type { GraphData } from '../lib/data';
 import { AutocompleteInput } from '../components/AutocompleteInput';
 import { Icon } from '../components/Icon';
@@ -19,6 +20,87 @@ export function Scanner() {
   const graph: GraphData | null = (window as any).appGraph || null;
   const [wormholes, setWormholes] = useState<Wormhole[]>([]);
   const [copyStatus, setCopyStatus] = useState<null | 'success' | 'error'>(null);
+  const location = useLocation();
+
+  const TYPE_TO_CODE: Record<WormholeType, string> = {
+    Conflux: 'C',
+    Barbican: 'B',
+    Redoubt: 'R',
+    Sentinel: 'S',
+    Vidette: 'V',
+  };
+  const CODE_TO_TYPE: Record<string, WormholeType> = {
+    C: 'Conflux',
+    B: 'Barbican',
+    R: 'Redoubt',
+    S: 'Sentinel',
+    V: 'Vidette',
+  };
+
+  const packFlags = (wh: Wormhole) => (wh.eol ? 1 : 0) | (wh.reduced ? 2 : 0) | (wh.critical ? 4 : 0);
+  const unpackFlags = (n: number) => ({ eol: !!(n & 1), reduced: !!(n & 2), critical: !!(n & 4) });
+
+  function buildCompact(list: Wormhole[]) {
+    // Compact representation: [ref, code, flags]
+    // ref is number systemId if available, else string systemName
+    return list.map(wh => [wh.systemId ?? wh.systemName, wh.type ? TYPE_TO_CODE[wh.type] : '', packFlags(wh)]);
+  }
+  function expandCompact(compact: any): Wormhole[] {
+    if (!Array.isArray(compact)) return [];
+    const namesById: any = (graph as any)?.namesById || {};
+    const out: Wormhole[] = [];
+    for (const entry of compact) {
+      if (!Array.isArray(entry)) continue;
+      const [ref, code, flags] = entry as [number | string, string, number];
+      let systemId: number | null = null;
+      let systemName = '';
+  if (typeof ref === 'number' && Number.isFinite(ref)) {
+        systemId = Number(ref);
+        systemName = String(namesById[String(systemId)] ?? '');
+      } else if (typeof ref === 'string') {
+        systemName = ref;
+      }
+      const type = code && CODE_TO_TYPE[code] ? CODE_TO_TYPE[code] : null;
+      const { eol, reduced, critical } = unpackFlags(Number(flags) || 0);
+      out.push({ id: crypto.randomUUID(), systemId, systemName, type, eol, reduced, critical });
+    }
+    return out;
+  }
+
+  // Load from URL (?wh=base64) on mount and whenever search changes (e.g., link opened)
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(location.search);
+      const wh = params.get('wh');
+      if (wh) {
+        const json = atob(wh);
+        const parsed = JSON.parse(json);
+        const list = expandCompact(parsed);
+        if (list.length) setWormholes(list);
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search]);
+
+  // When the graph becomes available later, fill in missing system names for items with systemId
+  useEffect(() => {
+    const fillNames = () => {
+      const g: GraphData | null = (window as any).appGraph || null;
+      if (!g) return;
+      const namesById: any = (g as any).namesById || {};
+      setWormholes(list => list.map(wh => {
+        if (wh.systemId != null && (!wh.systemName || wh.systemName.length === 0)) {
+          const nm = String(namesById[String(wh.systemId)] ?? wh.systemName);
+          return { ...wh, systemName: nm };
+        }
+        return wh;
+      }));
+    };
+    fillNames();
+    const onLoaded = () => fillNames();
+    window.addEventListener('graph-loaded', onLoaded as any);
+    return () => window.removeEventListener('graph-loaded', onLoaded as any);
+  }, []);
 
   const addNew = () => {
     setWormholes(list => [
@@ -73,7 +155,16 @@ export function Scanner() {
 
     // build lines
     const lines: string[] = [];
-    lines.push(`## Scan was completed <t:${now}:R>`);
+    // Build a share link for the current wormholes and linkify the heading text
+    try {
+      const compact = buildCompact(wormholes);
+      const b64 = btoa(JSON.stringify(compact));
+      const base = `${window.location.origin}${window.location.pathname}#/scanner`;
+      const url = `${base}?wh=${encodeURIComponent(b64)}`;
+      lines.push(`## [Scan was completed <t:${now}:R>](${url})`);
+    } catch {
+      lines.push(`## Scan was completed <t:${now}:R>`);
+    }
     const regionNames = Array.from(groups.keys()).sort((a, b) => a.localeCompare(b));
     for (const rn of regionNames) {
       lines.push(`## ${rn}`);
@@ -108,6 +199,21 @@ export function Scanner() {
       }
       setCopyStatus(ok ? 'success' : 'error');
       setTimeout(() => setCopyStatus(null), ok ? 1500 : 2000);
+    }
+  };
+
+  const handleCopyLink = async () => {
+    try {
+      const compact = buildCompact(wormholes);
+      const b64 = btoa(JSON.stringify(compact));
+      const base = `${window.location.origin}${window.location.pathname}#/scanner`;
+      const url = `${base}?wh=${encodeURIComponent(b64)}`;
+      await navigator.clipboard.writeText(url);
+      setCopyStatus('success');
+      setTimeout(() => setCopyStatus(null), 1500);
+    } catch {
+      setCopyStatus('error');
+      setTimeout(() => setCopyStatus(null), 2000);
     }
   };
 
@@ -209,7 +315,7 @@ export function Scanner() {
           <button type="button" onClick={handleCopyDiscord} className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800" aria-label="Discord">
             <Icon name="discord" size={20} />
           </button>
-          <button type="button" className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800" aria-label="Link">
+          <button type="button" onClick={handleCopyLink} className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800" aria-label="Link">
             <Icon name="link" size={20} />
           </button>
         </div>

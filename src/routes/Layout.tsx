@@ -1,6 +1,26 @@
 import { Link, NavLink, Outlet } from 'react-router-dom';
+import { useEffect } from 'react';
+import { loadData, type GraphData } from '../lib/data';
 
 export function Layout() {
+  // Globally load data so routes like Scanner work on direct entry
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+  if ((window as any).appGraph) return;
+        const data: GraphData = await loadData();
+        if (!cancelled) {
+          (window as any).appGraph = data;
+          try { window.dispatchEvent(new CustomEvent('graph-loaded')); } catch {}
+        }
+      } catch {
+  // ignore; routes that depend on data will handle their own error states
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white dark:from-gray-950 dark:to-black">
       <header className="sticky top-0 z-40 backdrop-blur supports-[backdrop-filter]:bg-white/60 bg-white/80 dark:bg-black/40 border-b border-slate-200/70 dark:border-slate-800">

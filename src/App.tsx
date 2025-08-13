@@ -137,7 +137,8 @@ function App() {
     (async () => {
       try {
         setLoading(true);
-        const data = await loadData();
+        const pre = (window as any).appGraph as GraphData | undefined;
+        const data = pre ?? await loadData();
         if (!cancelled) {
           setGraph(data);
           (window as any).appGraph = data;
