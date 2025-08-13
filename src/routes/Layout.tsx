@@ -1,8 +1,17 @@
-import { Link, NavLink, Outlet } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useEffect } from 'react';
 import { loadData, type GraphData } from '../lib/data';
 
 export function Layout() {
+  const location = useLocation();
+  // Dynamic titles per route
+  useEffect(() => {
+    const base = 'Backroads';
+    const p = location.pathname;
+    if (p.startsWith('/scanner')) document.title = `${base} | Scanner`;
+    else if (p.startsWith('/observatories')) document.title = `${base} | Observatories`;
+    else document.title = base;
+  }, [location.pathname]);
   // Globally load data so routes like Scanner work on direct entry
   useEffect(() => {
     let cancelled = false;
