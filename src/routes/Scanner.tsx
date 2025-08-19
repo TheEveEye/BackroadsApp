@@ -14,6 +14,8 @@ type Wormhole = {
   eol: boolean;
   reduced: boolean;
   critical: boolean;
+  bookmarkInside: boolean;
+  bookmarkOutside: boolean;
 };
 
 export function Scanner() {
@@ -37,8 +39,21 @@ export function Scanner() {
     V: 'Vidette',
   };
 
-  const packFlags = (wh: Wormhole) => (wh.eol ? 1 : 0) | (wh.reduced ? 2 : 0) | (wh.critical ? 4 : 0);
-  const unpackFlags = (n: number) => ({ eol: !!(n & 1), reduced: !!(n & 2), critical: !!(n & 4) });
+  // flags bitmask:
+  // 1: eol, 2: reduced, 4: critical, 8: bookmarkInside, 16: bookmarkOutside
+  const packFlags = (wh: Wormhole) =>
+    (wh.eol ? 1 : 0) |
+    (wh.reduced ? 2 : 0) |
+    (wh.critical ? 4 : 0) |
+    (wh.bookmarkInside ? 8 : 0) |
+    (wh.bookmarkOutside ? 16 : 0);
+  const unpackFlags = (n: number) => ({
+    eol: !!(n & 1),
+    reduced: !!(n & 2),
+    critical: !!(n & 4),
+    bookmarkInside: !!(n & 8),
+    bookmarkOutside: !!(n & 16),
+  });
 
   function buildCompact(list: Wormhole[]) {
     // Compact representation: [ref, code, flags]
@@ -61,8 +76,8 @@ export function Scanner() {
         systemName = ref;
       }
       const type = code && CODE_TO_TYPE[code] ? CODE_TO_TYPE[code] : null;
-      const { eol, reduced, critical } = unpackFlags(Number(flags) || 0);
-      out.push({ id: crypto.randomUUID(), systemId, systemName, type, eol, reduced, critical });
+  const { eol, reduced, critical, bookmarkInside, bookmarkOutside } = unpackFlags(Number(flags) || 0);
+  out.push({ id: crypto.randomUUID(), systemId, systemName, type, eol, reduced, critical, bookmarkInside, bookmarkOutside });
     }
     return out;
   }
@@ -105,7 +120,7 @@ export function Scanner() {
   const addNew = () => {
     setWormholes(list => [
       ...list,
-      { id: crypto.randomUUID(), systemId: null, systemName: '', type: null, eol: false, reduced: false, critical: false },
+  { id: crypto.randomUUID(), systemId: null, systemName: '', type: null, eol: false, reduced: false, critical: false, bookmarkInside: false, bookmarkOutside: false },
     ]);
   };
 
@@ -230,8 +245,8 @@ export function Scanner() {
       <ul className="grid gap-4">
         {wormholes.map((wh, idx) => (
           <li key={wh.id} className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-gray-900 p-4">
-            <div className="grid md:grid-cols-4 gap-4 items-start">
-              <div>
+            <div className="grid md:grid-cols-8 gap-4 items-start">
+              <div className="md:col-span-2">
                 <div className="font-semibold mb-2">Solar System</div>
                 <AutocompleteInput
                   graph={graph}
@@ -247,7 +262,7 @@ export function Scanner() {
                 />
                 <button className="mt-3 px-3 py-1.5 rounded bg-red-500 text-white hover:bg-red-600" onClick={() => setWormholes(list => list.filter((_,i)=> i!==idx))}>Remove</button>
               </div>
-              <div>
+              <div className="min-w-0 md:col-span-2">
                 <div className="font-semibold mb-2">Wormhole Type</div>
                 <div className="flex flex-wrap gap-3 items-center">
                   {(['Conflux','Barbican','Redoubt','Sentinel','Vidette'] as WormholeType[]).map(t => (
@@ -258,16 +273,16 @@ export function Scanner() {
                   ))}
                 </div>
               </div>
-              <div>
+              <div className="min-w-0 md:col-span-1">
                 <div className="font-semibold mb-2">End of Life?</div>
                 <label className="inline-flex items-center gap-2">
                   <input type="checkbox" checked={wh.eol} onChange={(e)=> setWormholes(list => list.map((x,i)=> i===idx ? { ...x, eol: e.target.checked } : x))} />
                   <span>EoL</span>
                 </label>
               </div>
-              <div>
+              <div className="min-w-0 md:col-span-2">
                 <div className="font-semibold mb-2">Mass</div>
-                <div className="flex gap-4">
+                <div className="flex gap-3">
                   <label className="inline-flex items-center gap-2">
                     <input
                       type="checkbox"
@@ -293,6 +308,27 @@ export function Scanner() {
                       }))}
                     />
                     <span>Crit</span>
+                  </label>
+                </div>
+              </div>
+              <div className="min-w-0 md:col-span-1 md:justify-self-end">
+                <div className="font-semibold mb-2">Bookmarks</div>
+                <div className="flex items-center gap-4">
+                  <label className="inline-flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={wh.bookmarkInside}
+                      onChange={(e)=> setWormholes(list => list.map((x,i)=> i===idx ? { ...x, bookmarkInside: e.target.checked } : x))}
+                    />
+                    <span>In</span>
+                  </label>
+                  <label className="inline-flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={wh.bookmarkOutside}
+                      onChange={(e)=> setWormholes(list => list.map((x,i)=> i===idx ? { ...x, bookmarkOutside: e.target.checked } : x))}
+                    />
+                    <span>Out</span>
                   </label>
                 </div>
               </div>
