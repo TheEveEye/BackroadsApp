@@ -79,7 +79,9 @@ export function Results({ results, namesById, lyRadius, graph }: { results: Obse
               {copyStatus === 'success' ? 'Copied!' : 'Copy failed'}
             </div>
           )}
-          <div className="group relative">
+          <div
+            className="group relative before:content-[''] before:absolute before:right-0 before:top-full before:h-2 before:w-[180px]"
+          >
             <button
               type="button"
               aria-label="Copy"
