@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { GraphData } from '../lib/data';
 import { resolveQueryToId } from '../lib/graph';
 import { Icon } from './Icon';
 import { AutocompleteInput } from './AutocompleteInput';
+import { ConfirmDialog } from './ConfirmDialog';
 
 export function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ from: number; to: number; enabled?: boolean }>; onChange: (v: Array<{ from: number; to: number; enabled?: boolean }>) => void; onClose: () => void }) {
   const LY = 9.4607e15; // meters per lightyear
@@ -10,6 +11,7 @@ export function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ fro
   const [toQuery, setToQuery] = useState('');
   // Local working list
   const [list, setList] = useState(value);
+  const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false);
 
   useEffect(() => setList(value), [value]);
 
@@ -24,6 +26,32 @@ export function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ fro
       setToQuery('');
     }
   };
+
+  const hasUnsaved = useMemo(() => {
+    try {
+      return JSON.stringify(value) !== JSON.stringify(list);
+    } catch {
+      return true;
+    }
+  }, [value, list]);
+
+  const attemptClose = () => {
+    if (hasUnsaved) setShowUnsavedConfirm(true);
+    else onClose();
+  };
+
+  // Close on Escape
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (showUnsavedConfirm) return; // let nested dialog handle it
+        e.preventDefault();
+        attemptClose();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [hasUnsaved, showUnsavedConfirm]);
 
   const graphForNames: GraphData | null = (window as any).appGraph || null;
   const getName = (id: number) => graphForNames?.namesById?.[String(id)] ?? String(id);
@@ -135,7 +163,7 @@ export function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ fro
       <div className="w-full max-w-2xl max-h-[85vh] overflow-hidden rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-4 flex flex-col">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold">Configure Ansiblex Bridges</h2>
-          <button className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800" onClick={onClose} aria-label="Close">
+          <button className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800" onClick={attemptClose} aria-label="Close">
             <Icon name="close" size={20} />
           </button>
         </div>
@@ -212,10 +240,22 @@ export function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ fro
           {list.length === 0 && <li className="py-6 text-center text-sm text-gray-500">No Ansiblex bridges configured.</li>}
         </ul>
         <div className="mt-4 flex justify-end gap-2">
-          <button className="px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700" onClick={onClose}>Close</button>
+          <button className="px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700" onClick={attemptClose}>Close</button>
           <button className="px-3 py-1.5 rounded bg-blue-600 text-white" onClick={() => { onChange(list); onClose(); }}>Save</button>
         </div>
       </div>
+      {showUnsavedConfirm && (
+        <ConfirmDialog
+          open={showUnsavedConfirm}
+          title="Discard changes?"
+          message="You have unsaved changes. Do you want to discard them?"
+          confirmLabel="Discard"
+          cancelLabel="Cancel"
+          tone="warn"
+          onCancel={() => setShowUnsavedConfirm(false)}
+          onConfirm={() => { setShowUnsavedConfirm(false); onClose(); }}
+        />
+      )}
     </div>
   );
 }

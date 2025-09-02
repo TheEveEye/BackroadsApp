@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { Icon } from './Icon';
 
 export function ConfirmDialog({
@@ -21,6 +21,18 @@ export function ConfirmDialog({
   onCancel: () => void;
 }) {
   if (!open) return null;
+  // Close on Escape
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onCancel();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onCancel]);
   const toneClasses = tone === 'danger'
     ? { icon: '#b91c1c', btn: 'bg-red-600 hover:bg-red-700 text-white' }
     : tone === 'warn'
