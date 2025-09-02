@@ -35,7 +35,12 @@ export function Layout() {
       <header className="sticky top-0 z-40 backdrop-blur supports-[backdrop-filter]:bg-white/60 bg-white/80 dark:bg-black/40 border-b border-slate-200/70 dark:border-slate-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-semibold text-lg">
-            <span className="inline-flex w-6 h-6 rounded bg-blue-600" />
+            {/* Use BASE_URL-aware path for GitHub Pages compatibility */}
+            <img
+              src={`${(import.meta as any).env?.BASE_URL || '/'}backroads.png`}
+              alt="Backroads"
+              className="w-6 h-6 rounded"
+            />
             Backroads
           </Link>
           <nav className="flex items-center gap-1">
