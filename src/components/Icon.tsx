@@ -8,6 +8,7 @@ const NAME_TO_STEM: Record<string, string> = {
   warn: 'exclamationmark.triangle.fill',
   discord: 'discord',
   link: 'link',
+  copy: 'square.on.square',
 };
 
 export function Icon({
