@@ -9,6 +9,7 @@ const NAME_TO_STEM: Record<string, string> = {
   discord: 'discord',
   link: 'link',
   copy: 'square.on.square',
+  close: 'xmark',
 };
 
 export function Icon({

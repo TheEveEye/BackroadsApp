@@ -427,7 +427,7 @@ export function Scanner() {
                 <div className="mt-3 flex items-center gap-3">
                   <button className="px-3 py-1.5 rounded bg-red-500 text-white hover:bg-red-600" onClick={() => setWormholes(list => list.filter((_,i)=> i!==idx))}>Remove</button>
                   {(() => { const jc = jumpCounts.get(wh.id); return (
-                    <span className="text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                    <span className="text-sm text-gray-700 dark:text-gray-300 whitespace-normal sm:whitespace-nowrap">
                       {fromId != null && jc?.from != null ? `${jc.from} jumps from start` : '—'}
                       <span className="mx-2 text-gray-400">•</span>
                       {toId != null && jc?.to != null ? `${jc.to} jumps from destination` : '—'}
