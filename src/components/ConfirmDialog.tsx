@@ -43,19 +43,19 @@ export function ConfirmDialog({
           </div>
         </div>
         <div className="mt-4 flex justify-end gap-2">
-          {/* Confirm (Clear): secondary destructive style to match in-page clear buttons */}
+          {/* Cancel: secondary */}
           <button
-            className="px-3 py-1.5 rounded border border-red-300 text-red-700 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20"
-            onClick={onConfirm}
-          >
-            {confirmLabel}
-          </button>
-          {/* Cancel: primary button */}
-          <button
-            className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white"
+            className="px-3 py-1.5 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
             onClick={onCancel}
           >
             {cancelLabel}
+          </button>
+          {/* Confirm (Clear): primary destructive */}
+          <button
+            className="px-3 py-1.5 rounded bg-red-600 hover:bg-red-700 text-white"
+            onClick={onConfirm}
+          >
+            {confirmLabel}
           </button>
         </div>
       </div>
