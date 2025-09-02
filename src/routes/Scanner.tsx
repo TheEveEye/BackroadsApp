@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import type { GraphData } from '../lib/data';
+import { resolveQueryToId, findPathTo } from '../lib/graph';
 import { AutocompleteInput } from '../components/AutocompleteInput';
 import { Icon } from '../components/Icon';
+import { AnsiblexModal as SharedAnsiblexModal } from '../components/AnsiblexModal';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 
 type WormholeType = 'Conflux' | 'Barbican' | 'Redoubt' | 'Sentinel' | 'Vidette';
 
@@ -20,6 +23,54 @@ type Wormhole = {
 
 export function Scanner() {
   const graph: GraphData | null = (window as any).appGraph || null;
+  // Route selection panel state (start/destination and settings)
+  const ROUTE_UI_KEY = 'br.scanner.ui.v1';
+  const SETTINGS_STORAGE_KEY = 'br.settings.v1';
+  const [route, setRoute] = useState<{ fromQuery: string; toQuery: string }>(() => {
+    try {
+      const raw = localStorage.getItem(ROUTE_UI_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          return {
+            fromQuery: typeof parsed.fromQuery === 'string' ? parsed.fromQuery : '',
+            toQuery: typeof parsed.toQuery === 'string' ? parsed.toQuery : '',
+          };
+        }
+      }
+    } catch {}
+    return { fromQuery: '', toQuery: '' };
+  });
+  const [settings, setSettings] = useState<{ excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }> }>(() => {
+    const defaults = { excludeZarzakh: true, sameRegionOnly: false, titanBridgeFirstJump: false, allowAnsiblex: false, ansiblexes: [] as Array<{ from: number; to: number; enabled?: boolean }> };
+    try {
+      const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          return {
+            ...defaults,
+            excludeZarzakh: typeof parsed.excludeZarzakh === 'boolean' ? parsed.excludeZarzakh : defaults.excludeZarzakh,
+            sameRegionOnly: typeof parsed.sameRegionOnly === 'boolean' ? parsed.sameRegionOnly : defaults.sameRegionOnly,
+            titanBridgeFirstJump: typeof parsed.titanBridgeFirstJump === 'boolean' ? parsed.titanBridgeFirstJump : defaults.titanBridgeFirstJump,
+            allowAnsiblex: typeof parsed.allowAnsiblex === 'boolean' ? parsed.allowAnsiblex : defaults.allowAnsiblex,
+            ansiblexes: Array.isArray(parsed.ansiblexes) ? parsed.ansiblexes : defaults.ansiblexes,
+          };
+        }
+      }
+      // Fallback: dedicated Ansiblex key
+      const rawAX = localStorage.getItem('br.ansiblex.v1');
+      if (rawAX) {
+        const arr = JSON.parse(rawAX);
+        if (Array.isArray(arr) && arr.length > 0) {
+          return { ...defaults, ansiblexes: arr, allowAnsiblex: true };
+        }
+      }
+    } catch {}
+    return defaults;
+  });
+  const [showAnsiblexModal, setShowAnsiblexModal] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [wormholes, setWormholes] = useState<Wormhole[]>([]);
   const [copyStatus, setCopyStatus] = useState<null | 'success' | 'error'>(null);
   const location = useLocation();
@@ -82,7 +133,7 @@ export function Scanner() {
     return out;
   }
 
-  // Load from URL (?wh=base64) on mount and whenever search changes (e.g., link opened)
+  // Load from URL (?wh=base64&from=...&to=...) on mount and whenever search changes (e.g., link opened)
   useEffect(() => {
     try {
       const params = new URLSearchParams(location.search);
@@ -93,9 +144,53 @@ export function Scanner() {
         const list = expandCompact(parsed);
         if (list.length) setWormholes(list);
       }
+      const f = params.get('from');
+      const t = params.get('to');
+      if (typeof f === 'string' || typeof t === 'string') {
+        setRoute(r => ({
+          fromQuery: typeof f === 'string' ? f : r.fromQuery,
+          toQuery: typeof t === 'string' ? t : r.toQuery,
+        }));
+      }
     } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.search]);
+
+  // Persist route inputs
+  useEffect(() => {
+    try {
+      localStorage.setItem(ROUTE_UI_KEY, JSON.stringify(route));
+    } catch {}
+  }, [route]);
+
+  // Derive numeric IDs from start/destination queries
+  const fromId = useMemo(() => (graph ? resolveQueryToId(route.fromQuery, graph) : null), [graph, route.fromQuery]);
+  const toId = useMemo(() => (graph ? resolveQueryToId(route.toQuery, graph) : null), [graph, route.toQuery]);
+
+  // Open modal when any component dispatches the global event
+  useEffect(() => {
+    const onOpen = () => setShowAnsiblexModal(true);
+    window.addEventListener('open-ansiblex-modal', onOpen as any);
+    return () => window.removeEventListener('open-ansiblex-modal', onOpen as any);
+  }, []);
+
+  // Persist settings and ansiblex list consistently with observatory page
+  useEffect(() => {
+    try { localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings)); } catch {}
+  }, [settings]);
+  useEffect(() => {
+    try { localStorage.setItem('br.ansiblex.v1', JSON.stringify(settings.ansiblexes || [])); } catch {}
+  }, [settings.ansiblexes]);
+
+  const doClearAll = () => {
+    try {
+      localStorage.removeItem(SETTINGS_STORAGE_KEY);
+      localStorage.removeItem('br.ansiblex.v1');
+      localStorage.removeItem(ROUTE_UI_KEY);
+    } catch {}
+    setSettings({ excludeZarzakh: true, sameRegionOnly: false, titanBridgeFirstJump: false, allowAnsiblex: false, ansiblexes: [] });
+    setRoute({ fromQuery: '', toQuery: '' });
+  };
 
   // When the graph becomes available later, fill in missing system names for items with systemId
   useEffect(() => {
@@ -175,7 +270,7 @@ export function Scanner() {
       const compact = buildCompact(wormholes);
       const b64 = btoa(JSON.stringify(compact));
       const base = `${window.location.origin}${window.location.pathname}#/scanner`;
-      const url = `${base}?wh=${encodeURIComponent(b64)}`;
+      const url = `${base}?wh=${encodeURIComponent(b64)}&from=${encodeURIComponent(route.fromQuery || '')}&to=${encodeURIComponent(route.toQuery || '')}`;
       lines.push(`## [Scan was completed <t:${now}:R>](${url})`);
     } catch {
       lines.push(`## Scan was completed <t:${now}:R>`);
@@ -222,7 +317,7 @@ export function Scanner() {
       const compact = buildCompact(wormholes);
       const b64 = btoa(JSON.stringify(compact));
       const base = `${window.location.origin}${window.location.pathname}#/scanner`;
-      const url = `${base}?wh=${encodeURIComponent(b64)}`;
+      const url = `${base}?wh=${encodeURIComponent(b64)}&from=${encodeURIComponent(route.fromQuery || '')}&to=${encodeURIComponent(route.toQuery || '')}`;
       await navigator.clipboard.writeText(url);
       setCopyStatus('success');
       setTimeout(() => setCopyStatus(null), 1500);
@@ -232,8 +327,77 @@ export function Scanner() {
     }
   };
 
+  // Precompute jump counts from start and destination to each wormhole system
+  const jumpCounts = useMemo(() => {
+    const out = new Map<string, { from: number | null; to: number | null }>();
+    if (!graph || wormholes.length === 0) return out;
+    const lyForTitan = settings.titanBridgeFirstJump ? 6 : 0;
+    const MAX = 200; // generous cap for path search
+    for (const wh of wormholes) {
+      if (!wh.systemId || !Number.isFinite(wh.systemId)) { out.set(wh.id, { from: null, to: null }); continue; }
+      let fromJ: number | null = null;
+      let toJ: number | null = null;
+      try {
+        if (fromId != null) {
+          const res = findPathTo({ startId: fromId, targetId: wh.systemId, maxJumps: MAX, graph, settings, lyRadius: lyForTitan });
+          fromJ = res.path ? (res.path.length - 1) : null;
+        }
+      } catch {}
+      try {
+        if (toId != null) {
+          const res = findPathTo({ startId: toId, targetId: wh.systemId, maxJumps: MAX, graph, settings, lyRadius: lyForTitan });
+          toJ = res.path ? (res.path.length - 1) : null;
+        }
+      } catch {}
+      out.set(wh.id, { from: fromJ, to: toJ });
+    }
+    return out;
+  }, [graph, wormholes, fromId, toId, settings]);
+
   return (
     <section className="grid gap-6">
+      {/* Route selection panel */}
+      <section className="grid gap-4 grid-cols-1 md:grid-cols-2 bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+        <label className="grid gap-2">
+          Start system (name):
+          <AutocompleteInput graph={graph} value={route.fromQuery} onChange={(v)=> setRoute(r => ({ ...r, fromQuery: v }))} placeholder="e.g. Jita" />
+        </label>
+        <label className="grid gap-2">
+          Destination system (name):
+          <AutocompleteInput graph={graph} value={route.toQuery} onChange={(v)=> setRoute(r => ({ ...r, toQuery: v }))} placeholder="e.g. Amarr" />
+        </label>
+        <fieldset className="md:col-span-2 border border-gray-200 dark:border-gray-700 rounded-md p-3">
+          <legend className="px-1 text-sm text-gray-700 dark:text-gray-300">Settings</legend>
+          <label className="inline-flex items-center gap-2 mr-4">
+            <input type="checkbox" className="accent-blue-600" checked={settings.excludeZarzakh} onChange={(e)=> setSettings({ ...settings, excludeZarzakh: e.target.checked })} />
+            <span>Exclude Zarzakh</span>
+          </label>
+          <label className="inline-flex items-center gap-2 mr-4">
+            <input type="checkbox" className="accent-purple-600" checked={settings.titanBridgeFirstJump} onChange={(e)=> setSettings({ ...settings, titanBridgeFirstJump: e.target.checked })} />
+            <span>Count Titan bridge from start as first jump</span>
+          </label>
+          <label className="inline-flex items-center gap-2 mr-3">
+            <input type="checkbox" className="accent-blue-600" checked={!!settings.allowAnsiblex} onChange={(e)=> setSettings({ ...settings, allowAnsiblex: e.target.checked })} />
+            <span>Allow Ansiblex jump bridges</span>
+          </label>
+          <button type="button" className="px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center justify-center gap-1 leading-none" onClick={() => {
+            const ev = new CustomEvent('open-ansiblex-modal');
+            window.dispatchEvent(ev);
+          }}>
+            <Icon name="gear" size={16} />
+            <span className="inline-block align-middle">Configure…</span>
+          </button>
+          <button
+            type="button"
+            className="ml-auto px-2 py-1 text-sm rounded border border-red-300 text-red-700 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20 leading-none float-right"
+            onClick={() => setShowClearConfirm(true)}
+            title="Clear all saved settings"
+          >
+            Clear settings
+          </button>
+        </fieldset>
+      </section>
+
       <div className="flex items-center">
         <h1 className="text-2xl font-semibold">Scanner</h1>
       </div>
@@ -260,7 +424,16 @@ export function Scanner() {
                   className="max-w-xs"
                   items={observatoryItems}
                 />
-                <button className="mt-3 px-3 py-1.5 rounded bg-red-500 text-white hover:bg-red-600" onClick={() => setWormholes(list => list.filter((_,i)=> i!==idx))}>Remove</button>
+                <div className="mt-3 flex items-center gap-3">
+                  <button className="px-3 py-1.5 rounded bg-red-500 text-white hover:bg-red-600" onClick={() => setWormholes(list => list.filter((_,i)=> i!==idx))}>Remove</button>
+                  {(() => { const jc = jumpCounts.get(wh.id); return (
+                    <span className="text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                      {fromId != null && jc?.from != null ? `${jc.from} jumps from start` : '—'}
+                      <span className="mx-2 text-gray-400">•</span>
+                      {toId != null && jc?.to != null ? `${jc.to} jumps from destination` : '—'}
+                    </span>
+                  ); })()}
+                </div>
               </div>
               <div className="min-w-0 md:col-span-2">
                 <div className="font-semibold mb-2">Wormhole Type</div>
@@ -344,6 +517,8 @@ export function Scanner() {
             {copyStatus === 'success' ? 'Copied!' : 'Copy failed'}
           </div>
         )}
+        {/* Left spacer to keep the center button truly centered (matches two 36px buttons + 8px gap => 80px = w-20) */}
+        <div className="w-20 shrink-0" aria-hidden="true" />
         <div className="flex-1 flex justify-center">
           <button onClick={addNew} className="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700">New Wormhole</button>
         </div>
@@ -356,6 +531,24 @@ export function Scanner() {
           </button>
         </div>
       </div>
+
+      {showAnsiblexModal && (
+        <SharedAnsiblexModal
+          onClose={() => setShowAnsiblexModal(false)}
+          value={settings.ansiblexes || []}
+          onChange={(list) => setSettings(s => ({ ...s, ansiblexes: list }))}
+        />
+      )}
+      <ConfirmDialog
+        open={showClearConfirm}
+        title="Clear Settings"
+        message="Do you wish to clear all settings, including Ansiblex connections?"
+        confirmLabel="Clear"
+        cancelLabel="Cancel"
+        tone="warn"
+        onCancel={() => setShowClearConfirm(false)}
+        onConfirm={() => { doClearAll(); setShowClearConfirm(false); }}
+      />
     </section>
   );
 }
