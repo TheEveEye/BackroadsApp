@@ -167,6 +167,30 @@ export function Scanner() {
   const fromId = useMemo(() => (graph ? resolveQueryToId(route.fromQuery, graph) : null), [graph, route.fromQuery]);
   const toId = useMemo(() => (graph ? resolveQueryToId(route.toQuery, graph) : null), [graph, route.toQuery]);
 
+  // Direct gates-only route between selected start and destination (no titan, no Ansiblex)
+  const directGatePath = useMemo(() => {
+    if (!graph || fromId == null || toId == null) return null;
+    try {
+      const res = findPathTo({
+        startId: fromId,
+        targetId: toId,
+        maxJumps: 200,
+        graph,
+        settings: {
+          excludeZarzakh: !!settings.excludeZarzakh,
+          sameRegionOnly: !!settings.sameRegionOnly,
+          titanBridgeFirstJump: !!settings.titanBridgeFirstJump,
+          allowAnsiblex: !!settings.allowAnsiblex,
+          ansiblexes: settings.ansiblexes || [],
+        },
+        lyRadius: settings.titanBridgeFirstJump ? 6 : 0,
+      });
+      return res.path;
+    } catch {
+      return null;
+    }
+  }, [graph, fromId, toId, settings.excludeZarzakh, settings.sameRegionOnly, settings.titanBridgeFirstJump, settings.allowAnsiblex, settings.ansiblexes]);
+
   // Open modal when any component dispatches the global event
   useEffect(() => {
     const onOpen = () => setShowAnsiblexModal(true);
@@ -331,7 +355,8 @@ export function Scanner() {
   const jumpCounts = useMemo(() => {
     const out = new Map<string, { from: number | null; to: number | null }>();
     if (!graph || wormholes.length === 0) return out;
-    const lyForTitan = settings.titanBridgeFirstJump ? 6 : 0;
+    const lyFrom = settings.titanBridgeFirstJump ? 6 : 0; // only apply titan on leg from start -> entry
+    const lyTo = 0; // never apply titan on exit -> destination
     const MAX = 200; // generous cap for path search
     for (const wh of wormholes) {
       if (!wh.systemId || !Number.isFinite(wh.systemId)) { out.set(wh.id, { from: null, to: null }); continue; }
@@ -339,13 +364,15 @@ export function Scanner() {
       let toJ: number | null = null;
       try {
         if (fromId != null) {
-          const res = findPathTo({ startId: fromId, targetId: wh.systemId, maxJumps: MAX, graph, settings, lyRadius: lyForTitan });
+          const res = findPathTo({ startId: fromId, targetId: wh.systemId, maxJumps: MAX, graph, settings, lyRadius: lyFrom });
           fromJ = res.path ? (res.path.length - 1) : null;
         }
       } catch {}
       try {
         if (toId != null) {
-          const res = findPathTo({ startId: toId, targetId: wh.systemId, maxJumps: MAX, graph, settings, lyRadius: lyForTitan });
+          // Disallow titan on the exit->destination leg by overriding the flag and radius
+          const toSettings = { ...settings, titanBridgeFirstJump: false };
+          const res = findPathTo({ startId: toId, targetId: wh.systemId, maxJumps: MAX, graph, settings: toSettings, lyRadius: lyTo });
           toJ = res.path ? (res.path.length - 1) : null;
         }
       } catch {}
@@ -354,8 +381,93 @@ export function Scanner() {
     return out;
   }, [graph, wormholes, fromId, toId, settings]);
 
+  // Build all possible wormhole-assisted routes by pairing scanned wormholes of the same type
+  const wormholeRoutes = useMemo(() => {
+    const out: Array<{
+      id: string;
+      type: WormholeType;
+      fromWh: Wormhole;
+      toWh: Wormhole;
+      fromJumps: number;
+      toJumps: number;
+      total: number;
+    }> = [];
+    if (!graph || fromId == null || toId == null) return out;
+    // Filter to valid, typed wormholes with resolved system IDs
+    const typed = wormholes.filter(w => w.systemId != null && w.type != null) as Array<Required<Pick<Wormhole, 'systemId' | 'type'>> & Wormhole>;
+    if (typed.length < 2) return out;
+    // For each pair with the same type, compute total using precomputed jumpCounts
+    for (let i = 0; i < typed.length; i++) {
+      const a = typed[i];
+      const jcA = jumpCounts.get(a.id);
+      const aFrom = jcA?.from;
+      if (aFrom == null) continue;
+      for (let j = 0; j < typed.length; j++) {
+        if (i === j) continue;
+        const b = typed[j];
+        if (a.type !== b.type) continue;
+        const jcB = jumpCounts.get(b.id);
+        const bTo = jcB?.to;
+        if (bTo == null) continue;
+        const total = aFrom + bTo;
+        out.push({ id: `${a.id}->${b.id}`, type: a.type!, fromWh: a, toWh: b, fromJumps: aFrom, toJumps: bTo, total });
+      }
+    }
+    // Sort by total jumps asc, then by type then names
+    const namesById: any = (graph as any)?.namesById || {};
+    out.sort((r1, r2) =>
+      r1.total - r2.total || String(r1.type).localeCompare(String(r2.type)) ||
+      String(namesById[String(r1.fromWh.systemId!)] ?? '').localeCompare(String(namesById[String(r2.fromWh.systemId!)] ?? ''))
+    );
+    return out;
+  }, [graph, fromId, toId, wormholes, jumpCounts]);
+
+  const typePillClass = (t: WormholeType | null) => {
+    const base = 'px-3 sm:px-4 py-1 sm:py-1.5 rounded-md border text-sm sm:text-base font-semibold shadow-sm ';
+    if (t === 'Conflux') return base + 'bg-blue-600/10 border-blue-500/60 text-blue-700 dark:text-blue-300';
+    if (t === 'Barbican') return base + 'bg-amber-500/10 border-amber-500/60 text-amber-700 dark:text-amber-300';
+    if (t === 'Redoubt') return base + 'bg-gray-500/10 border-gray-500/60 text-gray-700 dark:text-gray-300';
+    if (t === 'Sentinel') return base + 'bg-purple-500/10 border-purple-500/60 text-purple-700 dark:text-purple-300';
+    if (t === 'Vidette') return base + 'bg-teal-500/10 border-teal-500/60 text-teal-700 dark:text-teal-300';
+    return base + 'bg-gray-500/10 border-gray-400/60 text-slate-800 dark:text-slate-100';
+  };
+
+  // Control visibility relative to direct route
+  const [showAllRoutes, setShowAllRoutes] = useState(false);
+  const directJumps = useMemo(() => (directGatePath && directGatePath.length > 0 ? directGatePath.length - 1 : null), [directGatePath]);
+  // Always render base routes above direct: routes that are not longer than direct
+  const baseWormholeRoutes = useMemo(() => {
+    if (directJumps == null) return wormholeRoutes;
+    return wormholeRoutes.filter(r => r.total <= directJumps);
+  }, [wormholeRoutes, directJumps]);
+  // Extra routes (longer than direct) appear below the dashed line and button when expanded
+  const extraWormholeRoutes = useMemo(() => {
+    if (directJumps == null) return [] as typeof wormholeRoutes;
+    return wormholeRoutes.filter(r => r.total > directJumps);
+  }, [wormholeRoutes, directJumps]);
+  const hiddenRouteCount = extraWormholeRoutes.length;
+  const hasHiddenRoutes = hiddenRouteCount > 0;
+
+  // Context-aware empty state message for wormhole routes
+  const sameTypeCounts = useMemo(() => {
+    const counts: Partial<Record<WormholeType, number>> = {};
+    for (const wh of wormholes) {
+      if (!wh.type || wh.systemId == null) continue;
+      counts[wh.type] = (counts[wh.type] || 0) + 1;
+    }
+    return counts;
+  }, [wormholes]);
+  const hasSameTypePair = useMemo(() => Object.values(sameTypeCounts).some((c) => (c || 0) >= 2), [sameTypeCounts]);
+  const noRoutesMessage = useMemo(() => {
+    if (wormholeRoutes.length > 0) return null;
+    if (fromId == null || toId == null) return 'Select start and destination systems to see routes.';
+    if (!hasSameTypePair) return 'Add at least two scanned wormholes of the same type.';
+    return null;
+  }, [wormholeRoutes.length, fromId, toId, hasSameTypePair]);
+
   return (
-    <section className="grid gap-6">
+    <section className="grid gap-6 md:grid-cols-3 items-start">
+      <div className="grid gap-6 md:pr-2 md:col-span-2">
       {/* Route selection panel */}
       <section className="grid gap-4 grid-cols-1 md:grid-cols-2 bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
         <label className="grid gap-2">
@@ -549,6 +661,109 @@ export function Scanner() {
         onCancel={() => setShowClearConfirm(false)}
         onConfirm={() => { doClearAll(); setShowClearConfirm(false); }}
       />
+      </div>
+
+      {/* Right: Routes panel (half width of left) */}
+      <aside className="grid gap-4 md:pl-2 items-start content-start">
+        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white/50 dark:bg-black/20 p-4">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-lg font-semibold">Routes</h2>
+          </div>
+          {/* Wormhole-assisted routes derived from scanned wormholes */}
+          {noRoutesMessage && (
+            <div className="text-sm text-slate-600 dark:text-slate-400">{noRoutesMessage}</div>
+          )}
+          {baseWormholeRoutes.map((r) => (
+            <div key={r.id} className="relative rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-4 bg-white dark:bg-gray-900 mb-4 last:mb-0">
+              <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5 sm:gap-3.5 text-slate-800 dark:text-slate-100">
+                <div className="flex items-center gap-2">
+                  <span className="text-base sm:text-lg font-semibold tracking-wide text-left">{r.fromWh.systemName || (graph as any)?.namesById?.[String(r.fromWh.systemId)] || r.fromWh.systemId}</span>
+                  <span className="h-px flex-1 bg-gray-300 dark:bg-gray-600" />
+                </div>
+                <span className={typePillClass(r.type)}>{r.type}</span>
+                <div className="flex items-center gap-2">
+                  <span className="h-px flex-1 bg-gray-300 dark:bg-gray-600" />
+                  <span className="text-base sm:text-lg font-semibold tracking-wide text-right">{r.toWh.systemName || (graph as any)?.namesById?.[String(r.toWh.systemId)] || r.toWh.systemId}</span>
+                </div>
+              </div>
+              <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center">
+                <div className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 text-left">{r.fromJumps} jumps</div>
+                <div className="text-xs sm:text-sm text-slate-700 dark:text-slate-300 font-medium">Total: {r.total} jumps</div>
+                <div className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 text-right">{r.toJumps} jumps</div>
+              </div>
+            </div>
+          ))}
+          {/* Direct gate route mock (placed below in same container) */}
+          <div className="mt-4 relative rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-4 bg-white dark:bg-gray-900">
+            <div className="flex items-center gap-2.5 sm:gap-3.5 text-slate-800 dark:text-slate-100">
+              {(() => {
+                const namesById: any = (graph as any)?.namesById || {};
+                const left = ((fromId != null ? namesById[String(fromId)] : undefined) ?? (route.fromQuery || '—')) as string;
+                const right = ((toId != null ? namesById[String(toId)] : undefined) ?? (route.toQuery || '—')) as string;
+                return (
+                  <>
+                    <span className="text-base sm:text-lg font-semibold tracking-wide">{left}</span>
+                    <span className="h-px flex-1 bg-gray-300 dark:bg-gray-600" />
+                    <span className="text-base sm:text-lg font-semibold tracking-wide">{right}</span>
+                  </>
+                );
+              })()}
+            </div>
+            <div className="mt-2 text-center text-xs sm:text-sm text-slate-700 dark:text-slate-300 font-medium">
+              {directGatePath && directGatePath.length > 0 ? `Total: ${directGatePath.length - 1} jumps` : 'Select start and destination'}
+            </div>
+          </div>
+          {/* Separator */}
+          <div className="my-3 border-t border-dashed border-gray-300 dark:border-gray-700" />
+          {/* Toggle hidden routes visibility */}
+          {hasHiddenRoutes && !showAllRoutes && (
+            <div className="mt-3 text-center">
+              <button
+                type="button"
+                className="px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
+                onClick={() => setShowAllRoutes(true)}
+              >
+                Show all routes ({hiddenRouteCount} more)
+              </button>
+            </div>
+          )}
+          {hasHiddenRoutes && showAllRoutes && (
+            <div className="mt-3 text-center">
+              <button
+                type="button"
+                className="px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
+                onClick={() => setShowAllRoutes(false)}
+              >
+                Hide extra routes
+              </button>
+            </div>
+          )}
+          {hasHiddenRoutes && showAllRoutes && (
+            <div className="mt-3 grid gap-4">
+              {extraWormholeRoutes.map((r) => (
+                <div key={r.id} className="relative rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-4 bg-white dark:bg-gray-900">
+                  <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5 sm:gap-3.5 text-slate-800 dark:text-slate-100">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base sm:text-lg font-semibold tracking-wide text-left">{r.fromWh.systemName || (graph as any)?.namesById?.[String(r.fromWh.systemId)] || r.fromWh.systemId}</span>
+                      <span className="h-px flex-1 bg-gray-300 dark:bg-gray-600" />
+                    </div>
+                    <span className={typePillClass(r.type)}>{r.type}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="h-px flex-1 bg-gray-300 dark:bg-gray-600" />
+                      <span className="text-base sm:text-lg font-semibold tracking-wide text-right">{r.toWh.systemName || (graph as any)?.namesById?.[String(r.toWh.systemId)] || r.toWh.systemId}</span>
+                    </div>
+                  </div>
+                  <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center">
+                    <div className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 text-left">{r.fromJumps} jumps</div>
+                    <div className="text-xs sm:text-sm text-slate-700 dark:text-slate-300 font-medium">Total: {r.total} jumps</div>
+                    <div className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 text-right">{r.toJumps} jumps</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </aside>
     </section>
   );
 }
