@@ -300,8 +300,12 @@ export function Scanner() {
       lines.push(`## Scan was completed <t:${now}:R>`);
     }
     const regionNames = Array.from(groups.keys()).sort((a, b) => a.localeCompare(b));
+    if (regionNames.length) {
+      lines.push('');
+      lines.push('## Wormholes');
+    }
     for (const rn of regionNames) {
-      lines.push(`## ${rn}`);
+      lines.push(`### ${rn}`);
       const entries = (groups.get(rn) || []).sort((a, b) => a.name.localeCompare(b.name));
       for (const e of entries) {
         const life = e.eol ? '*@eol*' : '*Fresh*';
@@ -311,6 +315,43 @@ export function Scanner() {
       // blank line between regions for readability
       lines.push('');
     }
+    // Route summaries (Discord markdown) AFTER wormholes list
+    try {
+      const namesByIdAny: any = namesById || {};
+      const fromName = (fromId != null ? namesByIdAny[String(fromId)] : undefined) ?? (route.fromQuery || '—');
+      const toName = (toId != null ? namesByIdAny[String(toId)] : undefined) ?? (route.toQuery || '—');
+      // helpers to format flags inline next to WH names
+      const flags = (wh: Wormhole | null | undefined) => {
+        if (!wh) return '';
+        const tags: string[] = [];
+        if (wh.eol) tags.push('*@eol*');
+        if (wh.critical) tags.push('*@Crit*');
+        else if (wh.reduced) tags.push('*@Reduced*');
+        return tags.length ? ` ${tags.join(' ')}` : '';
+      };
+      // Best route ignoring flags
+      const bestAny = wormholeRoutes.length > 0 ? wormholeRoutes[0] : null;
+      // Best route excluding EOL/Reduced/Critical
+      const safeRoutes = wormholeRoutes.filter(r => !r.fromWh.eol && !r.toWh.eol && !r.fromWh.reduced && !r.toWh.reduced && !r.fromWh.critical && !r.toWh.critical);
+      const bestSafe = safeRoutes.length > 0 ? safeRoutes[0] : null;
+
+      lines.push('## Routes');
+      if (bestAny) {
+        const aName = (bestAny.fromWh.systemName || namesByIdAny[String(bestAny.fromWh.systemId)] || bestAny.fromWh.systemId) as string;
+        const bName = (bestAny.toWh.systemName || namesByIdAny[String(bestAny.toWh.systemId)] || bestAny.toWh.systemId) as string;
+        lines.push(`- **Best (any):** ${fromName} → **${aName}**${flags(bestAny.fromWh)} — ***@${bestAny.type}*** — **${bName}**${flags(bestAny.toWh)} → ${toName} • **Total:** ${bestAny.total} jumps`);
+      } else {
+        lines.push(`- **Best (any):** —`);
+      }
+      if (bestSafe) {
+        const aName = (bestSafe.fromWh.systemName || namesByIdAny[String(bestSafe.fromWh.systemId)] || bestSafe.fromWh.systemId) as string;
+        const bName = (bestSafe.toWh.systemName || namesByIdAny[String(bestSafe.toWh.systemId)] || bestSafe.toWh.systemId) as string;
+        lines.push(`- **Best (safe):** ${fromName} → **${aName}** — ***@${bestSafe.type}*** — **${bName}** → ${toName} • **Total:** ${bestSafe.total} jumps`);
+      } else {
+        lines.push(`- **Best (safe):** —`);
+      }
+      lines.push(`- **Direct burn:** ${directJumps != null ? `${directJumps} jumps` : '—'}`);
+    } catch {}
 
     const text = lines.join('\n');
     try {
