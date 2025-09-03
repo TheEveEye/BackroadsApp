@@ -465,6 +465,20 @@ export function Scanner() {
     return null;
   }, [wormholeRoutes.length, fromId, toId, hasSameTypePair]);
 
+  // Determine warning icon color and tooltip for a wormhole side
+  const getWhWarning = (wh: Wormhole | null | undefined): { color: string; title: string } | null => {
+    if (!wh) return null;
+    const labels: string[] = [];
+    let color: string | null = null;
+    // Mass state (critical overrides reduced for color)
+    if (wh.critical) { labels.push('Critical'); color = '#ef4444'; }
+    else if (wh.reduced) { labels.push('Reduced'); color = '#f59e0b'; }
+    // Life state can combine with mass state
+    if (wh.eol) { labels.unshift('End of Life'); if (!color) color = '#f59e0b'; }
+    if (labels.length === 0) return null;
+    return { color: color!, title: labels.join(' + ') };
+  };
+
   return (
     <section className="grid gap-6 md:grid-cols-3 items-start">
       <div className="grid gap-6 md:pr-2 md:col-span-2">
@@ -678,11 +692,23 @@ export function Scanner() {
               <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5 sm:gap-3.5 text-slate-800 dark:text-slate-100">
                 <div className="flex items-center gap-2">
                   <span className="text-base sm:text-lg font-semibold tracking-wide text-left">{r.fromWh.systemName || (graph as any)?.namesById?.[String(r.fromWh.systemId)] || r.fromWh.systemId}</span>
-                  <span className="h-px flex-1 bg-gray-300 dark:bg-gray-600" />
+                  <span className="relative h-px flex-1 bg-gray-300 dark:bg-gray-600">
+                    {(() => { const w = getWhWarning(r.fromWh); return w ? (
+                      <span className="absolute -top-3 left-1/2 -translate-x-1/2">
+                        <Icon name="warn" size={14} color={w.color} title={w.title} />
+                      </span>
+                    ) : null; })()}
+                  </span>
                 </div>
                 <span className={typePillClass(r.type)}>{r.type}</span>
                 <div className="flex items-center gap-2">
-                  <span className="h-px flex-1 bg-gray-300 dark:bg-gray-600" />
+                  <span className="relative h-px flex-1 bg-gray-300 dark:bg-gray-600">
+                    {(() => { const w = getWhWarning(r.toWh); return w ? (
+                      <span className="absolute -top-3 left-1/2 -translate-x-1/2">
+                        <Icon name="warn" size={14} color={w.color} title={w.title} />
+                      </span>
+                    ) : null; })()}
+                  </span>
                   <span className="text-base sm:text-lg font-semibold tracking-wide text-right">{r.toWh.systemName || (graph as any)?.namesById?.[String(r.toWh.systemId)] || r.toWh.systemId}</span>
                 </div>
               </div>
@@ -745,11 +771,23 @@ export function Scanner() {
                   <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5 sm:gap-3.5 text-slate-800 dark:text-slate-100">
                     <div className="flex items-center gap-2">
                       <span className="text-base sm:text-lg font-semibold tracking-wide text-left">{r.fromWh.systemName || (graph as any)?.namesById?.[String(r.fromWh.systemId)] || r.fromWh.systemId}</span>
-                      <span className="h-px flex-1 bg-gray-300 dark:bg-gray-600" />
+                      <span className="relative h-px flex-1 bg-gray-300 dark:bg-gray-600">
+                        {(() => { const w = getWhWarning(r.fromWh); return w ? (
+                          <span className="absolute -top-3 left-1/2 -translate-x-1/2">
+                            <Icon name="warn" size={14} color={w.color} title={w.title} />
+                          </span>
+                        ) : null; })()}
+                      </span>
                     </div>
                     <span className={typePillClass(r.type)}>{r.type}</span>
                     <div className="flex items-center gap-2">
-                      <span className="h-px flex-1 bg-gray-300 dark:bg-gray-600" />
+                      <span className="relative h-px flex-1 bg-gray-300 dark:bg-gray-600">
+                        {(() => { const w = getWhWarning(r.toWh); return w ? (
+                          <span className="absolute -top-3 left-1/2 -translate-x-1/2">
+                            <Icon name="warn" size={14} color={w.color} title={w.title} />
+                          </span>
+                        ) : null; })()}
+                      </span>
                       <span className="text-base sm:text-lg font-semibold tracking-wide text-right">{r.toWh.systemName || (graph as any)?.namesById?.[String(r.toWh.systemId)] || r.toWh.systemId}</span>
                     </div>
                   </div>
