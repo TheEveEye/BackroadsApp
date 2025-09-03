@@ -13,7 +13,9 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "deploy": "npm run build && cp build/index.html build/404.html && gh-pages -d build",
-    "dist": "npm run build:electron && electron-builder"
+    "dist": "npm run build:electron && electron-builder",
+    "dist:mac": "npm run build:electron && electron-builder --mac dmg",
+    "dist:win": "npm run build:electron && electron-builder --win portable"
   },
   "dependencies": {
   "react-router-dom": "^6.26.2",
@@ -42,6 +44,7 @@
     "wait-on": "^8.0.1"
   },
   "build": {
+    "productName": "Backroads",
     "appId": "com.backroads.app",
     "asar": true,
     "files": [
@@ -54,8 +57,14 @@
       "category": "public.app-category.utilities"
     },
     "win": {
-      "target": ["nsis", "zip"]
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
     },
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "dist"
     }
