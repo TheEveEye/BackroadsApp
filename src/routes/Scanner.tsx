@@ -432,19 +432,40 @@ export function Scanner() {
     return base + 'bg-gray-500/10 border-gray-400/60 text-slate-800 dark:text-slate-100';
   };
 
+  // Route filters (apply to the routes list on the right)
+  const [filterEol, setFilterEol] = useState(false);
+  const [filterExcludeReduced, setFilterExcludeReduced] = useState(false);
+  const [filterExcludeCritical, setFilterExcludeCritical] = useState(false);
+
   // Control visibility relative to direct route
   const [showAllRoutes, setShowAllRoutes] = useState(false);
   const directJumps = useMemo(() => (directGatePath && directGatePath.length > 0 ? directGatePath.length - 1 : null), [directGatePath]);
+  // Apply filters to all wormhole-assisted routes
+  const filteredWormholeRoutes = useMemo(() => {
+    return wormholeRoutes.filter(r => {
+      // EOL exclusion: if enabled, drop routes where either side is EOL
+      if (filterEol) {
+        const hasEol = !!(r.fromWh?.eol || r.toWh?.eol);
+        if (hasEol) return false;
+      }
+      // Mass exclusion: drop routes where either side matches selected exclusions
+      const isReduced = !!(r.fromWh?.reduced || r.toWh?.reduced);
+      const isCritical = !!(r.fromWh?.critical || r.toWh?.critical);
+      if (filterExcludeReduced && isReduced) return false;
+      if (filterExcludeCritical && isCritical) return false;
+      return true;
+    });
+  }, [wormholeRoutes, filterEol, filterExcludeReduced, filterExcludeCritical]);
   // Always render base routes above direct: routes that are not longer than direct
   const baseWormholeRoutes = useMemo(() => {
-    if (directJumps == null) return wormholeRoutes;
-    return wormholeRoutes.filter(r => r.total <= directJumps);
-  }, [wormholeRoutes, directJumps]);
+    if (directJumps == null) return filteredWormholeRoutes;
+    return filteredWormholeRoutes.filter(r => r.total <= directJumps);
+  }, [filteredWormholeRoutes, directJumps]);
   // Extra routes (longer than direct) appear below the dashed line and button when expanded
   const extraWormholeRoutes = useMemo(() => {
     if (directJumps == null) return [] as typeof wormholeRoutes;
-    return wormholeRoutes.filter(r => r.total > directJumps);
-  }, [wormholeRoutes, directJumps]);
+    return filteredWormholeRoutes.filter(r => r.total > directJumps);
+  }, [filteredWormholeRoutes, directJumps]);
   const hiddenRouteCount = extraWormholeRoutes.length;
   const hasHiddenRoutes = hiddenRouteCount > 0;
 
@@ -683,9 +704,60 @@ export function Scanner() {
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-lg font-semibold">Routes</h2>
           </div>
+          {/* Filters */}
+          <div className="mb-3 flex flex-wrap items-center gap-4 text-sm text-slate-800 dark:text-slate-200">
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="accent-amber-600"
+                checked={filterEol}
+                onChange={(e) => setFilterEol(e.target.checked)}
+              />
+              <span>Exclude EOL</span>
+            </label>
+            <div className="inline-flex items-center gap-2">
+              <span className="text-slate-600 dark:text-slate-400">Exclude mass:</span>
+              <label className="inline-flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={filterExcludeReduced}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    if (checked) {
+                      setFilterExcludeReduced(true);
+                      setFilterExcludeCritical(true); // selecting Reduced also selects Critical
+                    } else {
+                      setFilterExcludeReduced(false);
+                    }
+                  }}
+                />
+                <span>Reduced</span>
+              </label>
+              <label className="inline-flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={filterExcludeCritical}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    if (!checked) {
+                      // deselecting Critical also deselects Reduced
+                      setFilterExcludeCritical(false);
+                      setFilterExcludeReduced(false);
+                    } else {
+                      setFilterExcludeCritical(true);
+                    }
+                  }}
+                />
+                <span>Critical</span>
+              </label>
+            </div>
+          </div>
           {/* Wormhole-assisted routes derived from scanned wormholes */}
           {noRoutesMessage && (
             <div className="text-sm text-slate-600 dark:text-slate-400">{noRoutesMessage}</div>
+          )}
+          {!noRoutesMessage && filteredWormholeRoutes.length === 0 && (
+            <div className="text-sm text-slate-600 dark:text-slate-400">No routes match the selected filters.</div>
           )}
           {baseWormholeRoutes.map((r) => (
             <div key={r.id} className="relative rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-4 bg-white dark:bg-gray-900 mb-4 last:mb-0">
