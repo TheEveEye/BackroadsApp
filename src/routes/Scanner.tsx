@@ -293,7 +293,8 @@ export function Scanner() {
     try {
       const compact = buildCompact(wormholes);
       const b64 = btoa(JSON.stringify(compact));
-      const base = `${window.location.origin}${window.location.pathname}#/scanner`;
+      const basePath = ((import.meta as any).env?.BASE_URL || '/');
+      const base = `${window.location.origin}${basePath}scanner`;
       const url = `${base}?wh=${encodeURIComponent(b64)}&from=${encodeURIComponent(route.fromQuery || '')}&to=${encodeURIComponent(route.toQuery || '')}`;
       lines.push(`## [Scan was completed <t:${now}:R>](${url})`);
     } catch {
@@ -381,7 +382,8 @@ export function Scanner() {
     try {
       const compact = buildCompact(wormholes);
       const b64 = btoa(JSON.stringify(compact));
-      const base = `${window.location.origin}${window.location.pathname}#/scanner`;
+      const basePath = ((import.meta as any).env?.BASE_URL || '/');
+      const base = `${window.location.origin}${basePath}scanner`;
       const url = `${base}?wh=${encodeURIComponent(b64)}&from=${encodeURIComponent(route.fromQuery || '')}&to=${encodeURIComponent(route.toQuery || '')}`;
       await navigator.clipboard.writeText(url);
       setCopyStatus('success');

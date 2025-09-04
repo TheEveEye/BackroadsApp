@@ -2,7 +2,7 @@
 
 Find nearby Jove Observatories from any starting system within a chosen number of gate jumps. The app provides an autocomplete search for systems, a jump limit slider, a lightyear radius overlay on a simple map, and an option to exclude Zarzakh.
 
-Live app: https://theeveeye.github.io/BackroadsApp
+Live app: https://backroads.kiwiapps.dev
 
 ### Features
 
@@ -44,14 +44,15 @@ npm run preview  # serves the production build locally
 
 ## Deploy to GitHub Pages
 
-This repo is configured to deploy a static build to GitHub Pages using the `gh-pages` branch and a project subpath.
+This repo is configured to deploy a static build to GitHub Pages using the `gh-pages` branch and a custom domain.
 
 ```bash
 npm run deploy
 ```
 
 Notes:
-- The app base path is set to `/BackroadsApp/` in `vite.config.ts` and `homepage` in `package.json` points to the Pages URL. If you fork/rename the repo, update both.
+- The app base path is `/` in `vite.config.ts` and `homepage` in `package.json` points to the custom domain. If you change the domain, update both.
+- The deploy script writes a `CNAME` for `backroads.kiwiapps.dev` via `gh-pages --cname`.
 - Pages should be configured to serve from the `gh-pages` branch (root).
 
 ## Data files

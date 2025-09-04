@@ -3,13 +3,13 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "homepage": "https://theeveeye.github.io/BackroadsApp",
+  "homepage": "https://backroads.kiwiapps.dev",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "deploy": "npm run build && cp build/index.html build/404.html && gh-pages -d build"
+    "deploy": "npm run build && cp build/index.html build/404.html && gh-pages -d build --cname backroads.kiwiapps.dev"
   },
   "dependencies": {
   "react-router-dom": "^6.26.2",
