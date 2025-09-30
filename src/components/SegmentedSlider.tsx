@@ -1,0 +1,211 @@
+import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+
+export type Option = { label: string; value: string };
+
+export type SegmentedSliderProps = {
+  options: Option[];
+  value?: string;
+  defaultValue?: string;
+  onChange?: (value: string) => void;
+  className?: string;
+  style?: React.CSSProperties;
+  height?: number; // px
+  radius?: number; // px
+  disabled?: boolean;
+  // Returns a className to color the moving pill (e.g., 'bg-blue-600').
+  // If a raw CSS color value is returned (e.g., '#fff' or 'rgb(...)'), it will be applied via inline style.
+  getColorForValue?: (value: string) => string | undefined;
+};
+
+// A horizontal, single-select segmented slider with click and drag.
+// - Uses Pointer Events for unified mouse/touch dragging
+// - Drag updates the pill position live; on release, snaps to nearest option and fires onChange
+// - Click fires immediately
+export function SegmentedSlider({
+  options,
+  value,
+  defaultValue,
+  onChange,
+  className,
+  style,
+  height = 42,
+  radius = 6,
+  disabled = false,
+  getColorForValue,
+}: SegmentedSliderProps) {
+  const isControlled = value != null;
+  const [internal, setInternal] = useState<string | undefined>(() => value ?? defaultValue);
+  const selectedValue = (isControlled ? value : internal);
+
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const count = options.length || 1;
+  // Use fractional width to avoid rounding gaps on the rightmost segment
+  const segmentWidth = containerWidth / Math.max(1, count);
+
+  const selectedIndexRaw = options.findIndex(o => o.value === selectedValue);
+  const hasSelection = selectedIndexRaw >= 0;
+  const selectedIndex = Math.max(0, selectedIndexRaw);
+
+  // Drag state
+  const [dragging, setDragging] = useState(false);
+  const [dragX, setDragX] = useState<number | null>(null); // left offset of pill while dragging
+
+  // Measure container width
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const measure = () => setContainerWidth(el.clientWidth);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener('resize', measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, []);
+
+  // Compute pill left position in px for the current selection (non-dragging)
+  const selectedLeft = useMemo(() => selectedIndex * segmentWidth, [selectedIndex, segmentWidth]);
+
+  // Helper to clamp x to container bounds
+  const clampX = useCallback((x: number) => {
+    const min = 0;
+    const max = Math.max(0, containerWidth - segmentWidth);
+    if (x < min) return min;
+    if (x > max) return max;
+    return x;
+  }, [containerWidth, segmentWidth]);
+
+  // Convert x offset to nearest index
+  const xToIndex = useCallback((x: number) => {
+    const idx = Math.round(x / Math.max(1, segmentWidth));
+    return Math.min(count - 1, Math.max(0, idx));
+  }, [count, segmentWidth]);
+
+  // Start dragging on pointer down
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    if (disabled) return;
+    const el = e.currentTarget as HTMLElement;
+    const rect = el.getBoundingClientRect();
+    const relX = e.clientX - rect.left;
+    // Determine which segment was pressed
+    const pressedIdx = Math.min(count - 1, Math.max(0, Math.floor(relX / Math.max(1, segmentWidth))));
+    if (hasSelection && pressedIdx === selectedIndex) {
+      // Start drag only if pressing the current pill
+      try { el.setPointerCapture(e.pointerId); } catch {}
+      const x = clampX(relX - segmentWidth / 2);
+      setDragging(true);
+      setDragX(x);
+    } else {
+      // Do not initiate drag here; clicks on buttons will handle selection + animation
+    }
+  }, [clampX, count, hasSelection, segmentWidth, selectedIndex, disabled]);
+
+  const onPointerMove = useCallback((e: React.PointerEvent) => {
+    if (!dragging) return;
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    // Keep pill centered under cursor while dragging
+    const x = clampX(e.clientX - rect.left - segmentWidth / 2);
+    setDragX(x);
+  }, [dragging, clampX, segmentWidth]);
+
+  const commitIndex = useCallback((idx: number) => {
+    const next = options[idx]?.value;
+    if (!next) return;
+    if (isControlled) {
+      if (next !== value) onChange?.(next);
+    } else {
+      setInternal(next);
+      if (next !== selectedValue) onChange?.(next);
+    }
+  }, [isControlled, onChange, options, selectedValue, value]);
+
+  const onPointerUp = useCallback((e: React.PointerEvent) => {
+    if (!dragging) return;
+    try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
+    const idx = xToIndex(clampX(dragX ?? 0));
+    setDragging(false);
+    setDragX(null);
+    commitIndex(idx);
+  }, [clampX, commitIndex, dragX, dragging, xToIndex]);
+
+  const onClickOption = useCallback((idx: number) => {
+    if (disabled) return;
+    commitIndex(idx);
+  }, [commitIndex, disabled]);
+
+  // Determine pill visual styles
+  const pillLeft = dragging ? clampX(dragX ?? 0) : selectedLeft;
+  const visualIndex = dragging ? xToIndex(pillLeft) : selectedIndex;
+  const visualValue = options[visualIndex]?.value;
+  const colorToken = getColorForValue ? (visualValue != null ? getColorForValue(visualValue) : undefined) : undefined;
+  const isRawColor = !!colorToken && (/^#/.test(colorToken) || /^(rgb|hsl)a?\(/.test(colorToken));
+
+  return (
+    <div
+      ref={containerRef}
+      className={[
+        'relative w-full select-none',
+        'border border-gray-200 dark:border-gray-700 rounded-md',
+        'bg-white dark:bg-gray-900',
+        disabled ? 'opacity-60 pointer-events-none' : 'cursor-pointer',
+        className || '',
+      ].join(' ')}
+      style={{
+        ...style,
+        height: height != null ? `${height}px` : undefined,
+        borderRadius: radius,
+      }}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+    >
+      {/* Pill */}
+      <div
+        className={[
+          'absolute top-0 left-0 h-full',
+          'rounded-md shadow-sm',
+          // If colorToken looks like a Tailwind class, apply it; else fallback
+          !isRawColor ? (colorToken || 'bg-blue-600') : '',
+        ].join(' ')}
+        style={{
+          width: `${segmentWidth}px`,
+          transform: `translateX(${pillLeft}px)`,
+          // Inner radius should be concentric with container inner curve (minus 1px border)
+          borderRadius: Math.max(0, radius - 1),
+          backgroundColor: isRawColor ? colorToken : undefined,
+          opacity: dragging ? 1 : (hasSelection ? 1 : 0),
+          transition: dragging
+            ? 'background-color 200ms ease-in-out'
+            : 'transform 200ms ease-in-out, background-color 200ms ease-in-out',
+        }}
+      />
+
+      {/* Options overlay */}
+      <div className="relative z-10 flex items-stretch h-full">
+        {options.map((opt, idx) => {
+          const isActive = idx === (dragging ? visualIndex : selectedIndex);
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              className={[
+                'flex-1 inline-flex items-center justify-center',
+                'text-base leading-6 font-medium px-3 h-full',
+                'rounded-md', // ensures pointer areas match visuals
+                (hasSelection && isActive) ? 'text-white' : 'text-slate-700 dark:text-slate-300',
+              ].join(' ')}
+              onClick={() => onClickOption(idx)}
+            >
+              <span className="pointer-events-none truncate">{opt.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export default SegmentedSlider;

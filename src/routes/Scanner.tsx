@@ -6,6 +6,7 @@ import { AutocompleteInput } from '../components/AutocompleteInput';
 import { Icon } from '../components/Icon';
 import { AnsiblexModal as SharedAnsiblexModal } from '../components/AnsiblexModal';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import SegmentedSlider from '../components/SegmentedSlider';
 
 type WormholeType = 'Conflux' | 'Barbican' | 'Redoubt' | 'Sentinel' | 'Vidette';
 
@@ -627,14 +628,20 @@ export function Scanner() {
               </div>
               <div className="min-w-0 md:col-span-2">
                 <div className="font-semibold mb-2">Wormhole Type</div>
-                <div className="flex flex-wrap gap-3 items-center">
-                  {(['Conflux','Barbican','Redoubt','Sentinel','Vidette'] as WormholeType[]).map(t => (
-                    <label key={t} className="inline-flex items-center gap-1">
-                      <input type="radio" name={`t-${wh.id}`} checked={wh.type===t} onChange={()=> setWormholes(list => list.map((x,i)=> i===idx ? { ...x, type: t } : x))} />
-                      <span>{t[0]}</span>
-                    </label>
-                  ))}
-                </div>
+                <SegmentedSlider
+                  options={(['Conflux','Barbican','Redoubt','Sentinel','Vidette'] as WormholeType[]).map(t => ({ label: t[0], value: t }))}
+                  value={wh.type ?? undefined}
+                  onChange={(v) => setWormholes(list => list.map((x,i)=> i===idx ? { ...x, type: v as WormholeType } : x))}
+                  getColorForValue={(v) => {
+                    // Reuse the same hues as route type pills (Scanner.typePillClass)
+                    if (v === 'Conflux') return 'bg-blue-600';
+                    if (v === 'Barbican') return 'bg-amber-500';
+                    if (v === 'Redoubt') return 'bg-gray-500';
+                    if (v === 'Sentinel') return 'bg-purple-500';
+                    if (v === 'Vidette') return 'bg-teal-500';
+                    return 'bg-gray-600';
+                  }}
+                />
               </div>
               <div className="min-w-0 md:col-span-1">
                 <div className="font-semibold mb-2">End of Life?</div>
