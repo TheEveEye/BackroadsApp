@@ -38,10 +38,12 @@ export function SegmentedSlider({
   const selectedValue = (isControlled ? value : internal);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [containerWidth, setContainerWidth] = useState(0);
+  const measureRef = useRef<HTMLDivElement | null>(null);
   const count = options.length || 1;
-  // Use fractional width to avoid rounding gaps on the rightmost segment
-  const segmentWidth = containerWidth / Math.max(1, count);
+  const [measuredSegW, setMeasuredSegW] = useState<number>(0);
+  const fallbackSegW = 56; // sensible default
+  const segmentWidth = measuredSegW > 0 ? measuredSegW : fallbackSegW;
+  const containerWidth = segmentWidth * Math.max(1, count);
 
   const selectedIndexRaw = options.findIndex(o => o.value === selectedValue);
   const hasSelection = selectedIndexRaw >= 0;
@@ -51,20 +53,23 @@ export function SegmentedSlider({
   const [dragging, setDragging] = useState(false);
   const [dragX, setDragX] = useState<number | null>(null); // left offset of pill while dragging
 
-  // Measure container width
+  // Measure per-option width based on content; all segments share max width
   useLayoutEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const measure = () => setContainerWidth(el.clientWidth);
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    window.addEventListener('resize', measure);
-    return () => {
-      ro.disconnect();
-      window.removeEventListener('resize', measure);
+    const doMeasure = () => {
+      const el = measureRef.current;
+      if (!el) return;
+      let maxW = 0;
+      const children = Array.from(el.children) as HTMLElement[];
+      for (const c of children) {
+        const w = c.offsetWidth;
+        if (w > maxW) maxW = w;
+      }
+      if (maxW > 0) setMeasuredSegW(Math.ceil(maxW + 4));
     };
-  }, []);
+    doMeasure();
+    window.addEventListener('resize', doMeasure);
+    return () => window.removeEventListener('resize', doMeasure);
+  }, [options.map(o => o.label + '|' + o.value).join('|')]);
 
   // Compute pill left position in px for the current selection (non-dragging)
   const selectedLeft = useMemo(() => selectedIndex * segmentWidth, [selectedIndex, segmentWidth]);
@@ -147,7 +152,7 @@ export function SegmentedSlider({
     <div
       ref={containerRef}
       className={[
-        'relative w-full select-none',
+        'relative inline-block select-none',
         'border border-gray-200 dark:border-gray-700 rounded-md',
         'bg-white dark:bg-gray-900',
         disabled ? 'opacity-60 pointer-events-none' : 'cursor-pointer',
@@ -156,6 +161,7 @@ export function SegmentedSlider({
       style={{
         ...style,
         height: height != null ? `${height}px` : undefined,
+        width: `${containerWidth}px`,
         borderRadius: radius,
       }}
       onPointerDown={onPointerDown}
@@ -192,17 +198,32 @@ export function SegmentedSlider({
               key={opt.value}
               type="button"
               className={[
-                'flex-1 inline-flex items-center justify-center',
+                'inline-flex items-center justify-center',
                 'text-base leading-6 font-medium px-3 h-full',
                 'rounded-md', // ensures pointer areas match visuals
                 (hasSelection && isActive) ? 'text-white' : 'text-slate-700 dark:text-slate-300',
               ].join(' ')}
               onClick={() => onClickOption(idx)}
+              style={{ width: `${segmentWidth}px` }}
             >
-              <span className="pointer-events-none truncate">{opt.label}</span>
+              <span className="pointer-events-none">{opt.label}</span>
             </button>
           );
         })}
+      </div>
+
+      {/* Hidden measurer for content-based segment width */}
+      <div
+        ref={measureRef}
+        aria-hidden
+        className="absolute -z-10 opacity-0 pointer-events-none"
+        style={{ visibility: 'hidden', height: 0, overflow: 'hidden', whiteSpace: 'nowrap' }}
+      >
+        {options.map((opt) => (
+          <span key={opt.value} className="inline-flex items-center justify-center text-base leading-6 font-medium px-3">
+            {opt.label}
+          </span>
+        ))}
       </div>
     </div>
   );
