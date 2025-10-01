@@ -88,7 +88,6 @@ export function SearchForm({
             <span>Allow Ansiblex jump bridges</span>
           </label>
           <button type="button" className="px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center justify-center gap-1 leading-none" onClick={() => {
-            // Placeholder for opening modal; actual modal implemented in App
             const ev = new CustomEvent('open-ansiblex-modal');
             window.dispatchEvent(ev);
           }}>

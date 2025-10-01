@@ -95,8 +95,6 @@ function App() {
     return () => window.removeEventListener('open-ansiblex-modal', onOpen as any);
   }, []);
 
-  // removed load-on-mount effect; initialization now reads localStorage synchronously
-
   // Persist settings on change
   useEffect(() => {
     try {

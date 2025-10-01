@@ -71,10 +71,10 @@ export function AutocompleteInput({
   }, [value]);
 
   return (
-    <label className={"grid gap-2 relative " + (className || '')}>
+    <label className={"grid gap-2 relative w-full " + (className || '')}>
       <input
         type="text"
-        className={(compact ? 'px-2 py-1 text-sm ' : 'px-3 py-2 text-base ') + 'rounded-md border border-gray-300 dark:border-gray-700 bg-white/80 dark:bg-gray-900'}
+        className={(compact ? 'px-2 py-1 text-sm ' : 'px-3 py-2 text-base ') + 'block w-full min-w-0 rounded-md border border-gray-300 dark:border-gray-700 bg-white/80 dark:bg-gray-900'}
         placeholder={placeholder}
         value={value}
         ref={inputRef}

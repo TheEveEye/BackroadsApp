@@ -207,7 +207,6 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
             return <circle cx={cx} cy={cy} r={r} fill="none" stroke="#60a5fa" strokeDasharray="6 6" strokeWidth={1.5} />;
           })()}
         </g>
-  {/* (moved bridge rendering after edges) */}
 
         {/* edges (render only when at least one endpoint is visible) */}
         <g stroke="#aaa" strokeWidth={1} opacity={0.6}>

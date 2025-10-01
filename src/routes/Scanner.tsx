@@ -506,7 +506,7 @@ export function Scanner() {
   };
 
   // Route filters (apply to the routes list on the right)
-  // EOL threshold: always applied; default 12h. Hides any route where either side has less than selected hours
+  // Life requirement: require at least one side of the route to have the selected life marker exactly (12h, 4h, or 1h)
   const [filterEolThreshold, setFilterEolThreshold] = useState<EolLevel>('lt12h');
   const [filterExcludeReduced, setFilterExcludeReduced] = useState(false);
   const [filterExcludeCritical, setFilterExcludeCritical] = useState(false);
@@ -515,14 +515,17 @@ export function Scanner() {
   const [showAllRoutes, setShowAllRoutes] = useState(false);
   const directJumps = useMemo(() => (directGatePath && directGatePath.length > 0 ? directGatePath.length - 1 : null), [directGatePath]);
   // Apply filters to all wormhole-assisted routes
-  const rankEol = (e: EolLevel | null | undefined) => e === 'lt1h' ? 3 : e === 'lt4h' ? 2 : e === 'lt12h' ? 1 : 0;
   const filteredWormholeRoutes = useMemo(() => {
+    const order: EolLevel[] = ['lt12h', 'lt4h', 'lt1h'];
+    const meetsMin = (val: EolLevel | null | undefined, min: EolLevel) => {
+      if (!val) return false; // only consider wormholes with an explicit EOL marker
+      return order.indexOf(val) <= order.indexOf(min);
+    };
     return wormholeRoutes.filter(r => {
-      // Life exclusion: drop routes where either side is below threshold
-      const thr = rankEol(filterEolThreshold);
-      const a = rankEol(r.fromWh?.eol);
-      const b = rankEol(r.toWh?.eol);
-      if (a >= thr || b >= thr) return false;
+      // Life requirement: keep route only if BOTH sides meet or exceed the selected bucket
+      const aOk = meetsMin(r.fromWh?.eol, filterEolThreshold);
+      const bOk = meetsMin(r.toWh?.eol, filterEolThreshold);
+      if (!(aOk && bOk)) return false;
       // Mass exclusion: drop routes where either side matches selected exclusions
       const isReduced = !!(r.fromWh?.reduced || r.toWh?.reduced);
       const isCritical = !!(r.fromWh?.critical || r.toWh?.critical);
@@ -571,13 +574,14 @@ export function Scanner() {
     else if (wh.reduced) { labels.push('Reduced'); color = '#f59e0b'; }
     // Life state can combine with mass state
     if (wh.eol) {
-      const lifeLabel = wh.eol === 'lt1h' ? '<1h' : wh.eol === 'lt4h' ? '<4h' : '<12h';
-      labels.unshift(`Life ${lifeLabel}`);
-      if (!color) {
-        if (wh.eol === 'lt1h') color = '#ef4444'; // red-500
-        else if (wh.eol === 'lt4h') color = '#f59e0b'; // amber-500
-        else color = '#2563eb'; // blue-600 (Conflux-like)
-      }
+      // Only warn for <4h (amber) and <1h (red). Do not warn for <12h.
+      if (wh.eol === 'lt1h') {
+        labels.unshift('Life <1h');
+        if (!color) color = '#ef4444'; // red-500
+      } else if (wh.eol === 'lt4h') {
+        labels.unshift('Life <4h');
+        if (!color) color = '#f59e0b'; // amber-500
+      } // lt12h: no label, no color (no warning)
     }
     if (labels.length === 0) return null;
     return { color: color!, title: labels.join(' + ') };
@@ -654,16 +658,7 @@ export function Scanner() {
                   className="max-w-xs"
                   items={observatoryItems}
                 />
-                <div className="mt-3 flex items-center gap-3">
-                  <button className="px-3 py-1.5 rounded bg-red-500 text-white hover:bg-red-600" onClick={() => setWormholes(list => list.filter((_,i)=> i!==idx))}>Remove</button>
-                  {(() => { const jc = jumpCounts.get(wh.id); return (
-                    <span className="text-sm text-gray-700 dark:text-gray-300 whitespace-normal sm:whitespace-nowrap">
-                      {fromId != null && jc?.from != null ? `${jc.from} jumps from start` : '—'}
-                      <span className="mx-2 text-gray-400">•</span>
-                      {toId != null && jc?.to != null ? `${jc.to} jumps from destination` : '—'}
-                    </span>
-                  ); })()}
-                </div>
+                
               </div>
               <div className="flex-none">
                 <div className="font-semibold mb-2">Wormhole Type</div>
@@ -753,6 +748,16 @@ export function Scanner() {
                 </div>
               </div>
             </div>
+            <div className="mt-3 flex items-center gap-3">
+              <button className="px-3 py-1.5 rounded bg-red-500 text-white hover:bg-red-600" onClick={() => setWormholes(list => list.filter((_,i)=> i!==idx))}>Remove</button>
+              {(() => { const jc = jumpCounts.get(wh.id); return (
+                <span className="flex-1 min-w-0 text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap truncate">
+                  {fromId != null && jc?.from != null ? `${jc.from} jumps from start` : '—'}
+                  <span className="mx-2 text-gray-400">•</span>
+                  {toId != null && jc?.to != null ? `${jc.to} jumps from destination` : '—'}
+                </span>
+              ); })()}
+            </div>
           </li>
         ))}
       </ul>
@@ -807,7 +812,7 @@ export function Scanner() {
           {/* Filters */}
           <div className="mb-3 flex flex-wrap items-center gap-4 text-sm text-slate-800 dark:text-slate-200">
             <div className="inline-flex items-center gap-2">
-              <span className="text-slate-600 dark:text-slate-400">Hide life &lt;</span>
+              <span className="text-slate-600 dark:text-slate-400">Require time of:</span>
               <div className="flex-1">
                 <SegmentedSlider
                   options={[
@@ -897,7 +902,7 @@ export function Scanner() {
               </div>
             </div>
           ))}
-          {/* Direct gate route mock (placed below in same container) */}
+          
           <div className="mt-4 relative rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-4 bg-white dark:bg-gray-900">
             <div className="flex items-center gap-2.5 sm:gap-3.5 text-slate-800 dark:text-slate-100">
               {(() => {
