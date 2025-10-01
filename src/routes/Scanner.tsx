@@ -10,6 +10,7 @@ import SegmentedSlider from '../components/SegmentedSlider';
 
 type WormholeType = 'Conflux' | 'Barbican' | 'Redoubt' | 'Sentinel' | 'Vidette';
 type EolLevel = 'lt12h' | 'lt4h' | 'lt1h';
+type MassLevel = 'gt50' | 'lt50' | 'lt10';
 
 type Wormhole = {
   id: string;
@@ -18,8 +19,7 @@ type Wormhole = {
   type: WormholeType | null;
   // null = fresh/unknown, otherwise life remaining bucket
   eol: EolLevel | null;
-  reduced: boolean;
-  critical: boolean;
+  mass: MassLevel; // mass remaining bucket
   bookmarkInside: boolean;
   bookmarkOutside: boolean;
 };
@@ -95,7 +95,7 @@ export function Scanner() {
 
   // flags bitmask (backward + forward compatible):
   // 1: legacy EOL boolean (read-only; treated as '<4h' if set),
-  // 2: reduced, 4: critical, 8: bookmarkInside, 16: bookmarkOutside,
+  // 2: reduced (<50%), 4: critical (<10%), 8: bookmarkInside, 16: bookmarkOutside,
   // 32 + 64: EOL level code (00 none, 01 <12h, 10 <4h, 11 <1h)
   const eolToCode = (e: EolLevel | null): 0 | 1 | 2 | 3 => {
     if (e === 'lt12h') return 1;
@@ -114,8 +114,8 @@ export function Scanner() {
     const eolBits = ((code & 1) ? 32 : 0) | ((code & 2) ? 64 : 0);
     return (
       0 | // legacy EOL bit intentionally not written
-      (wh.reduced ? 2 : 0) |
-      (wh.critical ? 4 : 0) |
+      (wh.mass === 'lt50' ? 2 : 0) |
+      (wh.mass === 'lt10' ? 4 : 0) |
       (wh.bookmarkInside ? 8 : 0) |
       (wh.bookmarkOutside ? 16 : 0) |
       eolBits
@@ -125,10 +125,15 @@ export function Scanner() {
     const legacyEol = !!(n & 1);
     const codeBits = ((n & 32) ? 1 : 0) | ((n & 64) ? 2 : 0);
     const eol = codeToEol(codeBits) || (legacyEol ? 'lt4h' : null);
+    // Map legacy mass flags to new MassLevel; prefer critical when both present
+    const isReduced = !!(n & 2);
+    const isCritical = !!(n & 4);
+    let mass: MassLevel = 'gt50';
+    if (isCritical) mass = 'lt10';
+    else if (isReduced) mass = 'lt50';
     return {
       eol,
-      reduced: !!(n & 2),
-      critical: !!(n & 4),
+      mass,
       bookmarkInside: !!(n & 8),
       bookmarkOutside: !!(n & 16),
     } as const;
@@ -155,8 +160,8 @@ export function Scanner() {
         systemName = ref;
       }
       const type = code && CODE_TO_TYPE[code] ? CODE_TO_TYPE[code] : null;
-  const { eol, reduced, critical, bookmarkInside, bookmarkOutside } = unpackFlags(Number(flags) || 0);
-  out.push({ id: crypto.randomUUID(), systemId, systemName, type, eol, reduced, critical, bookmarkInside, bookmarkOutside });
+      const { eol, mass, bookmarkInside, bookmarkOutside } = unpackFlags(Number(flags) || 0);
+      out.push({ id: crypto.randomUUID(), systemId, systemName, type, eol, mass, bookmarkInside, bookmarkOutside });
     }
     return out;
   }
@@ -267,7 +272,7 @@ export function Scanner() {
   const addNew = () => {
     setWormholes(list => [
       ...list,
-  { id: crypto.randomUUID(), systemId: null, systemName: '', type: null, eol: null, reduced: false, critical: false, bookmarkInside: false, bookmarkOutside: false },
+      { id: crypto.randomUUID(), systemId: null, systemName: '', type: null, eol: 'lt12h', mass: 'gt50', bookmarkInside: false, bookmarkOutside: false },
     ]);
   };
 
@@ -303,7 +308,7 @@ export function Scanner() {
     const namesById: any = (graph as any)?.namesById || {};
 
     // group valid entries by region name
-    const groups = new Map<string, Array<{ name: string; type: WormholeType; eol: EolLevel | null; reduced: boolean; critical: boolean }>>();
+    const groups = new Map<string, Array<{ name: string; type: WormholeType; eol: EolLevel | null; mass: MassLevel }>>();
     for (const wh of wormholes) {
       if (!wh.systemId || !wh.type) continue;
       const sys = systems[String(wh.systemId)];
@@ -311,7 +316,7 @@ export function Scanner() {
       const regionName = String(regionsById[String(sys.regionId)] ?? sys.regionId ?? '');
       const systemName = String(namesById[String(wh.systemId)] ?? wh.systemName ?? wh.systemId);
       const arr = groups.get(regionName) || [];
-      arr.push({ name: systemName, type: wh.type, eol: wh.eol, reduced: !!wh.reduced, critical: !!wh.critical });
+      arr.push({ name: systemName, type: wh.type, eol: wh.eol, mass: wh.mass });
       groups.set(regionName, arr);
     }
 
@@ -338,7 +343,7 @@ export function Scanner() {
       const entries = (groups.get(rn) || []).sort((a, b) => a.name.localeCompare(b.name));
       for (const e of entries) {
         const life = e.eol === 'lt1h' ? '*<1h*' : e.eol === 'lt4h' ? '*<4h*' : e.eol === 'lt12h' ? '*<12h*' : '*Fresh*';
-        const mass = e.critical ? '*@Crit*' : e.reduced ? '*@Reduced*' : '*Stable*';
+        const mass = e.mass === 'lt10' ? '*10%*' : e.mass === 'lt50' ? '*50%*' : '*100%*';
         lines.push(`**${e.name}** => ***@${e.type}***, **Life:**  ${life}, **Mass:**  ${mass}`);
       }
       // blank line between regions for readability
@@ -356,14 +361,14 @@ export function Scanner() {
         if (wh.eol === 'lt1h') tags.push('*<1h*');
         else if (wh.eol === 'lt4h') tags.push('*<4h*');
         else if (wh.eol === 'lt12h') tags.push('*<12h*');
-        if (wh.critical) tags.push('*@Crit*');
-        else if (wh.reduced) tags.push('*@Reduced*');
+        if (wh.mass === 'lt10') tags.push('*10%*');
+        else if (wh.mass === 'lt50') tags.push('*50%*');
         return tags.length ? ` ${tags.join(' ')}` : '';
       };
       // Best route ignoring flags
       const bestAny = wormholeRoutes.length > 0 ? wormholeRoutes[0] : null;
       // Best route excluding any life flags and mass issues
-      const safeRoutes = wormholeRoutes.filter(r => !r.fromWh.eol && !r.toWh.eol && !r.fromWh.reduced && !r.toWh.reduced && !r.fromWh.critical && !r.toWh.critical);
+      const safeRoutes = wormholeRoutes.filter(r => !r.fromWh.eol && !r.toWh.eol && r.fromWh.mass === 'gt50' && r.toWh.mass === 'gt50');
       const bestSafe = safeRoutes.length > 0 ? safeRoutes[0] : null;
 
       lines.push('## Routes');
@@ -506,10 +511,10 @@ export function Scanner() {
   };
 
   // Route filters (apply to the routes list on the right)
-  // Life requirement: require at least one side of the route to have the selected life marker exactly (12h, 4h, or 1h)
-  const [filterEolThreshold, setFilterEolThreshold] = useState<EolLevel>('lt12h');
-  const [filterExcludeReduced, setFilterExcludeReduced] = useState(false);
-  const [filterExcludeCritical, setFilterExcludeCritical] = useState(false);
+  // Life requirement: require both sides to have at least the selected life bucket
+  const [filterEolThreshold, setFilterEolThreshold] = useState<EolLevel>('lt1h');
+  // Mass requirement: require both sides to have at least the selected mass bucket
+  const [filterMassThreshold, setFilterMassThreshold] = useState<MassLevel>('lt10');
 
   // Control visibility relative to direct route
   const [showAllRoutes, setShowAllRoutes] = useState(false);
@@ -521,19 +526,23 @@ export function Scanner() {
       if (!val) return false; // only consider wormholes with an explicit EOL marker
       return order.indexOf(val) <= order.indexOf(min);
     };
+    const mOrder: MassLevel[] = ['gt50', 'lt50', 'lt10'];
+    const massMeetsMin = (val: MassLevel | null | undefined, min: MassLevel) => {
+      if (!val) return false;
+      return mOrder.indexOf(val) <= mOrder.indexOf(min);
+    };
     return wormholeRoutes.filter(r => {
       // Life requirement: keep route only if BOTH sides meet or exceed the selected bucket
       const aOk = meetsMin(r.fromWh?.eol, filterEolThreshold);
       const bOk = meetsMin(r.toWh?.eol, filterEolThreshold);
       if (!(aOk && bOk)) return false;
-      // Mass exclusion: drop routes where either side matches selected exclusions
-      const isReduced = !!(r.fromWh?.reduced || r.toWh?.reduced);
-      const isCritical = !!(r.fromWh?.critical || r.toWh?.critical);
-      if (filterExcludeReduced && isReduced) return false;
-      if (filterExcludeCritical && isCritical) return false;
+      // Mass requirement: keep only if BOTH sides meet or exceed selected mass bucket
+      const aMassOk = massMeetsMin(r.fromWh?.mass, filterMassThreshold);
+      const bMassOk = massMeetsMin(r.toWh?.mass, filterMassThreshold);
+      if (!(aMassOk && bMassOk)) return false;
       return true;
     });
-  }, [wormholeRoutes, filterEolThreshold, filterExcludeReduced, filterExcludeCritical]);
+  }, [wormholeRoutes, filterEolThreshold, filterMassThreshold]);
   // Always render base routes above direct: routes that are not longer than direct
   const baseWormholeRoutes = useMemo(() => {
     if (directJumps == null) return filteredWormholeRoutes;
@@ -567,24 +576,18 @@ export function Scanner() {
   // Determine warning icon color and tooltip for a wormhole side
   const getWhWarning = (wh: Wormhole | null | undefined): { color: string; title: string } | null => {
     if (!wh) return null;
-    const labels: string[] = [];
-    let color: string | null = null;
-    // Mass state (critical overrides reduced for color)
-    if (wh.critical) { labels.push('Critical'); color = '#ef4444'; }
-    else if (wh.reduced) { labels.push('Reduced'); color = '#f59e0b'; }
-    // Life state can combine with mass state
-    if (wh.eol) {
-      // Only warn for <4h (amber) and <1h (red). Do not warn for <12h.
-      if (wh.eol === 'lt1h') {
-        labels.unshift('Life <1h');
-        if (!color) color = '#ef4444'; // red-500
-      } else if (wh.eol === 'lt4h') {
-        labels.unshift('Life <4h');
-        if (!color) color = '#f59e0b'; // amber-500
-      } // lt12h: no label, no color (no warning)
-    }
+    const redLabels: string[] = [];
+    const amberLabels: string[] = [];
+    // Mass severity
+    if (wh.mass === 'lt10') redLabels.push('Mass <10%');
+    else if (wh.mass === 'lt50') amberLabels.push('Mass <50%');
+    // Life severity (no warning for <12h)
+    if (wh.eol === 'lt1h') redLabels.push('Life <1h');
+    else if (wh.eol === 'lt4h') amberLabels.push('Life <4h');
+    const labels = [...redLabels, ...amberLabels];
     if (labels.length === 0) return null;
-    return { color: color!, title: labels.join(' + ') };
+    const color = redLabels.length > 0 ? '#ef4444' : '#f59e0b';
+    return { color, title: labels.join(' + ') };
   };
 
   return (
@@ -697,34 +700,21 @@ export function Scanner() {
               </div>
               <div className="flex-none">
                 <div className="font-semibold mb-2">Mass</div>
-                <div className="flex gap-3">
-                  <label className="inline-flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={wh.reduced}
-                      onChange={(e)=> setWormholes(list => list.map((x,i)=> {
-                        if (i !== idx) return x;
-                        const checked = e.target.checked;
-                        // Reduced and Crit are mutually exclusive; uncheck Crit when Reduced is checked
-                        return { ...x, reduced: checked, critical: checked ? false : x.critical };
-                      }))}
-                    />
-                    <span>Reduced</span>
-                  </label>
-                  <label className="inline-flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={wh.critical}
-                      onChange={(e)=> setWormholes(list => list.map((x,i)=> {
-                        if (i !== idx) return x;
-                        const checked = e.target.checked;
-                        // Crit and Reduced are mutually exclusive; uncheck Reduced when Crit is checked
-                        return { ...x, critical: checked, reduced: checked ? false : x.reduced };
-                      }))}
-                    />
-                    <span>Crit</span>
-                  </label>
-                </div>
+                <SegmentedSlider
+                  options={[
+                    { label: '100%', value: 'gt50' },
+                    { label: '50%', value: 'lt50' },
+                    { label: '10%', value: 'lt10' },
+                  ]}
+                  value={wh.mass}
+                  onChange={(v) => setWormholes(list => list.map((x,i)=> i===idx ? { ...x, mass: v as MassLevel } : x))}
+                  getColorForValue={(v) => {
+                    if (v === 'lt10') return 'bg-red-500';
+                    if (v === 'lt50') return 'bg-amber-500';
+                    if (v === 'gt50') return 'bg-blue-600';
+                    return 'bg-gray-500';
+                  }}
+                />
               </div>
               <div className="flex-none self-start">
                 <div className="font-semibold mb-2">Bookmarks</div>
@@ -812,7 +802,7 @@ export function Scanner() {
           {/* Filters */}
           <div className="mb-3 flex flex-wrap items-center gap-4 text-sm text-slate-800 dark:text-slate-200">
             <div className="inline-flex items-center gap-2">
-              <span className="text-slate-600 dark:text-slate-400">Require time of:</span>
+              <span className="text-slate-600 dark:text-slate-400">Require lifespan:</span>
               <div className="flex-1">
                 <SegmentedSlider
                   options={[
@@ -827,40 +817,19 @@ export function Scanner() {
               </div>
             </div>
             <div className="inline-flex items-center gap-2">
-              <span className="text-slate-600 dark:text-slate-400">Exclude mass:</span>
-              <label className="inline-flex items-center gap-1">
-                <input
-                  type="checkbox"
-                  checked={filterExcludeReduced}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    if (checked) {
-                      setFilterExcludeReduced(true);
-                      setFilterExcludeCritical(true); // selecting Reduced also selects Critical
-                    } else {
-                      setFilterExcludeReduced(false);
-                    }
-                  }}
+              <span className="text-slate-600 dark:text-slate-400">Require mass:</span>
+              <div className="flex-1">
+                <SegmentedSlider
+                  options={[
+                    { label: '100%', value: 'gt50' },
+                    { label: '50%', value: 'lt50' },
+                    { label: '10%', value: 'lt10' },
+                  ]}
+                  value={filterMassThreshold}
+                  onChange={(v) => setFilterMassThreshold(v as MassLevel)}
+                  getColorForValue={(v) => v === 'lt10' ? 'bg-red-500' : v === 'lt50' ? 'bg-amber-500' : 'bg-blue-600'}
                 />
-                <span>Reduced</span>
-              </label>
-              <label className="inline-flex items-center gap-1">
-                <input
-                  type="checkbox"
-                  checked={filterExcludeCritical}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    if (!checked) {
-                      // deselecting Critical also deselects Reduced
-                      setFilterExcludeCritical(false);
-                      setFilterExcludeReduced(false);
-                    } else {
-                      setFilterExcludeCritical(true);
-                    }
-                  }}
-                />
-                <span>Critical</span>
-              </label>
+              </div>
             </div>
           </div>
           {/* Wormhole-assisted routes derived from scanned wormholes */}

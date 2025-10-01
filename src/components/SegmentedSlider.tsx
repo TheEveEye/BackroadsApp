@@ -41,9 +41,13 @@ export function SegmentedSlider({
   const measureRef = useRef<HTMLDivElement | null>(null);
   const count = options.length || 1;
   const [measuredSegW, setMeasuredSegW] = useState<number>(0);
+  const [measuredPadX, setMeasuredPadX] = useState<number>(0);
   const fallbackSegW = 56; // sensible default
   const segmentWidth = measuredSegW > 0 ? measuredSegW : fallbackSegW;
-  const containerWidth = segmentWidth * Math.max(1, count);
+  const padX = measuredPadX > 0 ? measuredPadX : 12; // px-3 ≈ 12px default
+  const overlap = padX / 2; // overlap by half of one padding
+  const stepWidth = Math.max(1, segmentWidth - overlap); // distance between segment centers with half-padding overlap
+  const containerWidth = segmentWidth + Math.max(0, count - 1) * stepWidth;
 
   const selectedIndexRaw = options.findIndex(o => o.value === selectedValue);
   const hasSelection = selectedIndexRaw >= 0;
@@ -63,6 +67,12 @@ export function SegmentedSlider({
       for (const c of children) {
         const w = c.offsetWidth;
         if (w > maxW) maxW = w;
+        if (!measuredPadX) {
+          const cs = window.getComputedStyle(c);
+          const pl = parseFloat(cs.paddingLeft || '0');
+          // buttons use symmetric padding (px-3); capture once
+          if (pl > 0) setMeasuredPadX(Math.round(pl));
+        }
       }
       if (maxW > 0) setMeasuredSegW(Math.ceil(maxW + 4));
     };
@@ -72,7 +82,7 @@ export function SegmentedSlider({
   }, [options.map(o => o.label + '|' + o.value).join('|')]);
 
   // Compute pill left position in px for the current selection (non-dragging)
-  const selectedLeft = useMemo(() => selectedIndex * segmentWidth, [selectedIndex, segmentWidth]);
+  const selectedLeft = useMemo(() => selectedIndex * stepWidth, [selectedIndex, stepWidth]);
 
   // Helper to clamp x to container bounds
   const clampX = useCallback((x: number) => {
@@ -85,9 +95,9 @@ export function SegmentedSlider({
 
   // Convert x offset to nearest index
   const xToIndex = useCallback((x: number) => {
-    const idx = Math.round(x / Math.max(1, segmentWidth));
+    const idx = Math.round(x / Math.max(1, stepWidth));
     return Math.min(count - 1, Math.max(0, idx));
-  }, [count, segmentWidth]);
+  }, [count, stepWidth]);
 
   // Start dragging on pointer down
   const onPointerDown = useCallback((e: React.PointerEvent) => {
@@ -95,10 +105,13 @@ export function SegmentedSlider({
     const el = e.currentTarget as HTMLElement;
     const rect = el.getBoundingClientRect();
     const relX = e.clientX - rect.left;
-    // Determine which segment was pressed
-    const pressedIdx = Math.min(count - 1, Math.max(0, Math.floor(relX / Math.max(1, segmentWidth))));
-    if (hasSelection && pressedIdx === selectedIndex) {
-      // Start drag only if pressing the current pill
+    // Prefer hit-testing against current pill bounds when selected
+    const pillL = selectedIndex * stepWidth;
+    const onPill = hasSelection && relX >= pillL && relX <= (pillL + segmentWidth);
+    // Determine which segment was pressed (for fallback quick-select behavior)
+    const pressedIdx = Math.min(count - 1, Math.max(0, Math.floor(relX / Math.max(1, stepWidth))));
+    if (onPill || (hasSelection && pressedIdx === selectedIndex)) {
+      // Start drag only if pressing within the current pill
       try { el.setPointerCapture(e.pointerId); } catch {}
       const x = clampX(relX - segmentWidth / 2);
       setDragging(true);
@@ -106,7 +119,7 @@ export function SegmentedSlider({
     } else {
       // Do not initiate drag here; clicks on buttons will handle selection + animation
     }
-  }, [clampX, count, hasSelection, segmentWidth, selectedIndex, disabled]);
+  }, [clampX, count, hasSelection, segmentWidth, selectedIndex, stepWidth, disabled]);
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     if (!dragging) return;
@@ -204,7 +217,7 @@ export function SegmentedSlider({
                 (hasSelection && isActive) ? 'text-white' : 'text-slate-700 dark:text-slate-300',
               ].join(' ')}
               onClick={() => onClickOption(idx)}
-              style={{ width: `${segmentWidth}px` }}
+              style={{ width: `${segmentWidth}px`, marginLeft: idx === 0 ? undefined : `-${overlap}px` }}
             >
               <span className="pointer-events-none">{opt.label}</span>
             </button>
