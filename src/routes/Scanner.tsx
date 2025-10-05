@@ -9,7 +9,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import SegmentedSlider from '../components/SegmentedSlider';
 
 type WormholeType = 'Conflux' | 'Barbican' | 'Redoubt' | 'Sentinel' | 'Vidette';
-type EolLevel = 'lt12h' | 'lt4h' | 'lt1h';
+type EolLevel = 'lt1d' | 'lt4h' | 'lt1h';
 type MassLevel = 'gt50' | 'lt50' | 'lt10';
 
 type Wormhole = {
@@ -96,15 +96,15 @@ export function Scanner() {
   // flags bitmask (backward + forward compatible):
   // 1: legacy EOL boolean (read-only; treated as '<4h' if set),
   // 2: reduced (<50%), 4: critical (<10%), 8: bookmarkInside, 16: bookmarkOutside,
-  // 32 + 64: EOL level code (00 none, 01 <12h, 10 <4h, 11 <1h)
+  // 32 + 64: EOL level code (00 none, 01 <1d, 10 <4h, 11 <1h)
   const eolToCode = (e: EolLevel | null): 0 | 1 | 2 | 3 => {
-    if (e === 'lt12h') return 1;
+    if (e === 'lt1d') return 1;
     if (e === 'lt4h') return 2;
     if (e === 'lt1h') return 3;
     return 0;
   };
   const codeToEol = (code: number): EolLevel | null => {
-    if (code === 1) return 'lt12h';
+    if (code === 1) return 'lt1d';
     if (code === 2) return 'lt4h';
     if (code === 3) return 'lt1h';
     return null;
@@ -272,7 +272,7 @@ export function Scanner() {
   const addNew = () => {
     setWormholes(list => [
       ...list,
-      { id: crypto.randomUUID(), systemId: null, systemName: '', type: null, eol: 'lt12h', mass: 'gt50', bookmarkInside: false, bookmarkOutside: false },
+      { id: crypto.randomUUID(), systemId: null, systemName: '', type: null, eol: 'lt1d', mass: 'gt50', bookmarkInside: false, bookmarkOutside: false },
     ]);
   };
 
@@ -342,8 +342,8 @@ export function Scanner() {
       lines.push(`### ${rn}`);
       const entries = (groups.get(rn) || []).sort((a, b) => a.name.localeCompare(b.name));
       for (const e of entries) {
-        const life = e.eol === 'lt1h' ? '*<1h*' : e.eol === 'lt4h' ? '*<4h*' : e.eol === 'lt12h' ? '*<12h*' : '*Fresh*';
-        const mass = e.mass === 'lt10' ? '*10%*' : e.mass === 'lt50' ? '*50%*' : '*100%*';
+        const life = e.eol === 'lt1h' ? '*<1h*' : e.eol === 'lt4h' ? '*<4h*' : e.eol === 'lt1d' ? '*<1d*' : '*Fresh*';
+        const mass = e.mass === 'lt10' ? '*10%*' : e.mass === 'lt50' ? '*50%*' : '*>50%*';
         lines.push(`**${e.name}** => ***@${e.type}***, **Life:**  ${life}, **Mass:**  ${mass}`);
       }
       // blank line between regions for readability
@@ -360,7 +360,7 @@ export function Scanner() {
         const tags: string[] = [];
         if (wh.eol === 'lt1h') tags.push('*<1h*');
         else if (wh.eol === 'lt4h') tags.push('*<4h*');
-        else if (wh.eol === 'lt12h') tags.push('*<12h*');
+        else if (wh.eol === 'lt1d') tags.push('*<1d*');
         if (wh.mass === 'lt10') tags.push('*10%*');
         else if (wh.mass === 'lt50') tags.push('*50%*');
         return tags.length ? ` ${tags.join(' ')}` : '';
@@ -521,7 +521,7 @@ export function Scanner() {
   const directJumps = useMemo(() => (directGatePath && directGatePath.length > 0 ? directGatePath.length - 1 : null), [directGatePath]);
   // Apply filters to all wormhole-assisted routes
   const filteredWormholeRoutes = useMemo(() => {
-    const order: EolLevel[] = ['lt12h', 'lt4h', 'lt1h'];
+    const order: EolLevel[] = ['lt1d', 'lt4h', 'lt1h'];
     const meetsMin = (val: EolLevel | null | undefined, min: EolLevel) => {
       if (!val) return false; // only consider wormholes with an explicit EOL marker
       return order.indexOf(val) <= order.indexOf(min);
@@ -581,7 +581,7 @@ export function Scanner() {
     // Mass severity
     if (wh.mass === 'lt10') redLabels.push('Mass <10%');
     else if (wh.mass === 'lt50') amberLabels.push('Mass <50%');
-    // Life severity (no warning for <12h)
+    // Life severity (no warning for <1d)
     if (wh.eol === 'lt1h') redLabels.push('Life <1h');
     else if (wh.eol === 'lt4h') amberLabels.push('Life <4h');
     const labels = [...redLabels, ...amberLabels];
@@ -684,7 +684,7 @@ export function Scanner() {
                 <div className="font-semibold mb-2">Life remaining</div>
                 <SegmentedSlider
                   options={[
-                    { label: '12h', value: 'lt12h' },
+                    { label: '1d', value: 'lt1d' },
                     { label: '4h', value: 'lt4h' },
                     { label: '1h', value: 'lt1h' },
                   ]}
@@ -693,7 +693,7 @@ export function Scanner() {
                   getColorForValue={(v) => {
                     if (v === 'lt1h') return 'bg-red-500';
                     if (v === 'lt4h') return 'bg-amber-500';
-                    if (v === 'lt12h') return 'bg-blue-600';
+                    if (v === 'lt1d') return 'bg-blue-600';
                     return 'bg-gray-500';
                   }}
                 />
@@ -702,9 +702,9 @@ export function Scanner() {
                 <div className="font-semibold mb-2">Mass</div>
                 <SegmentedSlider
                   options={[
-                    { label: '100%', value: 'gt50' },
-                    { label: '50%', value: 'lt50' },
-                    { label: '10%', value: 'lt10' },
+                    { label: '>50%', value: 'gt50' },
+                    { label: '<50%', value: 'lt50' },
+                    { label: '<10%', value: 'lt10' },
                   ]}
                   value={wh.mass}
                   onChange={(v) => setWormholes(list => list.map((x,i)=> i===idx ? { ...x, mass: v as MassLevel } : x))}
@@ -806,13 +806,13 @@ export function Scanner() {
               <div className="flex-1">
                 <SegmentedSlider
                   options={[
-                    { label: '12h', value: 'lt12h' },
+                    { label: '1d', value: 'lt1d' },
                     { label: '4h', value: 'lt4h' },
                     { label: '1h', value: 'lt1h' },
                   ]}
                   value={filterEolThreshold}
                   onChange={(v) => setFilterEolThreshold(v as EolLevel)}
-                  getColorForValue={(v) => v === 'lt1h' ? 'bg-red-500' : v === 'lt4h' ? 'bg-amber-500' : /* v === 'lt12h' */ 'bg-blue-600'}
+                  getColorForValue={(v) => v === 'lt1h' ? 'bg-red-500' : v === 'lt4h' ? 'bg-amber-500' : /* v === 'lt1d' */ 'bg-blue-600'}
                 />
               </div>
             </div>
@@ -821,9 +821,9 @@ export function Scanner() {
               <div className="flex-1">
                 <SegmentedSlider
                   options={[
-                    { label: '100%', value: 'gt50' },
-                    { label: '50%', value: 'lt50' },
-                    { label: '10%', value: 'lt10' },
+                    { label: '>50%', value: 'gt50' },
+                    { label: '<50%', value: 'lt50' },
+                    { label: '<10%', value: 'lt10' },
                   ]}
                   value={filterMassThreshold}
                   onChange={(v) => setFilterMassThreshold(v as MassLevel)}
