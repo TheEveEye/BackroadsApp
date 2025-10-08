@@ -308,7 +308,14 @@ export function Scanner() {
     const namesById: any = (graph as any)?.namesById || {};
 
     // group valid entries by region name
-    const groups = new Map<string, Array<{ name: string; type: WormholeType; eol: EolLevel | null; mass: MassLevel }>>();
+    const groups = new Map<string, Array<{
+      name: string;
+      type: WormholeType;
+      eol: EolLevel | null;
+      mass: MassLevel;
+      bookmarkInside: boolean;
+      bookmarkOutside: boolean;
+    }>>();
     for (const wh of wormholes) {
       if (!wh.systemId || !wh.type) continue;
       const sys = systems[String(wh.systemId)];
@@ -316,7 +323,14 @@ export function Scanner() {
       const regionName = String(regionsById[String(sys.regionId)] ?? sys.regionId ?? '');
       const systemName = String(namesById[String(wh.systemId)] ?? wh.systemName ?? wh.systemId);
       const arr = groups.get(regionName) || [];
-      arr.push({ name: systemName, type: wh.type, eol: wh.eol, mass: wh.mass });
+      arr.push({
+        name: systemName,
+        type: wh.type,
+        eol: wh.eol,
+        mass: wh.mass,
+        bookmarkInside: !!wh.bookmarkInside,
+        bookmarkOutside: !!wh.bookmarkOutside,
+      });
       groups.set(regionName, arr);
     }
 
@@ -342,9 +356,13 @@ export function Scanner() {
       lines.push(`### ${rn}`);
       const entries = (groups.get(rn) || []).sort((a, b) => a.name.localeCompare(b.name));
       for (const e of entries) {
-        const life = e.eol === 'lt1h' ? '*<1h*' : e.eol === 'lt4h' ? '*<4h*' : e.eol === 'lt1d' ? '*<1d*' : '*Fresh*';
-        const mass = e.mass === 'lt10' ? '*10%*' : e.mass === 'lt50' ? '*50%*' : '*>50%*';
-        lines.push(`**${e.name}** => ***@${e.type}***, **Life:**  ${life}, **Mass:**  ${mass}`);
+        const life = e.eol === 'lt1h' ? '@<1h' : e.eol === 'lt4h' ? '@<4h' : e.eol === 'lt1d' ? '@<1d' : '@Fresh';
+        const mass = e.mass === 'lt10' ? '@<10%' : e.mass === 'lt50' ? '@<50%' : '@>50%';
+        const bookmarkFlags: string[] = [];
+        if (e.bookmarkInside) bookmarkFlags.push('In');
+        if (e.bookmarkOutside) bookmarkFlags.push('Out');
+        const bookmarkText = bookmarkFlags.length ? `, **Bookmarks:** ${bookmarkFlags.join(' + ')}` : '';
+        lines.push(`**${e.name}** => ***@${e.type}***, **Life:**  ${life}, **Mass:**  ${mass}${bookmarkText}`);
       }
       // blank line between regions for readability
       lines.push('');
@@ -358,11 +376,14 @@ export function Scanner() {
       const flags = (wh: Wormhole | null | undefined) => {
         if (!wh) return '';
         const tags: string[] = [];
-        if (wh.eol === 'lt1h') tags.push('*<1h*');
-        else if (wh.eol === 'lt4h') tags.push('*<4h*');
-        else if (wh.eol === 'lt1d') tags.push('*<1d*');
-        if (wh.mass === 'lt10') tags.push('*10%*');
-        else if (wh.mass === 'lt50') tags.push('*50%*');
+        if (wh.eol === 'lt1h') tags.push('@<1h');
+        else if (wh.eol === 'lt4h') tags.push('@<4h');
+        else if (wh.eol === 'lt1d') tags.push('@<1d');
+        if (wh.mass === 'lt10') tags.push('@<10%');
+        else if (wh.mass === 'lt50') tags.push('@<50%');
+        if (wh.bookmarkInside && wh.bookmarkOutside) tags.push('*BM:In/Out*');
+        else if (wh.bookmarkInside) tags.push('*BM:In*');
+        else if (wh.bookmarkOutside) tags.push('*BM:Out*');
         return tags.length ? ` ${tags.join(' ')}` : '';
       };
       // Best route ignoring flags
