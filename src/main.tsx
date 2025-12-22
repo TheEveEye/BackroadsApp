@@ -6,16 +6,18 @@ import App from './App.tsx'
 import { Home } from './routes/Home'
 import { Layout } from './routes/Layout'
 import { Scanner } from './routes/Scanner'
+import { BridgePlanner } from './routes/BridgePlanner'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}> 
-          <Route path="/" element={<Home />} />
-          <Route path="/observatories" element={<App />} />
-          <Route path="/scanner" element={<Scanner />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="/" element={<Home />} />
+        <Route path="/observatories" element={<App />} />
+        <Route path="/scanner" element={<Scanner />} />
+        <Route path="/bridge-planner" element={<BridgePlanner />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
     </BrowserRouter>
