@@ -19,6 +19,7 @@ type BridgePlannerMapProps = {
   settings: { allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean; bidirectional?: boolean }> };
   statusMessage?: string | null;
   summary?: string | null;
+  baselineJumps?: number | null;
 };
 
 type BackgroundNode = { id: number; x: number; y: number };
@@ -38,6 +39,7 @@ export function BridgePlannerMap({
   settings,
   statusMessage,
   summary,
+  baselineJumps,
 }: BridgePlannerMapProps) {
   const [zoom, setZoom] = useState(1);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -325,6 +327,11 @@ export function BridgePlannerMap({
       <section className="bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
         <h2 className="text-xl font-medium mb-2">Map</h2>
         <p className="text-sm text-slate-600 dark:text-slate-300">{statusMessage || 'No route to display yet.'}</p>
+        {baselineJumps != null && (
+          <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
+            Direct route: {baselineJumps}j without bridge
+          </p>
+        )}
       </section>
     );
   }
@@ -335,6 +342,9 @@ export function BridgePlannerMap({
         <div>
           <h2 className="text-xl font-medium">Map</h2>
           <div className="text-sm text-slate-600 dark:text-slate-300">Bridge range: {bridgeRange.toFixed(1)} ly</div>
+          <div className="text-sm text-slate-600 dark:text-slate-300">
+            Direct route: {baselineJumps == null ? 'unreachable' : `${baselineJumps}j`} without bridge
+          </div>
           {summary && <div className="text-sm text-slate-600 dark:text-slate-300">{summary}</div>}
         </div>
         <div className="flex items-center gap-2">

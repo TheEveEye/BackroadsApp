@@ -116,10 +116,11 @@ export function BridgePlanner() {
   const destinationId = useMemo(() => (graph ? resolveQueryToId(planner.targetQuery, graph) : null), [graph, planner.targetQuery]);
   const stagingId = useMemo(() => (graph ? resolveQueryToId(planner.stagingQuery, graph) : null), [graph, planner.stagingQuery]);
 
-  const [routeResult, setRouteResult] = useState<{ routes: RouteOption[]; message: string | null; loading: boolean }>({
+  const [routeResult, setRouteResult] = useState<{ routes: RouteOption[]; message: string | null; loading: boolean; baselineJumps: number | null }>({
     routes: [],
     message: 'Enter a destination and staging system to calculate a route.',
     loading: false,
+    baselineJumps: null,
   });
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
@@ -129,14 +130,19 @@ export function BridgePlanner() {
     if (!graph) return;
     if (!workerRef.current) {
       workerRef.current = new Worker(new URL('../workers/bridgePlannerWorker.ts', import.meta.url), { type: 'module' });
-      workerRef.current.onmessage = (event: MessageEvent<{ type: 'partial' | 'result'; requestId: number; routes: RouteOption[]; message: string | null }>) => {
+      workerRef.current.onmessage = (event: MessageEvent<{ type: 'partial' | 'result'; requestId: number; routes: RouteOption[]; message: string | null; baselineJumps: number | null }>) => {
         const data = event.data;
         if (data.requestId !== requestIdRef.current) return;
         if (data.type === 'partial') {
-          setRouteResult((prev) => ({ routes: data.routes, message: data.message ?? prev.message, loading: true }));
+          setRouteResult((prev) => ({
+            routes: data.routes,
+            message: data.message ?? prev.message,
+            loading: true,
+            baselineJumps: data.baselineJumps ?? prev.baselineJumps,
+          }));
           return;
         }
-        setRouteResult({ routes: data.routes, message: data.message, loading: false });
+        setRouteResult({ routes: data.routes, message: data.message, loading: false, baselineJumps: data.baselineJumps ?? null });
       };
     }
     workerRef.current.postMessage({ type: 'init', graph: { systems: graph.systems } });
@@ -151,7 +157,7 @@ export function BridgePlanner() {
 
   useEffect(() => {
     if (!graph || destinationId == null || stagingId == null) {
-      setRouteResult({ routes: [], message: 'Enter a destination and staging system to calculate a route.', loading: false });
+      setRouteResult({ routes: [], message: 'Enter a destination and staging system to calculate a route.', loading: false, baselineJumps: null });
       return;
     }
     if (!workerRef.current) return;
@@ -159,7 +165,7 @@ export function BridgePlanner() {
     const requestId = requestIdRef.current;
     setUserSelectedRoute(false);
     setSelectedRouteKey(null);
-    setRouteResult({ routes: [], message: 'Computing routes…', loading: true });
+    setRouteResult({ routes: [], message: 'Computing routes…', loading: true, baselineJumps: null });
     workerRef.current.postMessage({
       type: 'compute',
       requestId,
@@ -237,6 +243,17 @@ export function BridgePlanner() {
     return Array.from(ids.values());
   }, [routeResult.routes, stagingId, destinationId]);
 
+  const displayRoutes = useMemo(() => {
+    if (!routeResult.loading) {
+      return routeResult.routes.map((route) => ({ route, placeholder: false }));
+    }
+    const count = Math.max(planner.routesToShow, routeResult.routes.length);
+    return Array.from({ length: count }, (_, idx) => ({
+      route: routeResult.routes[idx] ?? null,
+      placeholder: routeResult.routes[idx] == null,
+    }));
+  }, [routeResult.loading, routeResult.routes, planner.routesToShow]);
+
   return (
     <section className="grid gap-6">
       <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-gray-900 p-6 shadow-sm">
@@ -308,7 +325,10 @@ export function BridgePlanner() {
 
           <section className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white/50 dark:bg-black/20 p-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Routes</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-semibold">Routes</h2>
+                {routeResult.loading && <span className="text-xs text-slate-500">Updating…</span>}
+              </div>
               <div className="flex items-center gap-2 text-xs text-slate-500">
                 <span>Show</span>
                 <select
@@ -323,13 +343,27 @@ export function BridgePlanner() {
                 <span>routes</span>
               </div>
             </div>
-            {routeResult.routes.length === 0 ? (
+            {!routeResult.loading && routeResult.routes.length === 0 ? (
               <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">
-                {routeResult.loading ? 'Computing routes…' : (routeResult.message || 'No routes available.')}
+                {routeResult.message || 'No routes available.'}
               </p>
             ) : (
               <div className="mt-3 grid gap-3">
-                {routeResult.routes.map((route, idx) => {
+                {displayRoutes.map((item, idx) => {
+                  const route = item.route;
+                  if (!route) {
+                    return (
+                      <div
+                        key={`placeholder-${idx}`}
+                        className="relative w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-gray-900/30 px-4 py-3"
+                        aria-hidden="true"
+                      >
+                        <div className="h-4 w-3/4 rounded bg-slate-200/80 dark:bg-slate-700/50" />
+                        <div className="mt-2 h-3 w-2/3 rounded bg-slate-200/70 dark:bg-slate-700/40" />
+                      </div>
+                    );
+                  }
+
                   const parkingName = nameFor(route.parkingId);
                   const endpointName = nameFor(route.bridgeEndpointId);
                   const isSelected = selectedRoute?.key === route.key;
@@ -382,6 +416,7 @@ export function BridgePlanner() {
           settings={{ allowAnsiblex: settings.allowAnsiblex, ansiblexes: settings.ansiblexes }}
           statusMessage={routeResult.message}
           summary={summary}
+          baselineJumps={routeResult.baselineJumps}
         />
       </div>
 

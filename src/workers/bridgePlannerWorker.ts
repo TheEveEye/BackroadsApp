@@ -209,17 +209,22 @@ function buildRoutesFromCandidates(
   return routes;
 }
 
-function computeRoutes(payload: ComputeRequest, onPartial?: (routes: RouteOption[]) => void): { routes: RouteOption[]; message: string | null } {
-  if (!graph) return { routes: [], message: 'Graph not loaded.' };
+function computeRoutes(
+  payload: ComputeRequest,
+  onPartial?: (routes: RouteOption[], baselineJumps: number | null) => void
+): { routes: RouteOption[]; message: string | null; baselineJumps: number | null } {
+  if (!graph) return { routes: [], message: 'Graph not loaded.', baselineJumps: null };
   const systems = graph.systems;
-  if (!systems[String(payload.destinationId)]) return { routes: [], message: 'Destination system not found.' };
-  if (!systems[String(payload.stagingId)]) return { routes: [], message: 'Staging system not found.' };
+  if (!systems[String(payload.destinationId)]) return { routes: [], message: 'Destination system not found.', baselineJumps: null };
+  if (!systems[String(payload.stagingId)]) return { routes: [], message: 'Staging system not found.', baselineJumps: null };
 
   const maxMeters = payload.bridgeRange * LY;
   const maxMetersSq = maxMeters * maxMeters;
 
   const { dist: stagingDist, prev: stagingPrev } = computeTravelTree(payload.stagingId, payload.settings, MAX_TRAVEL_JUMPS);
   const { dist: destinationDist, prev: destinationPrev } = computeTravelTree(payload.destinationId, payload.settings, MAX_TRAVEL_JUMPS);
+
+  const baselineJumps = stagingDist.get(payload.destinationId) ?? null;
 
   const endpointList: Array<{ id: number; x: number; y: number; z: number; jumps: number }> = [];
   for (const sys of systemsList) {
@@ -229,7 +234,7 @@ function computeRoutes(payload: ComputeRequest, onPartial?: (routes: RouteOption
   }
 
   if (endpointList.length === 0) {
-    return { routes: [], message: 'No destination routes found.' };
+    return { routes: [], message: 'No destination routes found.', baselineJumps };
   }
 
   const limit = Math.max(1, Math.min(25, payload.routesToShow || 5));
@@ -241,7 +246,7 @@ function computeRoutes(payload: ComputeRequest, onPartial?: (routes: RouteOption
     if (!force && now - lastEmit < 80) return;
     lastEmit = now;
     const routes = buildRoutesFromCandidates(best, stagingPrev, destinationPrev, payload.stagingId, payload.destinationId);
-    onPartial(routes);
+    onPartial(routes, baselineJumps);
   };
 
   for (const parking of systemsList) {
@@ -281,16 +286,16 @@ function computeRoutes(payload: ComputeRequest, onPartial?: (routes: RouteOption
   }
 
   if (best.length === 0) {
-    return { routes: [], message: 'No reachable parking systems found.' };
+    return { routes: [], message: 'No reachable parking systems found.', baselineJumps };
   }
 
   const routes = buildRoutesFromCandidates(best, stagingPrev, destinationPrev, payload.stagingId, payload.destinationId);
 
   if (routes.length === 0) {
-    return { routes: [], message: 'No routes found.' };
+    return { routes: [], message: 'No routes found.', baselineJumps };
   }
 
-  return { routes, message: null };
+  return { routes, message: null, baselineJumps };
 }
 
 self.onmessage = (event: MessageEvent<InitRequest | ComputeRequest>) => {
@@ -301,8 +306,8 @@ self.onmessage = (event: MessageEvent<InitRequest | ComputeRequest>) => {
     return;
   }
   if (data.type === 'compute') {
-    const result = computeRoutes(data, (routes) => {
-      (self as any).postMessage({ type: 'partial', requestId: data.requestId, routes, message: null });
+    const result = computeRoutes(data, (routes, baselineJumps) => {
+      (self as any).postMessage({ type: 'partial', requestId: data.requestId, routes, message: null, baselineJumps });
     });
     (self as any).postMessage({ type: 'result', requestId: data.requestId, ...result });
   }
