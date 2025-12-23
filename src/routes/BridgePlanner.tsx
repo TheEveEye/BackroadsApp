@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { GraphData } from '../lib/data';
 import { resolveQueryToId } from '../lib/graph';
 import { AutocompleteInput } from '../components/AutocompleteInput';
@@ -6,100 +6,7 @@ import { Icon } from '../components/Icon';
 import { AnsiblexModal as SharedAnsiblexModal } from '../components/AnsiblexModal';
 import { BridgePlannerMap } from '../components/BridgePlannerMap';
 
-const LY = 9.4607e15;
-const MAX_TRAVEL_JUMPS = 200;
-
-type TravelSettings = {
-  excludeZarzakh?: boolean;
-  sameRegionOnly?: boolean;
-  allowAnsiblex?: boolean;
-  ansiblexes?: Array<{ from: number; to: number; enabled?: boolean; bidirectional?: boolean }>;
-};
-
-function computeTravelTree({ graph, startId, settings, maxJumps }: { graph: GraphData; startId: number; settings: TravelSettings; maxJumps: number }) {
-  const dist = new Map<number, number>();
-  const prev = new Map<number, number>();
-  const queue: number[] = [];
-  const systems = graph.systems;
-  const start = systems[String(startId)];
-  if (!start) return { dist, prev };
-
-  const exclude = new Set<number>();
-  if (settings.excludeZarzakh) exclude.add(30100000);
-  const sameRegionOnly = !!settings.sameRegionOnly;
-  const startRegion = start.regionId;
-
-  const ansiFrom: Map<number, number[]> = new Map();
-  if (settings.allowAnsiblex && settings.ansiblexes?.length) {
-    for (const b of settings.ansiblexes) {
-      if (!b || b.enabled === false) continue;
-      const from = Number(b.from);
-      const to = Number(b.to);
-      if (!Number.isFinite(from) || !Number.isFinite(to)) continue;
-      if (!ansiFrom.has(from)) ansiFrom.set(from, []);
-      ansiFrom.get(from)!.push(to);
-      if (b.bidirectional !== false) {
-        if (!ansiFrom.has(to)) ansiFrom.set(to, []);
-        ansiFrom.get(to)!.push(from);
-      }
-    }
-  }
-
-  dist.set(startId, 0);
-  queue.push(startId);
-
-  for (let qi = 0; qi < queue.length; qi++) {
-    const id = queue[qi];
-    const d = dist.get(id);
-    if (d == null) continue;
-    if (d >= maxJumps) continue;
-    const node = systems[String(id)];
-    if (!node) continue;
-    if (exclude.has(id)) continue;
-    if (sameRegionOnly && node.regionId !== startRegion) continue;
-
-    for (const next of node.adjacentSystems) {
-      if (exclude.has(next)) continue;
-      const nextNode = systems[String(next)];
-      if (!nextNode) continue;
-      if (sameRegionOnly && nextNode.regionId !== startRegion) continue;
-      if (!dist.has(next)) {
-        dist.set(next, d + 1);
-        prev.set(next, id);
-        queue.push(next);
-      }
-    }
-
-    if (settings.allowAnsiblex) {
-      const outs = ansiFrom.get(id) || [];
-      for (const next of outs) {
-        if (exclude.has(next)) continue;
-        const nextNode = systems[String(next)];
-        if (!nextNode) continue;
-        if (sameRegionOnly && nextNode.regionId !== startRegion) continue;
-        if (!dist.has(next)) {
-          dist.set(next, d + 1);
-          prev.set(next, id);
-          queue.push(next);
-        }
-      }
-    }
-  }
-
-  return { dist, prev };
-}
-
-function buildPath(prev: Map<number, number>, startId: number, endId: number): number[] | null {
-  const path: number[] = [];
-  let cur: number | undefined = endId;
-  while (cur != null) {
-    path.push(cur);
-    if (cur === startId) break;
-    cur = prev.get(cur);
-    if (cur == null) return null;
-  }
-  return path.reverse();
-}
+//const LY = 9.4607e15;
 
 type PlannerState = {
   targetQuery: string;
@@ -209,132 +116,64 @@ export function BridgePlanner() {
   const destinationId = useMemo(() => (graph ? resolveQueryToId(planner.targetQuery, graph) : null), [graph, planner.targetQuery]);
   const stagingId = useMemo(() => (graph ? resolveQueryToId(planner.stagingQuery, graph) : null), [graph, planner.stagingQuery]);
 
-  const routeResult = useMemo(() => {
-    if (!graph || destinationId == null || stagingId == null) {
-      return { routes: [] as RouteOption[], message: 'Enter a destination and staging system to calculate a route.' };
-    }
+  const [routeResult, setRouteResult] = useState<{ routes: RouteOption[]; message: string | null; loading: boolean }>({
+    routes: [],
+    message: 'Enter a destination and staging system to calculate a route.',
+    loading: false,
+  });
+  const workerRef = useRef<Worker | null>(null);
+  const requestIdRef = useRef(0);
+  const [userSelectedRoute, setUserSelectedRoute] = useState(false);
 
-    if (!graph.systems[String(destinationId)]) {
-      return { routes: [] as RouteOption[], message: 'Destination system not found.' };
-    }
-
-    if (!graph.systems[String(stagingId)]) {
-      return { routes: [] as RouteOption[], message: 'Staging system not found.' };
-    }
-
-    const maxMeters = planner.bridgeRange * LY;
-    const maxMetersSq = maxMeters * maxMeters;
-
-    const systemsList: Array<{ id: number; x: number; y: number; z: number }> = [];
-    for (const [idStr, sys] of Object.entries(graph.systems)) {
-      const id = Number(idStr);
-      if (!Number.isFinite(id)) continue;
-      systemsList.push({ id, x: sys.position.x, y: sys.position.y, z: sys.position.z });
-    }
-
-    const { dist: stagingDist, prev: stagingPrev } = computeTravelTree({
-      graph,
-      startId: stagingId,
-      settings: {
-        excludeZarzakh: settings.excludeZarzakh,
-        sameRegionOnly: settings.sameRegionOnly,
-        allowAnsiblex: settings.allowAnsiblex,
-        ansiblexes: settings.ansiblexes,
-      },
-      maxJumps: MAX_TRAVEL_JUMPS,
-    });
-
-    const { dist: destinationDist, prev: destinationPrev } = computeTravelTree({
-      graph,
-      startId: destinationId,
-      settings: {
-        excludeZarzakh: settings.excludeZarzakh,
-        sameRegionOnly: settings.sameRegionOnly,
-        allowAnsiblex: settings.allowAnsiblex,
-        ansiblexes: settings.ansiblexes,
-      },
-      maxJumps: MAX_TRAVEL_JUMPS,
-    });
-
-    const endpointList: Array<{ id: number; x: number; y: number; z: number; jumps: number }> = [];
-    for (const sys of systemsList) {
-      const jumps = destinationDist.get(sys.id);
-      if (jumps == null) continue;
-      endpointList.push({ ...sys, jumps });
-    }
-
-    if (endpointList.length === 0) {
-      return { routes: [] as RouteOption[], message: 'No destination routes found.' };
-    }
-
-    const candidates: Array<{ parkingId: number; endpointId: number; stagingJumps: number; destinationJumps: number; bridgeMeters: number; totalJumps: number }> = [];
-    for (const parking of systemsList) {
-      if (settings.excludeZarzakh && parking.id === 30100000) continue;
-      const stagingJumps = stagingDist.get(parking.id);
-      if (stagingJumps == null) continue;
-      let bestEndpoint: { id: number; jumps: number; bridgeMeters: number } | null = null;
-      for (const endpoint of endpointList) {
-        const dx = parking.x - endpoint.x;
-        const dy = parking.y - endpoint.y;
-        const dz = parking.z - endpoint.z;
-        const d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 > maxMetersSq) continue;
-        const bridgeMeters = Math.sqrt(d2);
-        if (
-          !bestEndpoint ||
-          endpoint.jumps < bestEndpoint.jumps ||
-          (endpoint.jumps === bestEndpoint.jumps && bridgeMeters < bestEndpoint.bridgeMeters)
-        ) {
-          bestEndpoint = { id: endpoint.id, jumps: endpoint.jumps, bridgeMeters };
+  useEffect(() => {
+    if (!graph) return;
+    if (!workerRef.current) {
+      workerRef.current = new Worker(new URL('../workers/bridgePlannerWorker.ts', import.meta.url), { type: 'module' });
+      workerRef.current.onmessage = (event: MessageEvent<{ type: 'partial' | 'result'; requestId: number; routes: RouteOption[]; message: string | null }>) => {
+        const data = event.data;
+        if (data.requestId !== requestIdRef.current) return;
+        if (data.type === 'partial') {
+          setRouteResult((prev) => ({ routes: data.routes, message: data.message ?? prev.message, loading: true }));
+          return;
         }
-      }
-      if (!bestEndpoint) continue;
-      const totalJumps = stagingJumps + bestEndpoint.jumps;
-      candidates.push({
-        parkingId: parking.id,
-        endpointId: bestEndpoint.id,
-        stagingJumps,
-        destinationJumps: bestEndpoint.jumps,
-        bridgeMeters: bestEndpoint.bridgeMeters,
-        totalJumps,
-      });
+        setRouteResult({ routes: data.routes, message: data.message, loading: false });
+      };
     }
+    workerRef.current.postMessage({ type: 'init', graph: { systems: graph.systems } });
+  }, [graph]);
 
-    if (candidates.length === 0) {
-      return { routes: [] as RouteOption[], message: 'No reachable parking systems found.' };
+  useEffect(() => {
+    return () => {
+      workerRef.current?.terminate();
+      workerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!graph || destinationId == null || stagingId == null) {
+      setRouteResult({ routes: [], message: 'Enter a destination and staging system to calculate a route.', loading: false });
+      return;
     }
-
-    candidates.sort((a, b) => {
-      if (a.totalJumps !== b.totalJumps) return a.totalJumps - b.totalJumps;
-      if (a.stagingJumps !== b.stagingJumps) return a.stagingJumps - b.stagingJumps;
-      if (a.destinationJumps !== b.destinationJumps) return a.destinationJumps - b.destinationJumps;
-      return a.bridgeMeters - b.bridgeMeters;
+    if (!workerRef.current) return;
+    requestIdRef.current += 1;
+    const requestId = requestIdRef.current;
+    setUserSelectedRoute(false);
+    setSelectedRouteKey(null);
+    setRouteResult({ routes: [], message: 'Computing routes…', loading: true });
+    workerRef.current.postMessage({
+      type: 'compute',
+      requestId,
+      destinationId,
+      stagingId,
+      bridgeRange: planner.bridgeRange,
+      routesToShow: planner.routesToShow,
+      settings: {
+        excludeZarzakh: settings.excludeZarzakh,
+        sameRegionOnly: settings.sameRegionOnly,
+        allowAnsiblex: settings.allowAnsiblex,
+        ansiblexes: settings.ansiblexes,
+      },
     });
-
-    const routes: RouteOption[] = [];
-    const limit = Math.max(1, Math.min(25, planner.routesToShow || 5));
-    for (const c of candidates.slice(0, limit)) {
-      const travelPath = buildPath(stagingPrev, stagingId, c.parkingId);
-      const destinationPath = buildPath(destinationPrev, destinationId, c.endpointId);
-      if (!travelPath || !destinationPath) continue;
-      routes.push({
-        key: `${c.parkingId}-${c.endpointId}`,
-        travelPath,
-        postBridgePath: destinationPath.slice().reverse(),
-        parkingId: c.parkingId,
-        bridgeEndpointId: c.endpointId,
-        travelJumps: c.stagingJumps,
-        postBridgeJumps: c.destinationJumps,
-        totalJumps: c.totalJumps,
-        bridgeLy: c.bridgeMeters / LY,
-      });
-    }
-
-    if (routes.length === 0) {
-      return { routes: [] as RouteOption[], message: 'No routes found.' };
-    }
-
-    return { routes, message: null as string | null };
   }, [
     graph,
     destinationId,
@@ -358,6 +197,12 @@ export function BridgePlanner() {
       setSelectedRouteKey(routeResult.routes[0].key);
     }
   }, [routeResult.routes, selectedRouteKey]);
+
+  useEffect(() => {
+    if (!routeResult.loading && routeResult.routes.length > 0 && !userSelectedRoute) {
+      setSelectedRouteKey(routeResult.routes[0].key);
+    }
+  }, [routeResult.loading, routeResult.routes, userSelectedRoute]);
 
   const selectedRoute = useMemo(() => {
     if (routeResult.routes.length === 0) return null;
@@ -405,12 +250,12 @@ export function BridgePlanner() {
         <div className="grid gap-4">
           <section className="grid gap-4 md:grid-cols-2 bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
             <label className="grid gap-2">
-              Starting system (staging)
+            Starting system
               <AutocompleteInput
                 graph={graph}
                 value={planner.stagingQuery}
                 onChange={(value) => setPlanner((prev) => ({ ...prev, stagingQuery: value }))}
-                placeholder="e.g. Jita"
+                placeholder="e.g. UALX-3"
               />
             </label>
 
@@ -420,7 +265,7 @@ export function BridgePlanner() {
                 graph={graph}
                 value={planner.targetQuery}
                 onChange={(value) => setPlanner((prev) => ({ ...prev, targetQuery: value }))}
-                placeholder="e.g. 1DQ1-A"
+                placeholder="e.g. C-J6MT"
               />
             </label>
 
@@ -479,7 +324,9 @@ export function BridgePlanner() {
               </div>
             </div>
             {routeResult.routes.length === 0 ? (
-              <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">{routeResult.message || 'No routes available.'}</p>
+              <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">
+                {routeResult.loading ? 'Computing routes…' : (routeResult.message || 'No routes available.')}
+              </p>
             ) : (
               <div className="mt-3 grid gap-3">
                 {routeResult.routes.map((route, idx) => {
@@ -490,7 +337,10 @@ export function BridgePlanner() {
                     <button
                       key={route.key}
                       type="button"
-                      onClick={() => setSelectedRouteKey(route.key)}
+                      onClick={() => {
+                        setSelectedRouteKey(route.key);
+                        setUserSelectedRoute(true);
+                      }}
                       className={
                         "relative w-full text-left rounded-lg border px-4 py-3 transition " +
                         (isSelected
