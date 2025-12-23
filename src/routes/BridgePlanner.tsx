@@ -124,6 +124,7 @@ export function BridgePlanner() {
     loading: false,
     baselineJumps: null,
   });
+  const [copyStatus, setCopyStatus] = useState<null | 'success' | 'error'>(null);
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
   const [userSelectedRoute, setUserSelectedRoute] = useState(false);
@@ -234,6 +235,43 @@ export function BridgePlanner() {
   };
   const stagingName = nameFor(stagingId);
   const destinationName = nameFor(destinationId);
+
+  const routesForCopy = useMemo(() => routeResult.routes.slice(0, 10), [routeResult.routes]);
+  const eveLinksMarkup = useMemo(() => {
+    if (!graph || routesForCopy.length === 0) return '';
+    const namesById = graph.namesById || {};
+    const lines = routesForCopy.map((route) => {
+      const parkingName = namesById[String(route.parkingId)] ?? String(route.parkingId);
+      const endpointName = namesById[String(route.bridgeEndpointId)] ?? String(route.bridgeEndpointId);
+      const parkingAnchor = `<a href="showinfo:5//${route.parkingId}">${parkingName}</a>`;
+      const endpointAnchor = `<a href="showinfo:5//${route.bridgeEndpointId}">${endpointName}</a>`;
+      return `${parkingAnchor} - ${endpointAnchor} (${route.totalJumps}j)`;
+    });
+    const body = lines.join('<br>');
+    return `<font size="13" color="#bfffffff"></font><font size="13" color="#ffffffff"><loc>${body}</loc></font>`;
+  }, [graph, routesForCopy]);
+
+  async function copyText(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyStatus('success');
+      setTimeout(() => setCopyStatus(null), 1200);
+    } catch {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        setCopyStatus(ok ? 'success' : 'error');
+        setTimeout(() => setCopyStatus(null), ok ? 1200 : 1800);
+      } catch {
+        setCopyStatus('error');
+        setTimeout(() => setCopyStatus(null), 1800);
+      }
+    }
+  }
 
   const fitNodeIds = useMemo(() => {
     if (routeResult.routes.length === 0) return [] as number[];
@@ -362,6 +400,26 @@ export function BridgePlanner() {
                 {routeResult.loading && <span className="text-xs text-slate-500">Updating…</span>}
               </div>
               <div className="flex items-center gap-2 text-xs text-slate-500">
+                <div className="relative">
+                  {copyStatus && (
+                    <div className={"pointer-events-none absolute -top-8 right-0 px-3 py-1.5 rounded shadow text-xs inline-flex items-center gap-2 " + (copyStatus === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white')} role="status" aria-live="polite">
+                      <Icon name={copyStatus === 'success' ? 'copy' : 'warn'} size={12} color="white" />
+                      {copyStatus === 'success' ? 'Copied!' : 'Copy failed'}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center gap-1"
+                    onClick={() => {
+                      if (eveLinksMarkup) copyText(eveLinksMarkup);
+                    }}
+                    disabled={!eveLinksMarkup}
+                    title="Copy EVE in-game links"
+                  >
+                    <Icon name="copy" size={14} />
+                    <span>Copy EVE links</span>
+                  </button>
+                </div>
                 <span>Show</span>
                 <select
                   className="rounded border border-gray-300 dark:border-gray-700 bg-white/80 dark:bg-gray-900 px-2 py-1 text-xs"
