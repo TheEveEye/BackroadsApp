@@ -33,8 +33,8 @@ export function BridgePlanner() {
 
   const [graph, setGraph] = useState<GraphData | null>(() => (window as any).appGraph || null);
   const [showAnsiblexModal, setShowAnsiblexModal] = useState(false);
-  const [settings, setSettings] = useState<{ excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }> }>(() => {
-    const defaults = { excludeZarzakh: true, sameRegionOnly: false, titanBridgeFirstJump: false, allowAnsiblex: false, ansiblexes: [] as Array<{ from: number; to: number; enabled?: boolean }> };
+  const [settings, setSettings] = useState<{ excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; bridgeIntoDestination: boolean; bridgeFromStaging: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }> }>(() => {
+    const defaults = { excludeZarzakh: true, sameRegionOnly: false, titanBridgeFirstJump: false, bridgeIntoDestination: false, bridgeFromStaging: false, allowAnsiblex: false, ansiblexes: [] as Array<{ from: number; to: number; enabled?: boolean }> };
     try {
       const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
       if (raw) {
@@ -45,6 +45,8 @@ export function BridgePlanner() {
             excludeZarzakh: typeof parsed.excludeZarzakh === 'boolean' ? parsed.excludeZarzakh : defaults.excludeZarzakh,
             sameRegionOnly: typeof parsed.sameRegionOnly === 'boolean' ? parsed.sameRegionOnly : defaults.sameRegionOnly,
             titanBridgeFirstJump: typeof parsed.titanBridgeFirstJump === 'boolean' ? parsed.titanBridgeFirstJump : defaults.titanBridgeFirstJump,
+            bridgeIntoDestination: typeof parsed.bridgeIntoDestination === 'boolean' ? parsed.bridgeIntoDestination : defaults.bridgeIntoDestination,
+            bridgeFromStaging: typeof parsed.bridgeFromStaging === 'boolean' ? parsed.bridgeFromStaging : defaults.bridgeFromStaging,
             allowAnsiblex: typeof parsed.allowAnsiblex === 'boolean' ? parsed.allowAnsiblex : defaults.allowAnsiblex,
             ansiblexes: Array.isArray(parsed.ansiblexes) ? parsed.ansiblexes : defaults.ansiblexes,
           };
@@ -176,6 +178,8 @@ export function BridgePlanner() {
       settings: {
         excludeZarzakh: settings.excludeZarzakh,
         sameRegionOnly: settings.sameRegionOnly,
+        bridgeIntoDestination: settings.bridgeIntoDestination,
+        bridgeFromStaging: settings.bridgeFromStaging,
         allowAnsiblex: settings.allowAnsiblex,
         ansiblexes: settings.ansiblexes,
       },
@@ -188,6 +192,8 @@ export function BridgePlanner() {
     planner.routesToShow,
     settings.excludeZarzakh,
     settings.sameRegionOnly,
+    settings.bridgeIntoDestination,
+    settings.bridgeFromStaging,
     settings.allowAnsiblex,
     settings.ansiblexes,
   ]);
@@ -302,6 +308,32 @@ export function BridgePlanner() {
             <fieldset className="md:col-span-2 border border-gray-200 dark:border-gray-700 rounded-md p-3">
               <legend className="px-1 text-sm text-gray-700 dark:text-gray-300">Travel graph</legend>
               <div className="flex flex-wrap items-center gap-3">
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="accent-blue-600"
+                    checked={!!settings.bridgeIntoDestination}
+                    onChange={(e) => setSettings({
+                      ...settings,
+                      bridgeIntoDestination: e.target.checked,
+                      bridgeFromStaging: e.target.checked ? false : settings.bridgeFromStaging,
+                    })}
+                  />
+                  <span>Bridge into destination</span>
+                </label>
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="accent-blue-600"
+                    checked={!!settings.bridgeFromStaging}
+                    onChange={(e) => setSettings({
+                      ...settings,
+                      bridgeFromStaging: e.target.checked,
+                      bridgeIntoDestination: e.target.checked ? false : settings.bridgeIntoDestination,
+                    })}
+                  />
+                  <span>Bridge from starting system</span>
+                </label>
                 <label className="inline-flex items-center gap-2">
                   <input
                     type="checkbox"

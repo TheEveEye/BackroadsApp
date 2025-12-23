@@ -14,6 +14,8 @@ type AnsiblexBridge = { from: number; to: number; enabled?: boolean; bidirection
 type TravelSettings = {
   excludeZarzakh?: boolean;
   sameRegionOnly?: boolean;
+  bridgeIntoDestination?: boolean;
+  bridgeFromStaging?: boolean;
   allowAnsiblex?: boolean;
   ansiblexes?: AnsiblexBridge[];
 };
@@ -230,6 +232,9 @@ function computeRoutes(
   if (isForbiddenSystem(destinationNode)) {
     return { routes: [], message: 'Destination is in highsec or Pochven.', baselineJumps: null };
   }
+  if (payload.settings.bridgeFromStaging && isForbiddenSystem(stagingNode)) {
+    return { routes: [], message: 'Starting system is in highsec or Pochven.', baselineJumps: null };
+  }
 
   const maxMeters = payload.bridgeRange * LY;
   const maxMetersSq = maxMeters * maxMeters;
@@ -240,10 +245,23 @@ function computeRoutes(
   const baselineJumps = stagingDist.get(payload.destinationId) ?? null;
 
   const endpointList: Array<{ id: number; x: number; y: number; z: number; jumps: number }> = [];
-  for (const sys of systemsList) {
-    const jumps = destinationDist.get(sys.id);
-    if (jumps == null) continue;
-    endpointList.push({ id: sys.id, x: sys.x, y: sys.y, z: sys.z, jumps });
+  if (payload.settings.bridgeIntoDestination) {
+    const destJumps = destinationDist.get(payload.destinationId);
+    if (destJumps != null) {
+      endpointList.push({
+        id: payload.destinationId,
+        x: destinationNode.position.x,
+        y: destinationNode.position.y,
+        z: destinationNode.position.z,
+        jumps: destJumps,
+      });
+    }
+  } else {
+    for (const sys of systemsList) {
+      const jumps = destinationDist.get(sys.id);
+      if (jumps == null) continue;
+      endpointList.push({ id: sys.id, x: sys.x, y: sys.y, z: sys.z, jumps });
+    }
   }
 
   if (endpointList.length === 0) {
@@ -263,6 +281,7 @@ function computeRoutes(
   };
 
   for (const parking of systemsList) {
+    if (payload.settings.bridgeFromStaging && parking.id !== payload.stagingId) continue;
     if (payload.settings.excludeZarzakh && parking.id === 30100000) continue;
     if (isForbiddenSystem(parking)) continue;
     const stagingJumps = stagingDist.get(parking.id);
