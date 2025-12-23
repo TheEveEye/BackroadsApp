@@ -25,6 +25,11 @@ type RouteOption = {
   postBridgeJumps: number;
   totalJumps: number;
   bridgeLy: number;
+  midTravelPath?: number[] | null;
+  parking2Id?: number | null;
+  bridgeEndpoint2Id?: number | null;
+  midTravelJumps?: number;
+  bridge2Ly?: number;
 };
 
 export function BridgePlanner() {
@@ -33,8 +38,8 @@ export function BridgePlanner() {
 
   const [graph, setGraph] = useState<GraphData | null>(() => (window as any).appGraph || null);
   const [showAnsiblexModal, setShowAnsiblexModal] = useState(false);
-  const [settings, setSettings] = useState<{ excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; bridgeIntoDestination: boolean; bridgeFromStaging: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }> }>(() => {
-    const defaults = { excludeZarzakh: true, sameRegionOnly: false, titanBridgeFirstJump: false, bridgeIntoDestination: false, bridgeFromStaging: false, allowAnsiblex: false, ansiblexes: [] as Array<{ from: number; to: number; enabled?: boolean }> };
+  const [settings, setSettings] = useState<{ excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; bridgeIntoDestination: boolean; bridgeFromStaging: boolean; bridgeCount: number; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }> }>(() => {
+    const defaults = { excludeZarzakh: true, sameRegionOnly: false, titanBridgeFirstJump: false, bridgeIntoDestination: false, bridgeFromStaging: false, bridgeCount: 1, allowAnsiblex: false, ansiblexes: [] as Array<{ from: number; to: number; enabled?: boolean }> };
     try {
       const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
       if (raw) {
@@ -47,6 +52,7 @@ export function BridgePlanner() {
             titanBridgeFirstJump: typeof parsed.titanBridgeFirstJump === 'boolean' ? parsed.titanBridgeFirstJump : defaults.titanBridgeFirstJump,
             bridgeIntoDestination: typeof parsed.bridgeIntoDestination === 'boolean' ? parsed.bridgeIntoDestination : defaults.bridgeIntoDestination,
             bridgeFromStaging: typeof parsed.bridgeFromStaging === 'boolean' ? parsed.bridgeFromStaging : defaults.bridgeFromStaging,
+            bridgeCount: Number.isFinite(parsed.bridgeCount) ? Math.max(1, Math.min(2, Number(parsed.bridgeCount))) : defaults.bridgeCount,
             allowAnsiblex: typeof parsed.allowAnsiblex === 'boolean' ? parsed.allowAnsiblex : defaults.allowAnsiblex,
             ansiblexes: Array.isArray(parsed.ansiblexes) ? parsed.ansiblexes : defaults.ansiblexes,
           };
@@ -181,6 +187,7 @@ export function BridgePlanner() {
         sameRegionOnly: settings.sameRegionOnly,
         bridgeIntoDestination: settings.bridgeIntoDestination,
         bridgeFromStaging: settings.bridgeFromStaging,
+        bridgeCount: settings.bridgeCount,
         allowAnsiblex: settings.allowAnsiblex,
         ansiblexes: settings.ansiblexes,
       },
@@ -195,6 +202,7 @@ export function BridgePlanner() {
     settings.sameRegionOnly,
     settings.bridgeIntoDestination,
     settings.bridgeFromStaging,
+    settings.bridgeCount,
     settings.allowAnsiblex,
     settings.ansiblexes,
   ]);
@@ -226,6 +234,12 @@ export function BridgePlanner() {
     if (!graph || !selectedRoute) return null;
     const parkingName = graph.namesById?.[String(selectedRoute.parkingId)] ?? String(selectedRoute.parkingId);
     const endpointName = graph.namesById?.[String(selectedRoute.bridgeEndpointId)] ?? String(selectedRoute.bridgeEndpointId);
+    if (selectedRoute.parking2Id != null && selectedRoute.bridgeEndpoint2Id != null && selectedRoute.bridge2Ly != null) {
+      const parking2Name = graph.namesById?.[String(selectedRoute.parking2Id)] ?? String(selectedRoute.parking2Id);
+      const endpoint2Name = graph.namesById?.[String(selectedRoute.bridgeEndpoint2Id)] ?? String(selectedRoute.bridgeEndpoint2Id);
+      const midTravel = selectedRoute.midTravelJumps ?? 0;
+      return `${parkingName} | ${selectedRoute.travelJumps}j to park | bridge to ${endpointName} (${selectedRoute.bridgeLy.toFixed(2)} ly) | ${midTravel}j to ${parking2Name} | bridge to ${endpoint2Name} (${selectedRoute.bridge2Ly.toFixed(2)} ly) | ${selectedRoute.postBridgeJumps}j to destination | total ${selectedRoute.totalJumps}j`;
+    }
     return `${parkingName} | ${selectedRoute.travelJumps}j to park | bridge to ${endpointName} (${selectedRoute.bridgeLy.toFixed(2)} ly) | ${selectedRoute.postBridgeJumps}j to destination | total ${selectedRoute.totalJumps}j`;
   }, [graph, selectedRoute]);
 
@@ -245,7 +259,15 @@ export function BridgePlanner() {
       const endpointName = namesById[String(route.bridgeEndpointId)] ?? String(route.bridgeEndpointId);
       const parkingAnchor = `<a href="showinfo:5//${route.parkingId}">${parkingName}</a>`;
       const endpointAnchor = `<a href="showinfo:5//${route.bridgeEndpointId}">${endpointName}</a>`;
-      return `${parkingAnchor} - ${endpointAnchor} (${route.totalJumps}j)`;
+      let line = `${parkingAnchor} - ${endpointAnchor}`;
+      if (route.parking2Id != null && route.bridgeEndpoint2Id != null) {
+        const parking2Name = namesById[String(route.parking2Id)] ?? String(route.parking2Id);
+        const endpoint2Name = namesById[String(route.bridgeEndpoint2Id)] ?? String(route.bridgeEndpoint2Id);
+        const parking2Anchor = `<a href="showinfo:5//${route.parking2Id}">${parking2Name}</a>`;
+        const endpoint2Anchor = `<a href="showinfo:5//${route.bridgeEndpoint2Id}">${endpoint2Name}</a>`;
+        line += ` - ${parking2Anchor} - ${endpoint2Anchor}`;
+      }
+      return `${line} (${route.totalJumps}j)`;
     });
     const body = lines.join('<br>');
     return `<font size="13" color="#bfffffff"></font><font size="13" color="#ffffffff"><loc>${body}</loc></font>`;
@@ -279,8 +301,13 @@ export function BridgePlanner() {
     for (const route of routeResult.routes) {
       for (const id of route.travelPath) ids.add(id);
       for (const id of route.postBridgePath) ids.add(id);
+      if (route.midTravelPath) {
+        for (const id of route.midTravelPath) ids.add(id);
+      }
       ids.add(route.parkingId);
       ids.add(route.bridgeEndpointId);
+      if (route.parking2Id != null) ids.add(route.parking2Id);
+      if (route.bridgeEndpoint2Id != null) ids.add(route.bridgeEndpoint2Id);
     }
     if (stagingId != null) ids.add(stagingId);
     if (destinationId != null) ids.add(destinationId);
@@ -373,6 +400,18 @@ export function BridgePlanner() {
                   <span>Bridge from starting system</span>
                 </label>
                 <label className="inline-flex items-center gap-2">
+                  <span>Bridges</span>
+                  <select
+                    className="rounded border border-gray-300 dark:border-gray-700 bg-white/80 dark:bg-gray-900 px-2 py-1 text-xs"
+                    value={settings.bridgeCount}
+                    onChange={(e) => setSettings({ ...settings, bridgeCount: Math.max(1, Math.min(2, Number(e.target.value))) })}
+                  >
+                    {[1, 2].map((n) => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="inline-flex items-center gap-2">
                   <input
                     type="checkbox"
                     className="accent-blue-600"
@@ -456,6 +495,8 @@ export function BridgePlanner() {
 
                   const parkingName = nameFor(route.parkingId);
                   const endpointName = nameFor(route.bridgeEndpointId);
+                  const parking2Name = route.parking2Id != null ? nameFor(route.parking2Id) : null;
+                  const endpoint2Name = route.bridgeEndpoint2Id != null ? nameFor(route.bridgeEndpoint2Id) : null;
                   const isSelected = selectedRoute?.key === route.key;
                   return (
                     <button
@@ -473,10 +514,15 @@ export function BridgePlanner() {
                       }
                     >
                       <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
-                        {stagingName} → {parkingName} → {endpointName} → {destinationName}
+                        {stagingName} → {parkingName} → {endpointName}
+                        {parking2Name && endpoint2Name ? ` → ${parking2Name} → ${endpoint2Name}` : ''} → {destinationName}
                       </div>
                       <div className="mt-1 flex items-center justify-between text-xs text-slate-600 dark:text-slate-300">
-                        <span>{route.travelJumps}j to park • {route.bridgeLy.toFixed(2)} ly bridge • {route.postBridgeJumps}j after</span>
+                        <span>
+                          {route.travelJumps}j to park • {route.bridgeLy.toFixed(2)} ly bridge
+                          {route.parking2Id != null && route.bridge2Ly != null ? ` • ${route.midTravelJumps ?? 0}j to park 2 • ${route.bridge2Ly.toFixed(2)} ly bridge` : ''}
+                          {' '}• {route.postBridgeJumps}j after
+                        </span>
                         <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{route.totalJumps}j</span>
                       </div>
                       {idx === 0 && (
@@ -499,7 +545,10 @@ export function BridgePlanner() {
           destinationId={destinationId}
           parkingId={selectedRoute?.parkingId ?? null}
           bridgeEndpointId={selectedRoute?.bridgeEndpointId ?? null}
+          parking2Id={selectedRoute?.parking2Id ?? null}
+          bridgeEndpoint2Id={selectedRoute?.bridgeEndpoint2Id ?? null}
           travelPath={selectedRoute?.travelPath ?? null}
+          midTravelPath={selectedRoute?.midTravelPath ?? null}
           postBridgePath={selectedRoute?.postBridgePath ?? null}
           fitNodeIds={fitNodeIds}
           bridgeRange={planner.bridgeRange}
