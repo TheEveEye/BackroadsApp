@@ -234,7 +234,7 @@ export function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ fro
               <input type="checkbox" className="accent-blue-600" checked={b.enabled !== false} onChange={(e)=> setList(ls => ls.map((x,i)=> i===idx ? { ...x, enabled: e.target.checked } : x))} />
               <span className="text-sm">{getName(b.from)} <span className="text-gray-500">⇄</span> {getName(b.to)}</span>
               <span className="ml-auto" />
-              <button className="ml-2 text-xs text-red-600 hover:underline" onClick={() => setList(ls => ls.filter((_,i)=> i!==idx))}>Remove</button>
+              <button className="ml-2 mr-2 text-xs text-red-600 hover:underline" onClick={() => setList(ls => ls.filter((_,i)=> i!==idx))}>Remove</button>
             </li>
           ))}
           {list.length === 0 && <li className="py-6 text-center text-sm text-gray-500">No Ansiblex bridges configured.</li>}
