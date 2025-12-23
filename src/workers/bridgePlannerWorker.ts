@@ -2,6 +2,7 @@ type SystemNode = {
   systemId: number;
   regionId: number;
   position: { x: number; y: number; z: number };
+  security?: number;
   adjacentSystems: number[];
 };
 
@@ -55,12 +56,18 @@ type Candidate = {
 
 const LY = 9.4607e15;
 const MAX_TRAVEL_JUMPS = 200;
+const POCHVEN_REGION_ID = 10000070;
 
 let graph: GraphData | null = null;
-let systemsList: Array<{ id: number; x: number; y: number; z: number; regionId: number; adjacentSystems: number[] }> = [];
+let systemsList: Array<{ id: number; x: number; y: number; z: number; regionId: number; security: number | null; adjacentSystems: number[] }> = [];
+
+function isForbiddenSystem(node: { regionId: number; security?: number | null }) {
+  const sec = typeof node.security === 'number' ? node.security : null;
+  return node.regionId === POCHVEN_REGION_ID || (sec != null && sec >= 0.5);
+}
 
 function buildSystemsList(data: GraphData) {
-  const list: Array<{ id: number; x: number; y: number; z: number; regionId: number; adjacentSystems: number[] }> = [];
+  const list: Array<{ id: number; x: number; y: number; z: number; regionId: number; security: number | null; adjacentSystems: number[] }> = [];
   for (const [idStr, sys] of Object.entries(data.systems)) {
     const id = Number(idStr);
     if (!Number.isFinite(id)) continue;
@@ -70,6 +77,7 @@ function buildSystemsList(data: GraphData) {
       y: sys.position.y,
       z: sys.position.z,
       regionId: sys.regionId,
+      security: Number.isFinite(sys.security) ? Number(sys.security) : null,
       adjacentSystems: sys.adjacentSystems || [],
     });
   }
@@ -215,8 +223,13 @@ function computeRoutes(
 ): { routes: RouteOption[]; message: string | null; baselineJumps: number | null } {
   if (!graph) return { routes: [], message: 'Graph not loaded.', baselineJumps: null };
   const systems = graph.systems;
-  if (!systems[String(payload.destinationId)]) return { routes: [], message: 'Destination system not found.', baselineJumps: null };
-  if (!systems[String(payload.stagingId)]) return { routes: [], message: 'Staging system not found.', baselineJumps: null };
+  const destinationNode = systems[String(payload.destinationId)];
+  const stagingNode = systems[String(payload.stagingId)];
+  if (!destinationNode) return { routes: [], message: 'Destination system not found.', baselineJumps: null };
+  if (!stagingNode) return { routes: [], message: 'Staging system not found.', baselineJumps: null };
+  if (isForbiddenSystem(destinationNode)) {
+    return { routes: [], message: 'Destination is in highsec or Pochven.', baselineJumps: null };
+  }
 
   const maxMeters = payload.bridgeRange * LY;
   const maxMetersSq = maxMeters * maxMeters;
@@ -251,6 +264,7 @@ function computeRoutes(
 
   for (const parking of systemsList) {
     if (payload.settings.excludeZarzakh && parking.id === 30100000) continue;
+    if (isForbiddenSystem(parking)) continue;
     const stagingJumps = stagingDist.get(parking.id);
     if (stagingJumps == null) continue;
     let bestEndpoint: { id: number; jumps: number; bridgeMeters: number } | null = null;
