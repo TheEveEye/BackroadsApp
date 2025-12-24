@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 export function Results({ results, namesById, lyRadius, graph }: { results: ObservatoryHit[]; namesById?: Record<string, string>; lyRadius: number; graph: any }) {
   const LY = 9.4607e15;
   const [copyStatus, setCopyStatus] = useState<null | 'success' | 'error'>(null);
+  const [copyOpen, setCopyOpen] = useState(false);
   const SEC_COLORS = ['#833862','#692623','#AC2822','#BD4E26','#CC722C','#F5FD93','#90E56A','#82D8A8','#73CBF3','#5698E5','#4173DB'];
   const secInfo = (s: number | undefined | null) => {
     const val = typeof s === 'number' ? s : 0;
@@ -80,31 +81,40 @@ export function Results({ results, namesById, lyRadius, graph }: { results: Obse
             </div>
           )}
           <div
-            className="group relative before:content-[''] before:absolute before:right-0 before:top-full before:h-2 before:w-[180px]"
+            className="relative"
+            onMouseLeave={() => setCopyOpen(false)}
           >
             <button
               type="button"
               aria-label="Copy"
               className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
+              onMouseEnter={() => setCopyOpen(true)}
             >
               <Icon name="copy" size={18} />
             </button>
-            <div className="absolute right-0 mt-1 min-w-[160px] rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg py-1 hidden group-hover:block z-10">
-              <button
-                type="button"
-                onClick={handleCopyNames}
-                className="w-full text-left px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-800"
-              >
-                Copy system names
-              </button>
-              <button
-                type="button"
-                onClick={handleCopyEveLinks}
-                className="w-full text-left px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-800"
-              >
-                Copy EVE in-game links
-              </button>
-            </div>
+            {copyOpen && (
+              <div className="absolute right-0 top-full pt-1 z-10">
+                <div
+                  className="min-w-[180px] rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg overflow-hidden"
+                  onMouseEnter={() => setCopyOpen(true)}
+                >
+                  <button
+                    type="button"
+                    onClick={handleCopyNames}
+                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800"
+                  >
+                    Copy system names
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCopyEveLinks}
+                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800"
+                  >
+                    Copy EVE in-game links
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

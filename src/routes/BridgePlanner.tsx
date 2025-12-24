@@ -195,6 +195,8 @@ export function BridgePlanner() {
     baselineJumps: null,
   });
   const [copyStatus, setCopyStatus] = useState<null | 'success' | 'error'>(null);
+  const [headerCopyOpen, setHeaderCopyOpen] = useState(false);
+  const [routeCopyOpenKey, setRouteCopyOpenKey] = useState<string | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
   const [userSelectedRoute, setUserSelectedRoute] = useState(false);
@@ -338,6 +340,42 @@ export function BridgePlanner() {
     const body = lines.join('<br>');
     return `<font size="13" color="#bfffffff"></font><font size="13" color="#ffffffff"><loc>${body}</loc></font>`;
   }, [graph, routesForCopy]);
+  const plainTextRoutes = useMemo(() => {
+    if (!graph || routesForCopy.length === 0) return '';
+    const namesById = graph.namesById || {};
+    const lines = routesForCopy.map((route) => {
+      const parkingName = namesById[String(route.parkingId)] ?? String(route.parkingId);
+      const endpointName = namesById[String(route.bridgeEndpointId)] ?? String(route.bridgeEndpointId);
+      let line = `${parkingName} - ${endpointName}`;
+      if (route.parking2Id != null && route.bridgeEndpoint2Id != null) {
+        const parking2Name = namesById[String(route.parking2Id)] ?? String(route.parking2Id);
+        const endpoint2Name = namesById[String(route.bridgeEndpoint2Id)] ?? String(route.bridgeEndpoint2Id);
+        line += ` - ${parking2Name} - ${endpoint2Name}`;
+      }
+      return `${line} (${route.totalJumps}j)`;
+    });
+    return lines.join('\n');
+  }, [graph, routesForCopy]);
+  const buildRouteCopyPayload = useMemo(() => {
+    if (!graph) return (route: RouteOption) => ({ eve: '', plain: '' });
+    const namesById = graph.namesById || {};
+    return (route: RouteOption) => {
+      const parkingName = namesById[String(route.parkingId)] ?? String(route.parkingId);
+      const endpointName = namesById[String(route.bridgeEndpointId)] ?? String(route.bridgeEndpointId);
+      let eveLine = `<a href="showinfo:5//${route.parkingId}">${parkingName}</a> - <a href="showinfo:5//${route.bridgeEndpointId}">${endpointName}</a>`;
+      let plainLine = `${parkingName} - ${endpointName}`;
+      if (route.parking2Id != null && route.bridgeEndpoint2Id != null) {
+        const parking2Name = namesById[String(route.parking2Id)] ?? String(route.parking2Id);
+        const endpoint2Name = namesById[String(route.bridgeEndpoint2Id)] ?? String(route.bridgeEndpoint2Id);
+        eveLine += ` - <a href="showinfo:5//${route.parking2Id}">${parking2Name}</a> - <a href="showinfo:5//${route.bridgeEndpoint2Id}">${endpoint2Name}</a>`;
+        plainLine += ` - ${parking2Name} - ${endpoint2Name}`;
+      }
+      eveLine += ` (${route.totalJumps}j)`;
+      plainLine += ` (${route.totalJumps}j)`;
+      const eve = `<font size="13" color="#bfffffff"></font><font size="13" color="#ffffffff"><loc>${eveLine}</loc></font>`;
+      return { eve, plain: plainLine };
+    };
+  }, [graph]);
 
   async function copyText(text: string) {
     try {
@@ -597,18 +635,50 @@ export function BridgePlanner() {
                       {copyStatus === 'success' ? 'Copied!' : 'Copy failed'}
                     </div>
                   )}
-                  <button
-                    type="button"
-                    className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center gap-1"
-                    onClick={() => {
-                      if (eveLinksMarkup) copyText(eveLinksMarkup);
-                    }}
-                    disabled={!eveLinksMarkup}
-                    title="Copy EVE in-game links"
+                  <div
+                    className="relative"
+                    onMouseLeave={() => setHeaderCopyOpen(false)}
                   >
-                    <Icon name="copy" size={14} />
-                    <span>Copy EVE links</span>
-                  </button>
+                    <button
+                      type="button"
+                      className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center gap-1"
+                      disabled={!eveLinksMarkup && !plainTextRoutes}
+                      aria-label="Copy"
+                      onMouseEnter={() => setHeaderCopyOpen(true)}
+                    >
+                      <Icon name="copy" size={14} />
+                      <span>Copy</span>
+                    </button>
+                    {headerCopyOpen && (
+                      <div className="absolute right-0 top-full pt-1 z-10">
+                        <div
+                          className="min-w-[180px] rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg overflow-hidden"
+                          onMouseEnter={() => setHeaderCopyOpen(true)}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (eveLinksMarkup) copyText(eveLinksMarkup);
+                            }}
+                            className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50"
+                            disabled={!eveLinksMarkup}
+                          >
+                            Copy EVE in-game links
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (plainTextRoutes) copyText(plainTextRoutes);
+                            }}
+                            className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50"
+                            disabled={!plainTextRoutes}
+                          >
+                            Copy plain text
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <span>Show</span>
                 <select
@@ -650,38 +720,104 @@ export function BridgePlanner() {
                   const endpoint2Name = route.bridgeEndpoint2Id != null ? nameFor(route.bridgeEndpoint2Id) : null;
                   const isSelected = selectedRoute?.key === route.key;
                   return (
-                    <button
+                    <div
                       key={route.key}
-                      type="button"
-                      onClick={() => {
-                        setSelectedRouteKey(route.key);
-                        setUserSelectedRoute(true);
-                      }}
                       className={
-                        "relative w-full text-left rounded-lg border px-4 py-3 transition " +
+                        "relative w-full rounded-lg border px-4 py-3 transition " +
                         (isSelected
                           ? "border-amber-400 bg-amber-50/80 dark:bg-amber-900/20 shadow-sm"
                           : "border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-gray-900/40 hover:border-amber-300")
                       }
+                      role="button"
+                      tabIndex={0}
+                      aria-pressed={isSelected}
+                      onClick={() => {
+                        setSelectedRouteKey(route.key);
+                        setUserSelectedRoute(true);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setSelectedRouteKey(route.key);
+                          setUserSelectedRoute(true);
+                        }
+                      }}
                     >
-                      <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
-                        {stagingName} → {parkingName} → {endpointName}
-                        {parking2Name && endpoint2Name ? ` → ${parking2Name} → ${endpoint2Name}` : ''} → {destinationName}
+                      <div className="w-full text-left pointer-events-none">
+                        <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                          {stagingName} → {parkingName} → {endpointName}
+                          {parking2Name && endpoint2Name ? ` → ${parking2Name} → ${endpoint2Name}` : ''} → {destinationName}
+                        </div>
+                        <div className="mt-1 flex items-center justify-between text-xs text-slate-600 dark:text-slate-300">
+                          <span>
+                            {route.travelJumps}j to park • {route.bridgeLy.toFixed(2)} ly bridge
+                            {route.parking2Id != null && route.bridge2Ly != null ? ` • ${route.midTravelJumps ?? 0}j to park 2 • ${route.bridge2Ly.toFixed(2)} ly bridge` : ''}
+                            {' '}• {route.postBridgeJumps}j after
+                          </span>
+                          <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{route.totalJumps}j</span>
+                        </div>
                       </div>
-                      <div className="mt-1 flex items-center justify-between text-xs text-slate-600 dark:text-slate-300">
-                        <span>
-                          {route.travelJumps}j to park • {route.bridgeLy.toFixed(2)} ly bridge
-                          {route.parking2Id != null && route.bridge2Ly != null ? ` • ${route.midTravelJumps ?? 0}j to park 2 • ${route.bridge2Ly.toFixed(2)} ly bridge` : ''}
-                          {' '}• {route.postBridgeJumps}j after
-                        </span>
-                        <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{route.totalJumps}j</span>
+                      <div className="absolute top-2 right-2 flex items-center gap-2">
+                        {idx === 0 && (
+                          <span className="text-[10px] uppercase tracking-wide rounded-full bg-amber-200 text-amber-900 px-2 py-0.5">
+                            Best
+                          </span>
+                        )}
+                        <div className="relative pointer-events-auto" onClick={(event) => event.stopPropagation()}>
+                          {copyStatus && (
+                            <div className={"pointer-events-none absolute -top-8 right-0 px-3 py-1.5 rounded shadow text-xs inline-flex items-center gap-2 " + (copyStatus === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white')} role="status" aria-live="polite">
+                              <Icon name={copyStatus === 'success' ? 'copy' : 'warn'} size={12} color="white" />
+                              {copyStatus === 'success' ? 'Copied!' : 'Copy failed'}
+                            </div>
+                          )}
+                          <div
+                            className="relative"
+                            onMouseLeave={() => setRouteCopyOpenKey(null)}
+                          >
+                            <button
+                              type="button"
+                              className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center gap-1"
+                              aria-label="Copy"
+                              onMouseEnter={() => setRouteCopyOpenKey(route.key)}
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              <Icon name="copy" size={14} />
+                              <span>Copy</span>
+                            </button>
+                            {routeCopyOpenKey === route.key && (
+                              <div className="absolute right-0 top-full pt-1 z-10">
+                                <div
+                                  className="min-w-[180px] rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg overflow-hidden"
+                                  onMouseEnter={() => setRouteCopyOpenKey(route.key)}
+                                  onClick={(event) => event.stopPropagation()}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const payload = buildRouteCopyPayload(route);
+                                      if (payload.eve) copyText(payload.eve);
+                                    }}
+                                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800"
+                                  >
+                                    Copy EVE in-game links
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const payload = buildRouteCopyPayload(route);
+                                      if (payload.plain) copyText(payload.plain);
+                                    }}
+                                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800"
+                                  >
+                                    Copy plain text
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      {idx === 0 && (
-                        <span className="absolute top-2 right-2 text-[10px] uppercase tracking-wide rounded-full bg-amber-200 text-amber-900 px-2 py-0.5">
-                          Best
-                        </span>
-                      )}
-                    </button>
+                    </div>
                   );
                 })}
               </div>
