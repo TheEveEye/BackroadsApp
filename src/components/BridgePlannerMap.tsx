@@ -5,6 +5,25 @@ function project2D(x: number, _y: number, z: number) {
   return { px: x, py: -z };
 }
 
+function getIsDarkMode() {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return false;
+  try {
+    const bg = window.getComputedStyle(document.body).backgroundColor || '';
+    const match = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/i);
+    if (match) {
+      const r = Number(match[1]) / 255;
+      const g = Number(match[2]) / 255;
+      const b = Number(match[3]) / 255;
+      const a = match[4] != null ? Number(match[4]) : 1;
+      if (a > 0) {
+        const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        return luminance < 0.45;
+      }
+    }
+  } catch {}
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
+}
+
 type BridgePlannerMapProps = {
   graph: GraphData | null;
   namesById?: Record<string, string>;
@@ -48,6 +67,7 @@ export function BridgePlannerMap({
   baselineJumps,
 }: BridgePlannerMapProps) {
   const [zoom, setZoom] = useState(1);
+  const [isDarkMode, setIsDarkMode] = useState(getIsDarkMode);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const hasBase = !!graph && stagingId != null && destinationId != null;
   const hasRoute = hasBase && !!travelPath && travelPath.length > 0 && parkingId != null && bridgeEndpointId != null;
@@ -294,6 +314,19 @@ export function BridgePlannerMap({
   };
 
   useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const update = () => setIsDarkMode(getIsDarkMode());
+    update();
+    if (media.addEventListener) {
+      media.addEventListener('change', update);
+      return () => media.removeEventListener('change', update);
+    }
+    media.addListener(update);
+    return () => media.removeListener(update);
+  }, []);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -319,13 +352,13 @@ export function BridgePlannerMap({
     }
     ctx.setLineDash([]);
     ctx.globalAlpha = 1;
-    ctx.fillStyle = '#cbd5e1';
+    ctx.fillStyle = isDarkMode ? '#64748b' : '#cbd5e1';
     for (const node of backgroundNodes) {
       ctx.beginPath();
       ctx.arc(node.x, node.y, 2.5, 0, Math.PI * 2);
       ctx.fill();
     }
-  }, [backgroundEdges, backgroundNodes]);
+  }, [backgroundEdges, backgroundNodes, isDarkMode]);
 
   if (!hasBase) {
     return (

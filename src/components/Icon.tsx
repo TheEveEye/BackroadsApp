@@ -10,6 +10,7 @@ const NAME_TO_STEM: Record<string, string> = {
   link: 'link',
   copy: 'square.on.square',
   close: 'xmark',
+  'chevron-down': 'chevron.down',
 };
 
 export function Icon({
@@ -42,8 +43,8 @@ export function Icon({
     const key = name ? String(name) : '';
     const stem = NAME_TO_STEM[key];
     if (!stem) { setSelectedUrl(''); return; }
-    const trySvg = base + stem + '.svg';
-    const tryPng = base + stem + '.png';
+    const trySvg = base + 'icons/' + stem + '.svg';
+    const tryPng = base + 'icons/' + stem + '.png';
     const probe = new Image();
     probe.onload = () => setSelectedUrl(trySvg);
     probe.onerror = () => setSelectedUrl(tryPng);

@@ -5,6 +5,7 @@ import { AutocompleteInput } from '../components/AutocompleteInput';
 import { Icon } from '../components/Icon';
 import { AnsiblexModal as SharedAnsiblexModal } from '../components/AnsiblexModal';
 import { BridgePlannerMap } from '../components/BridgePlannerMap';
+import { SegmentedSlider } from '../components/SegmentedSlider';
 
 //const LY = 9.4607e15;
 
@@ -13,6 +14,8 @@ type PlannerState = {
   stagingQuery: string;
   bridgeRange: number;
   routesToShow: number;
+  presetShipClass: string;
+  presetJdc: number;
 };
 
 type RouteOption = {
@@ -32,14 +35,42 @@ type RouteOption = {
   bridge2Ly?: number;
 };
 
+const RANGE_PRESETS = [
+  { label: 'Black Ops', base: 4.0 }, // 8.0 at JDC 5
+  { label: 'Carrier Jump', base: 3.5 }, // 7.0 at JDC 5
+  { label: 'Carrier Conduit', base: 3.5 }, // 7.0 at JDC 5
+  { label: 'Dreadnought', base: 3.5 }, // 7.0 at JDC 5
+  { label: 'Force Auxiliary', base: 3.5 }, // 7.0 at JDC 5
+  { label: 'Jump Freighter', base: 5.0 }, // 10.0 at JDC 5
+  { label: 'Lancer Dreadnought', base: 4.0 }, // 8.0 at JDC 5
+  { label: 'Rorqual', base: 5.0 }, // 10.0 at JDC 5
+  { label: 'Supercarrier Jump', base: 3.0 }, // 6.0 at JDC 5
+  { label: 'Titan Bridge', base: 3.0 }, // 6.0 at JDC 5
+  { label: 'Titan Jump', base: 3.0 }, // 6.0 at JDC 5
+] as const;
+
 export function BridgePlanner() {
   const UI_KEY = 'br.bridgePlanner.ui.v1';
   const SETTINGS_STORAGE_KEY = 'br.settings.v1';
+  const base = (import.meta as any).env?.BASE_URL || '/';
+  const shipIconByLabel: Record<string, string> = {
+    'Black Ops': 'battleship.png',
+    'Carrier Jump': 'carrier.png',
+    'Carrier Conduit': 'carrier.png',
+    'Dreadnought': 'dreadnought.png',
+    'Force Auxiliary': 'force_auxiliary.png',
+    'Lancer Dreadnought': 'dreadnought.png',
+    'Rorqual': 'industrial_capital.png',
+    'Jump Freighter': 'industrial_capital.png',
+    'Supercarrier Jump': 'supercarrier.png',
+    'Titan Bridge': 'titan.png',
+    'Titan Jump': 'titan.png',
+  };
 
   const [graph, setGraph] = useState<GraphData | null>(() => (window as any).appGraph || null);
   const [showAnsiblexModal, setShowAnsiblexModal] = useState(false);
-  const [settings, setSettings] = useState<{ excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; bridgeIntoDestination: boolean; bridgeFromStaging: boolean; bridgeCount: number; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }> }>(() => {
-    const defaults = { excludeZarzakh: true, sameRegionOnly: false, titanBridgeFirstJump: false, bridgeIntoDestination: false, bridgeFromStaging: false, bridgeCount: 1, allowAnsiblex: false, ansiblexes: [] as Array<{ from: number; to: number; enabled?: boolean }> };
+  const [settings, setSettings] = useState<{ excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; bridgeIntoDestination: boolean; bridgeFromStaging: boolean; bridgeCount: number; bridgeContinuous: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }> }>(() => {
+    const defaults = { excludeZarzakh: true, sameRegionOnly: false, titanBridgeFirstJump: false, bridgeIntoDestination: false, bridgeFromStaging: false, bridgeCount: 1, bridgeContinuous: false, allowAnsiblex: false, ansiblexes: [] as Array<{ from: number; to: number; enabled?: boolean }> };
     try {
       const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
       if (raw) {
@@ -53,6 +84,7 @@ export function BridgePlanner() {
             bridgeIntoDestination: typeof parsed.bridgeIntoDestination === 'boolean' ? parsed.bridgeIntoDestination : defaults.bridgeIntoDestination,
             bridgeFromStaging: typeof parsed.bridgeFromStaging === 'boolean' ? parsed.bridgeFromStaging : defaults.bridgeFromStaging,
             bridgeCount: Number.isFinite(parsed.bridgeCount) ? Math.max(1, Math.min(2, Number(parsed.bridgeCount))) : defaults.bridgeCount,
+            bridgeContinuous: typeof parsed.bridgeContinuous === 'boolean' ? parsed.bridgeContinuous : defaults.bridgeContinuous,
             allowAnsiblex: typeof parsed.allowAnsiblex === 'boolean' ? parsed.allowAnsiblex : defaults.allowAnsiblex,
             ansiblexes: Array.isArray(parsed.ansiblexes) ? parsed.ansiblexes : defaults.ansiblexes,
           };
@@ -74,6 +106,8 @@ export function BridgePlanner() {
       stagingQuery: '',
       bridgeRange: 6,
       routesToShow: 5,
+      presetShipClass: 'Titan Bridge',
+      presetJdc: 0,
     };
     try {
       const raw = localStorage.getItem(UI_KEY);
@@ -86,12 +120,17 @@ export function BridgePlanner() {
             stagingQuery: typeof parsed.stagingQuery === 'string' ? parsed.stagingQuery : defaults.stagingQuery,
             bridgeRange: Number.isFinite(parsed.bridgeRange) ? Number(parsed.bridgeRange) : defaults.bridgeRange,
             routesToShow: Number.isFinite(parsed.routesToShow) ? Math.max(1, Math.min(25, Number(parsed.routesToShow))) : defaults.routesToShow,
+            presetShipClass: typeof parsed.presetShipClass === 'string' ? parsed.presetShipClass : defaults.presetShipClass,
+            presetJdc: Number.isFinite(parsed.presetJdc) ? Math.max(0, Math.min(5, Number(parsed.presetJdc))) : defaults.presetJdc,
           };
         }
       }
     } catch {}
     return defaults;
   });
+  const [rangePopoverOpen, setRangePopoverOpen] = useState(false);
+  const jdcSliderRef = useRef<HTMLDivElement | null>(null);
+  const [jdcSliderWidth, setJdcSliderWidth] = useState<number | null>(null);
 
   useEffect(() => {
     if (graph) return;
@@ -120,6 +159,31 @@ export function BridgePlanner() {
       localStorage.setItem(UI_KEY, JSON.stringify(planner));
     } catch {}
   }, [planner]);
+
+  useEffect(() => {
+    if (!rangePopoverOpen) return;
+    const node = jdcSliderRef.current;
+    if (!node) return;
+    let raf = 0;
+    const update = () => {
+      const target = jdcSliderRef.current;
+      if (!target) return;
+      const width = Math.round(target.getBoundingClientRect().width);
+      if (width > 0) setJdcSliderWidth(width);
+    };
+    raf = window.requestAnimationFrame(update);
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(update);
+      observer.observe(node);
+    }
+    window.addEventListener('resize', update);
+    return () => {
+      if (raf) window.cancelAnimationFrame(raf);
+      window.removeEventListener('resize', update);
+      observer?.disconnect();
+    };
+  }, [rangePopoverOpen]);
 
   const destinationId = useMemo(() => (graph ? resolveQueryToId(planner.targetQuery, graph) : null), [graph, planner.targetQuery]);
   const stagingId = useMemo(() => (graph ? resolveQueryToId(planner.stagingQuery, graph) : null), [graph, planner.stagingQuery]);
@@ -188,6 +252,7 @@ export function BridgePlanner() {
         bridgeIntoDestination: settings.bridgeIntoDestination,
         bridgeFromStaging: settings.bridgeFromStaging,
         bridgeCount: settings.bridgeCount,
+        bridgeContinuous: settings.bridgeContinuous,
         allowAnsiblex: settings.allowAnsiblex,
         ansiblexes: settings.ansiblexes,
       },
@@ -203,6 +268,7 @@ export function BridgePlanner() {
     settings.bridgeIntoDestination,
     settings.bridgeFromStaging,
     settings.bridgeCount,
+    settings.bridgeContinuous,
     settings.allowAnsiblex,
     settings.ansiblexes,
   ]);
@@ -358,7 +424,74 @@ export function BridgePlanner() {
             </label>
 
             <label className="grid gap-2 md:col-span-2">
-              Titan bridge range: {planner.bridgeRange.toFixed(1)} ly
+              <div className="flex items-center justify-between gap-2">
+                <span>Bridge range: {planner.bridgeRange.toFixed(1)} ly</span>
+                <div className="relative">
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center gap-1"
+                    onClick={() => setRangePopoverOpen((open) => !open)}
+                  >
+                    Presets
+                    <Icon name="chevron-down" size={14} />
+                  </button>
+                  {rangePopoverOpen && (
+                    <div className="absolute right-0 top-full mt-2 inline-block rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg p-3 z-20">
+                      <div className="grid gap-1 text-xs text-slate-600 dark:text-slate-300">
+                        <span>Ship class</span>
+                        <div className="grid gap-1" style={jdcSliderWidth ? { width: `${jdcSliderWidth}px`, maxWidth: `${jdcSliderWidth}px` } : undefined}>
+                          {RANGE_PRESETS.map((preset) => {
+                            const isSelected = planner.presetShipClass === preset.label;
+                            return (
+                              <button
+                                key={preset.label}
+                                type="button"
+                                onClick={() => {
+                                  const range = Number((preset.base * (1 + 0.2 * planner.presetJdc)).toFixed(1));
+                                  setPlanner((prev) => ({ ...prev, presetShipClass: preset.label, bridgeRange: range }));
+                                }}
+                                className={
+                                  "w-full text-left px-2 py-1 rounded border text-xs transition flex items-center gap-2 " +
+                                  (isSelected
+                                    ? "border-amber-400 bg-amber-50/80 dark:bg-amber-900/20 text-slate-900 dark:text-slate-100"
+                                    : "border-gray-300 dark:border-gray-700 bg-white/80 dark:bg-gray-900 text-slate-700 dark:text-slate-300 hover:border-amber-300")
+                                }
+                                aria-pressed={isSelected}
+                              >
+                                <img
+                                  src={`${base}ships/${shipIconByLabel[preset.label]}`}
+                                  alt=""
+                                  className="w-4 h-4"
+                                />
+                                <span>{preset.label}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div className="grid gap-1 text-xs text-slate-600 dark:text-slate-300 mt-2">
+                        <span>Jump Drive Calibration</span>
+                        <SegmentedSlider
+                          containerRef={jdcSliderRef}
+                          options={[0, 1, 2, 3, 4, 5].map((lvl) => ({ label: String(lvl), value: String(lvl) }))}
+                          value={String(planner.presetJdc)}
+                          onChange={(value) => {
+                            const jdc = Math.max(0, Math.min(5, Number(value)));
+                            const base = RANGE_PRESETS.find((p) => p.label === planner.presetShipClass)?.base ?? planner.bridgeRange;
+                            const range = Number((base * (1 + 0.2 * jdc)).toFixed(1));
+                            setPlanner((prev) => ({ ...prev, presetJdc: jdc, bridgeRange: range }));
+                          }}
+                          height={28}
+                          radius={6}
+                          labelClassName="text-xs leading-5"
+                          getColorForValue={() => 'bg-amber-500'}
+                          disableInitialAnimation
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
               <input
                 type="range"
                 className="accent-amber-600 w-full"
@@ -404,13 +537,31 @@ export function BridgePlanner() {
                   <select
                     className="rounded border border-gray-300 dark:border-gray-700 bg-white/80 dark:bg-gray-900 px-2 py-1 text-xs"
                     value={settings.bridgeCount}
-                    onChange={(e) => setSettings({ ...settings, bridgeCount: Math.max(1, Math.min(2, Number(e.target.value))) })}
+                    onChange={(e) => {
+                      const nextCount = Math.max(1, Math.min(2, Number(e.target.value)));
+                      setSettings({
+                        ...settings,
+                        bridgeCount: nextCount,
+                        bridgeContinuous: nextCount === 2 ? settings.bridgeContinuous : false,
+                      });
+                    }}
                   >
                     {[1, 2].map((n) => (
                       <option key={n} value={n}>{n}</option>
                     ))}
                   </select>
                 </label>
+                {settings.bridgeCount === 2 && (
+                  <label className="inline-flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      className="accent-blue-600"
+                      checked={!!settings.bridgeContinuous}
+                      onChange={(e) => setSettings({ ...settings, bridgeContinuous: e.target.checked })}
+                    />
+                    <span>Continuous bridges</span>
+                  </label>
+                )}
                 <label className="inline-flex items-center gap-2">
                   <input
                     type="checkbox"

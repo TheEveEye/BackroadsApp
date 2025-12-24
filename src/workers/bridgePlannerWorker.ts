@@ -17,6 +17,7 @@ type TravelSettings = {
   bridgeIntoDestination?: boolean;
   bridgeFromStaging?: boolean;
   bridgeCount?: number;
+  bridgeContinuous?: boolean;
   allowAnsiblex?: boolean;
   ansiblexes?: AnsiblexBridge[];
 };
@@ -572,6 +573,7 @@ function computeRoutes(
   for (const sys of systemsList) {
     const cost = oneBridgeDist.get(sys.id);
     if (cost == null) continue;
+    if (payload.settings.bridgeContinuous && sourceParking.get(sys.id) !== sys.id) continue;
     endpoint1List.push({ id: sys.id, x: sys.x, y: sys.y, z: sys.z, cost });
   }
 

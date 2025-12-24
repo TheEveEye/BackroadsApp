@@ -29,8 +29,8 @@ export function Results({ results, namesById, lyRadius, graph }: { results: Obse
   if (!results.length) return <p>No observatories found within the selected jump range.</p>;
 
   const base = (import.meta as any).env?.BASE_URL || '/';
-  const titanSvg = `${base}titan.svg`;
-  const titanPng = `${base}titan.png`;
+  const titanSvg = `${base}ships/titan.svg`;
+  const titanPng = `${base}ships/titan.png`;
 
   // Precompute lists for copying
   const systemNames = useMemo(() => results.map(r => namesById?.[String(r.systemId)] ?? String(r.systemId)), [results, namesById]);

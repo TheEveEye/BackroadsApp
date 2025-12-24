@@ -1,4 +1,4 @@
-import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 export type Option = { label: string; value: string };
 
@@ -9,12 +9,15 @@ export type SegmentedSliderProps = {
   onChange?: (value: string) => void;
   className?: string;
   style?: React.CSSProperties;
+  labelClassName?: string;
+  containerRef?: React.Ref<HTMLDivElement>;
   height?: number; // px
   radius?: number; // px
   disabled?: boolean;
   // Returns a className to color the moving pill (e.g., 'bg-blue-600').
   // If a raw CSS color value is returned (e.g., '#fff' or 'rgb(...)'), it will be applied via inline style.
   getColorForValue?: (value: string) => string | undefined;
+  disableInitialAnimation?: boolean;
 };
 
 // A horizontal, single-select segmented slider with click and drag.
@@ -28,16 +31,19 @@ export function SegmentedSlider({
   onChange,
   className,
   style,
+  labelClassName,
+  containerRef,
   height = 42,
   radius = 6,
   disabled = false,
   getColorForValue,
+  disableInitialAnimation = true,
 }: SegmentedSliderProps) {
   const isControlled = value != null;
   const [internal, setInternal] = useState<string | undefined>(() => value ?? defaultValue);
   const selectedValue = (isControlled ? value : internal);
 
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const internalRef = useRef<HTMLDivElement | null>(null);
   const measureRef = useRef<HTMLDivElement | null>(null);
   const count = options.length || 1;
   const [measuredSegW, setMeasuredSegW] = useState<number>(0);
@@ -56,6 +62,32 @@ export function SegmentedSlider({
   // Drag state
   const [dragging, setDragging] = useState(false);
   const [dragX, setDragX] = useState<number | null>(null); // left offset of pill while dragging
+  const [suppressTransition, setSuppressTransition] = useState(disableInitialAnimation);
+
+  useEffect(() => {
+    if (!disableInitialAnimation) {
+      if (suppressTransition) setSuppressTransition(false);
+      return;
+    }
+    if (measuredSegW <= 0) {
+      if (!suppressTransition) setSuppressTransition(true);
+      return;
+    }
+    if (!suppressTransition) return;
+    let raf1 = 0;
+    let raf2 = 0;
+    if (typeof window !== 'undefined') {
+      raf1 = window.requestAnimationFrame(() => {
+        raf2 = window.requestAnimationFrame(() => setSuppressTransition(false));
+      });
+    } else {
+      setSuppressTransition(false);
+    }
+    return () => {
+      if (raf1) window.cancelAnimationFrame(raf1);
+      if (raf2) window.cancelAnimationFrame(raf2);
+    };
+  }, [disableInitialAnimation, measuredSegW, suppressTransition]);
 
   // Measure per-option width based on content; all segments share max width
   useLayoutEffect(() => {
@@ -161,9 +193,19 @@ export function SegmentedSlider({
   const colorToken = getColorForValue ? (visualValue != null ? getColorForValue(visualValue) : undefined) : undefined;
   const isRawColor = !!colorToken && (/^#/.test(colorToken) || /^(rgb|hsl)a?\(/.test(colorToken));
 
+  const setRefs = useCallback((node: HTMLDivElement | null) => {
+    internalRef.current = node;
+    if (!containerRef) return;
+    if (typeof containerRef === 'function') {
+      containerRef(node);
+      return;
+    }
+    (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+  }, [containerRef]);
+
   return (
     <div
-      ref={containerRef}
+      ref={setRefs}
       className={[
         'relative inline-block select-none',
         'border border-gray-200 dark:border-gray-700 rounded-md',
@@ -198,7 +240,7 @@ export function SegmentedSlider({
           opacity: dragging ? 1 : (hasSelection ? 1 : 0),
           transition: dragging
             ? 'background-color 200ms ease-in-out'
-            : 'transform 200ms ease-in-out, background-color 200ms ease-in-out',
+            : (suppressTransition ? 'none' : 'transform 200ms ease-in-out, background-color 200ms ease-in-out'),
         }}
       />
 
@@ -213,6 +255,7 @@ export function SegmentedSlider({
               className={[
                 'inline-flex items-center justify-center',
                 'text-base leading-6 font-medium px-3 h-full',
+                labelClassName || '',
                 'rounded-md', // ensures pointer areas match visuals
                 (hasSelection && isActive) ? 'text-white' : 'text-slate-700 dark:text-slate-300',
               ].join(' ')}
@@ -233,7 +276,7 @@ export function SegmentedSlider({
         style={{ visibility: 'hidden', height: 0, overflow: 'hidden', whiteSpace: 'nowrap' }}
       >
         {options.map((opt) => (
-          <span key={opt.value} className="inline-flex items-center justify-center text-base leading-6 font-medium px-3">
+          <span key={opt.value} className={['inline-flex items-center justify-center text-base leading-6 font-medium px-3', labelClassName || ''].join(' ')}>
             {opt.label}
           </span>
         ))}
