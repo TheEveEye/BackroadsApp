@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { TOOL_LABELS, type ToolKey } from '../lib/eveAuth';
 import { useAuth } from './AuthProvider';
 
@@ -6,6 +6,37 @@ export function RequireAccess({ tool, children }: { tool: ToolKey; children: Rea
   const { session, status, login, logout, hasAccess } = useAuth();
   const label = TOOL_LABELS[tool];
   const base = (import.meta as any).env?.BASE_URL || '/';
+  const [corpName, setCorpName] = useState<string | null>(null);
+  const [allianceName, setAllianceName] = useState<string | null>(null);
+
+  useEffect(() => {
+    setCorpName(null);
+    setAllianceName(null);
+    if (!session) return;
+    let cancelled = false;
+    const loadNames = async () => {
+      if (session.corporationId) {
+        try {
+          const resp = await fetch(`https://esi.evetech.net/latest/corporations/${session.corporationId}/?datasource=tranquility`);
+          if (resp.ok) {
+            const data = await resp.json();
+            if (!cancelled && data?.name) setCorpName(String(data.name));
+          }
+        } catch {}
+      }
+      if (session.allianceId) {
+        try {
+          const resp = await fetch(`https://esi.evetech.net/latest/alliances/${session.allianceId}/?datasource=tranquility`);
+          if (resp.ok) {
+            const data = await resp.json();
+            if (!cancelled && data?.name) setAllianceName(String(data.name));
+          }
+        } catch {}
+      }
+    };
+    loadNames();
+    return () => { cancelled = true; };
+  }, [session?.corporationId, session?.allianceId, session]);
 
   if (status === 'loading') {
     return (
@@ -46,16 +77,27 @@ export function RequireAccess({ tool, children }: { tool: ToolKey; children: Rea
   }
 
   if (!hasAccess(tool)) {
+    const characterLine = `Character: ${session.characterName} (${session.characterId})`;
+    const corpLine = session.corporationId
+      ? `Corporation: ${corpName ? `${corpName} (${session.corporationId})` : session.corporationId}`
+      : 'Corporation: N/A';
+    const allianceLine = session.allianceId
+      ? `Alliance: ${allianceName ? `${allianceName} (${session.allianceId})` : session.allianceId}`
+      : 'Alliance: None';
+
     return (
       <section className="max-w-xl mx-auto">
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 shadow-sm dark:border-amber-800/60 dark:bg-amber-950/30">
           <h1 className="text-2xl font-semibold mb-2">Access restricted</h1>
           <p className="text-amber-900 dark:text-amber-100">Your account is not on the {label} whitelist.</p>
           <div className="mt-3 text-sm text-amber-900 dark:text-amber-100">
-            <p>Character ID: {session.characterId}</p>
-            <p>Corporation ID: {session.corporationId ?? 'N/A'}</p>
-            <p>Alliance ID: {session.allianceId ?? 'N/A'}</p>
+            <p>{characterLine}</p>
+            <p>{corpLine}</p>
+            <p>{allianceLine}</p>
           </div>
+          <p className="mt-3 text-sm text-amber-900 dark:text-amber-100">
+            For access, contact theeveeye on Discord or send EVE Mail to SomeKiwi in game.
+          </p>
           <button
             onClick={logout}
             className="mt-4 inline-flex items-center gap-2 rounded-md bg-amber-900 text-amber-50 px-3 py-1.5 text-sm font-medium hover:bg-amber-800"
