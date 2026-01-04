@@ -357,7 +357,7 @@ export function BridgePlanner() {
     return lines.join('\n');
   }, [graph, routesForCopy]);
   const buildRouteCopyPayload = useMemo(() => {
-    if (!graph) return (route: RouteOption) => ({ eve: '', plain: '' });
+    if (!graph) return (_route: RouteOption) => ({ eve: '', plain: '' });
     const namesById = graph.namesById || {};
     return (route: RouteOption) => {
       const parkingName = namesById[String(route.parkingId)] ?? String(route.parkingId);

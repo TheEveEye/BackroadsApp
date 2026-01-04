@@ -1,6 +1,7 @@
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useEffect } from 'react';
 import { loadData, type GraphData } from '../lib/data';
+import { AuthStatus } from '../components/AuthStatus';
 
 export function Layout() {
   const location = useLocation();
@@ -34,8 +35,8 @@ export function Layout() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white dark:from-gray-950 dark:to-black">
       <header className="sticky top-0 z-40 backdrop-blur supports-[backdrop-filter]:bg-white/60 bg-white/80 dark:bg-black/40 border-b border-slate-200/70 dark:border-slate-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <Link to="/" className="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-semibold text-lg">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-col gap-3 sm:grid sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+          <Link to="/" className="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-semibold text-lg sm:justify-self-start">
             {/* Use BASE_URL-aware path for GitHub Pages compatibility */}
             <img
               src={`${(import.meta as any).env?.BASE_URL || '/'}backroads.png`}
@@ -44,37 +45,40 @@ export function Layout() {
             />
             Backroads
           </Link>
-          <nav className="flex flex-wrap items-center gap-1 sm:gap-2 w-full sm:w-auto">
-            <NavLink
-              to="/"
-              end
-              className={({ isActive }) =>
-                `px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-xs sm:text-sm font-medium hover:bg-slate-100 dark:hover:bg-slate-800 ${isActive ? 'text-blue-700 dark:text-blue-400' : 'text-slate-700 dark:text-slate-300'}`}
-            >
-              Home
-            </NavLink>
-            <NavLink
-              to="/observatories"
-              className={({ isActive }) =>
-                `px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-xs sm:text-sm font-medium hover:bg-slate-100 dark:hover:bg-slate-800 ${isActive ? 'text-blue-700 dark:text-blue-400' : 'text-slate-700 dark:text-slate-300'}`}
-            >
-              Observatory Finder
-            </NavLink>
-            <NavLink
-              to="/bridge-planner"
-              className={({ isActive }) =>
-                `px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-xs sm:text-sm font-medium hover:bg-slate-100 dark:hover:bg-slate-800 ${isActive ? 'text-blue-700 dark:text-blue-400' : 'text-slate-700 dark:text-slate-300'}`}
-            >
-              Bridge Planner
-            </NavLink>
-            <NavLink
-              to="/scanner"
-              className={({ isActive }) =>
-                `px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-xs sm:text-sm font-medium hover:bg-slate-100 dark:hover:bg-slate-800 ${isActive ? 'text-blue-700 dark:text-blue-400' : 'text-slate-700 dark:text-slate-300'}`}
-            >
-              Scanner
-            </NavLink>
+          <nav className="flex flex-wrap items-center gap-1 sm:gap-2 justify-start sm:justify-center sm:justify-self-center">
+              <NavLink
+                to="/"
+                end
+                className={({ isActive }) =>
+                  `px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-xs sm:text-sm font-medium hover:bg-slate-100 dark:hover:bg-slate-800 ${isActive ? 'text-blue-700 dark:text-blue-400' : 'text-slate-700 dark:text-slate-300'}`}
+              >
+                Home
+              </NavLink>
+              <NavLink
+                to="/observatories"
+                className={({ isActive }) =>
+                  `px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-xs sm:text-sm font-medium hover:bg-slate-100 dark:hover:bg-slate-800 ${isActive ? 'text-blue-700 dark:text-blue-400' : 'text-slate-700 dark:text-slate-300'}`}
+              >
+                Observatory Finder
+              </NavLink>
+              <NavLink
+                to="/bridge-planner"
+                className={({ isActive }) =>
+                  `px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-xs sm:text-sm font-medium hover:bg-slate-100 dark:hover:bg-slate-800 ${isActive ? 'text-blue-700 dark:text-blue-400' : 'text-slate-700 dark:text-slate-300'}`}
+              >
+                Bridge Planner
+              </NavLink>
+              <NavLink
+                to="/scanner"
+                className={({ isActive }) =>
+                  `px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-xs sm:text-sm font-medium hover:bg-slate-100 dark:hover:bg-slate-800 ${isActive ? 'text-blue-700 dark:text-blue-400' : 'text-slate-700 dark:text-slate-300'}`}
+              >
+                Scanner
+              </NavLink>
           </nav>
+          <div className="flex items-center justify-start sm:justify-end sm:justify-self-end">
+            <AuthStatus />
+          </div>
         </div>
       </header>
       <main className="max-w-screen-2xl mx-auto px-4 sm:px-6 py-6">
