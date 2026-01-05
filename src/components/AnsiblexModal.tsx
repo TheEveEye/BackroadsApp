@@ -160,7 +160,7 @@ export function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ fro
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-4 bg-black/50">
-      <div className="w-full max-w-2xl max-h-[85vh] overflow-hidden rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-4 flex flex-col">
+      <div className="w-full max-w-[600px] max-h-[85vh] overflow-visible rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-4 flex flex-col">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold">Configure Ansiblex Bridges</h2>
           <button className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800" onClick={attemptClose} aria-label="Close">

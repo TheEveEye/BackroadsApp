@@ -20,6 +20,8 @@ type TravelSettings = {
   bridgeContinuous?: boolean;
   allowAnsiblex?: boolean;
   ansiblexes?: AnsiblexBridge[];
+  blacklistEnabled?: boolean;
+  blacklist?: Array<{ id: number; enabled?: boolean }>;
 };
 
 type ComputeRequest = {
@@ -125,6 +127,18 @@ function buildAnsiMap(settings: TravelSettings) {
   return ansiFrom;
 }
 
+function buildBlacklistSet(settings: TravelSettings) {
+  const set = new Set<number>();
+  if (!settings.blacklistEnabled || !settings.blacklist?.length) return set;
+  for (const entry of settings.blacklist) {
+    if (!entry || entry.enabled === false) continue;
+    const id = Number(entry.id);
+    if (!Number.isFinite(id)) continue;
+    set.add(id);
+  }
+  return set;
+}
+
 function computeTravelTree(startId: number, settings: TravelSettings, maxJumps: number) {
   const dist = new Map<number, number>();
   const prev = new Map<number, number>();
@@ -135,6 +149,7 @@ function computeTravelTree(startId: number, settings: TravelSettings, maxJumps: 
 
   const exclude = new Set<number>();
   if (settings.excludeZarzakh) exclude.add(30100000);
+  const blacklist = buildBlacklistSet(settings);
   const sameRegionOnly = !!settings.sameRegionOnly;
   const startRegion = start.regionId;
 
@@ -150,11 +165,11 @@ function computeTravelTree(startId: number, settings: TravelSettings, maxJumps: 
     if (d >= maxJumps) continue;
     const node = systems[String(id)];
     if (!node) continue;
-    if (exclude.has(id)) continue;
+    if (exclude.has(id) || blacklist.has(id)) continue;
     if (sameRegionOnly && node.regionId !== startRegion) continue;
 
     for (const next of node.adjacentSystems) {
-      if (exclude.has(next)) continue;
+      if (exclude.has(next) || blacklist.has(next)) continue;
       const nextNode = systems[String(next)];
       if (!nextNode) continue;
       if (sameRegionOnly && nextNode.regionId !== startRegion) continue;
@@ -168,7 +183,7 @@ function computeTravelTree(startId: number, settings: TravelSettings, maxJumps: 
     if (settings.allowAnsiblex) {
       const outs = ansiFrom.get(id) || [];
       for (const next of outs) {
-        if (exclude.has(next)) continue;
+        if (exclude.has(next) || blacklist.has(next)) continue;
         const nextNode = systems[String(next)];
         if (!nextNode) continue;
         if (sameRegionOnly && nextNode.regionId !== startRegion) continue;
@@ -252,6 +267,13 @@ function buildPathToSource(prev: Map<number, number>, startId: number, sourceId:
   return path;
 }
 
+function pathHasBlacklist(path: number[], blacklist: Set<number>) {
+  for (const id of path) {
+    if (blacklist.has(id)) return true;
+  }
+  return false;
+}
+
 function compareOneBridgeCandidates(a: Candidate, b: Candidate) {
   if (a.totalJumps !== b.totalJumps) return a.totalJumps - b.totalJumps;
   if (a.stagingJumps !== b.stagingJumps) return a.stagingJumps - b.stagingJumps;
@@ -287,13 +309,15 @@ function buildRoutesFromCandidates(
   stagingPrev: Map<number, number>,
   destinationPrev: Map<number, number>,
   stagingId: number,
-  destinationId: number
+  destinationId: number,
+  blacklist?: Set<number>
 ): RouteOption[] {
   const routes: RouteOption[] = [];
   for (const c of candidates) {
     const travelPath = buildPath(stagingPrev, stagingId, c.parkingId);
     const destinationPath = buildPath(destinationPrev, destinationId, c.endpointId);
     if (!travelPath || !destinationPath) continue;
+    if (blacklist && (pathHasBlacklist(travelPath, blacklist) || pathHasBlacklist(destinationPath, blacklist))) continue;
     routes.push({
       key: `${c.parkingId}-${c.endpointId}`,
       travelPath,
@@ -315,7 +339,8 @@ function buildRoutesFromTwoBridgeCandidates(
   destinationPrev: Map<number, number>,
   midPrev: Map<number, number>,
   stagingId: number,
-  destinationId: number
+  destinationId: number,
+  blacklist?: Set<number>
 ): RouteOption[] {
   const routes: RouteOption[] = [];
   for (const c of candidates) {
@@ -323,6 +348,7 @@ function buildRoutesFromTwoBridgeCandidates(
     const midPath = buildPathToSource(midPrev, c.endpointId, c.parking2Id);
     const destinationPath = buildPath(destinationPrev, destinationId, c.endpoint2Id);
     if (!travelPath || !midPath || !destinationPath) continue;
+    if (blacklist && (pathHasBlacklist(travelPath, blacklist) || pathHasBlacklist(midPath, blacklist) || pathHasBlacklist(destinationPath, blacklist))) continue;
     routes.push({
       key: `${c.parkingId}-${c.endpointId}-${c.parking2Id}-${c.endpoint2Id}`,
       travelPath,
@@ -349,13 +375,16 @@ function buildNeighborMap(settings: TravelSettings) {
   const systems = graph.systems;
   const map = new Map<number, number[]>();
   const sameRegionOnly = !!settings.sameRegionOnly;
+  const blacklist = buildBlacklistSet(settings);
   for (const [idStr, sys] of Object.entries(systems)) {
     const id = Number(idStr);
     if (!Number.isFinite(id)) continue;
     if (settings.excludeZarzakh && id === 30100000) continue;
+    if (blacklist.has(id)) continue;
     const neighbors: number[] = [];
     for (const next of sys.adjacentSystems || []) {
       if (settings.excludeZarzakh && next === 30100000) continue;
+      if (blacklist.has(next)) continue;
       const nextNode = systems[String(next)];
       if (!nextNode) continue;
       if (sameRegionOnly && nextNode.regionId !== sys.regionId) continue;
@@ -365,6 +394,7 @@ function buildNeighborMap(settings: TravelSettings) {
       const outs = ansiFrom.get(id) || [];
       for (const next of outs) {
         if (settings.excludeZarzakh && next === 30100000) continue;
+        if (blacklist.has(next)) continue;
         const nextNode = systems[String(next)];
         if (!nextNode) continue;
         if (sameRegionOnly && nextNode.regionId !== sys.regionId) continue;
@@ -434,6 +464,13 @@ function computeRoutes(
   const stagingNode = systems[String(payload.stagingId)];
   if (!destinationNode) return { routes: [], message: 'Destination system not found.', baselineJumps: null };
   if (!stagingNode) return { routes: [], message: 'Staging system not found.', baselineJumps: null };
+  const blacklist = buildBlacklistSet(payload.settings);
+  if (payload.settings.blacklistEnabled && blacklist.has(payload.destinationId)) {
+    return { routes: [], message: 'Destination system is blacklisted.', baselineJumps: null };
+  }
+  if (payload.settings.blacklistEnabled && blacklist.has(payload.stagingId)) {
+    return { routes: [], message: 'Staging system is blacklisted.', baselineJumps: null };
+  }
   if (isForbiddenSystem(destinationNode)) {
     return { routes: [], message: 'Destination is in highsec or Pochven.', baselineJumps: null };
   }
@@ -463,6 +500,7 @@ function computeRoutes(
     }
   } else {
     for (const sys of systemsList) {
+      if (payload.settings.blacklistEnabled && blacklist.has(sys.id)) continue;
       const jumps = destinationDist.get(sys.id);
       if (jumps == null) continue;
       endpointList.push({ id: sys.id, x: sys.x, y: sys.y, z: sys.z, jumps });
@@ -484,13 +522,14 @@ function computeRoutes(
       const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
       if (!force && now - lastEmit < 80) return;
       lastEmit = now;
-      const routes = buildRoutesFromCandidates(best, stagingPrev, destinationPrev, payload.stagingId, payload.destinationId);
+      const routes = buildRoutesFromCandidates(best, stagingPrev, destinationPrev, payload.stagingId, payload.destinationId, blacklist);
       onPartial(routes, baselineJumps);
     };
 
     for (const parking of systemsList) {
       if (payload.settings.bridgeFromStaging && parking.id !== payload.stagingId) continue;
       if (payload.settings.excludeZarzakh && parking.id === 30100000) continue;
+      if (payload.settings.blacklistEnabled && blacklist.has(parking.id)) continue;
       if (isForbiddenSystem(parking)) continue;
       const stagingJumps = stagingDist.get(parking.id);
       if (stagingJumps == null) continue;
@@ -530,7 +569,7 @@ function computeRoutes(
       return { routes: [], message: 'No reachable parking systems found.', baselineJumps };
     }
 
-    const routes = buildRoutesFromCandidates(best, stagingPrev, destinationPrev, payload.stagingId, payload.destinationId);
+    const routes = buildRoutesFromCandidates(best, stagingPrev, destinationPrev, payload.stagingId, payload.destinationId, blacklist);
     if (routes.length === 0) {
       return { routes: [], message: 'No routes found.', baselineJumps };
     }
@@ -542,6 +581,7 @@ function computeRoutes(
   const bridgeSources: Array<{ parkingId: number; endpointId: number; baseCost: number }> = [];
   for (const parking of systemsList) {
     if (payload.settings.excludeZarzakh && parking.id === 30100000) continue;
+    if (payload.settings.blacklistEnabled && blacklist.has(parking.id)) continue;
     if (isForbiddenSystem(parking)) continue;
     let bestEndpoint: { id: number; jumps: number; bridgeMeters: number } | null = null;
     for (const endpoint of endpointList) {
@@ -574,6 +614,7 @@ function computeRoutes(
     const cost = oneBridgeDist.get(sys.id);
     if (cost == null) continue;
     if (payload.settings.bridgeContinuous && sourceParking.get(sys.id) !== sys.id) continue;
+    if (payload.settings.blacklistEnabled && blacklist.has(sys.id)) continue;
     endpoint1List.push({ id: sys.id, x: sys.x, y: sys.y, z: sys.z, cost });
   }
 
@@ -594,7 +635,8 @@ function computeRoutes(
       destinationPrev,
       oneBridgePrev,
       payload.stagingId,
-      payload.destinationId
+      payload.destinationId,
+      blacklist
     );
     onPartial(routes, baselineJumps);
   };
@@ -602,6 +644,7 @@ function computeRoutes(
   for (const parking of systemsList) {
     if (payload.settings.bridgeFromStaging && parking.id !== payload.stagingId) continue;
     if (payload.settings.excludeZarzakh && parking.id === 30100000) continue;
+    if (payload.settings.blacklistEnabled && blacklist.has(parking.id)) continue;
     if (isForbiddenSystem(parking)) continue;
     const stagingJumps = stagingDist.get(parking.id);
     if (stagingJumps == null) continue;
@@ -658,7 +701,8 @@ function computeRoutes(
     destinationPrev,
     oneBridgePrev,
     payload.stagingId,
-    payload.destinationId
+    payload.destinationId,
+    blacklist
   );
   if (routes.length === 0) {
     return { routes: [], message: 'No routes found.', baselineJumps };

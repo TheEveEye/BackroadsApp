@@ -25,8 +25,8 @@ export function SearchForm({
   setLyRadius: (v: number) => void;
   graph: GraphData | null;
   onStartId: (id: number | null) => void;
-  settings: { excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }>; };
-  setSettings: (s: { excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }>; }) => void;
+  settings: { excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }>; blacklistEnabled?: boolean; blacklist?: Array<{ id: number; enabled?: boolean }>; };
+  setSettings: (s: { excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }>; blacklistEnabled?: boolean; blacklist?: Array<{ id: number; enabled?: boolean }>; }) => void;
   onClearAll: () => void;
 }) {
   // Autocomplete state

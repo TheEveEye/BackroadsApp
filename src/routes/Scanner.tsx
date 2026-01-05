@@ -44,8 +44,24 @@ export function Scanner() {
     } catch {}
     return { fromQuery: '', toQuery: '' };
   });
-  const [settings, setSettings] = useState<{ excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }> }>(() => {
-    const defaults = { excludeZarzakh: true, sameRegionOnly: false, titanBridgeFirstJump: false, allowAnsiblex: false, ansiblexes: [] as Array<{ from: number; to: number; enabled?: boolean }> };
+  const [settings, setSettings] = useState<{
+    excludeZarzakh: boolean;
+    sameRegionOnly: boolean;
+    titanBridgeFirstJump: boolean;
+    allowAnsiblex?: boolean;
+    ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }>;
+    blacklistEnabled?: boolean;
+    blacklist?: Array<{ id: number; enabled?: boolean }>;
+  }>(() => {
+    const defaults = {
+      excludeZarzakh: true,
+      sameRegionOnly: false,
+      titanBridgeFirstJump: false,
+      allowAnsiblex: false,
+      ansiblexes: [] as Array<{ from: number; to: number; enabled?: boolean }>,
+      blacklistEnabled: false,
+      blacklist: [] as Array<{ id: number; enabled?: boolean }>,
+    };
     try {
       const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
       if (raw) {
@@ -58,6 +74,8 @@ export function Scanner() {
             titanBridgeFirstJump: typeof parsed.titanBridgeFirstJump === 'boolean' ? parsed.titanBridgeFirstJump : defaults.titanBridgeFirstJump,
             allowAnsiblex: typeof parsed.allowAnsiblex === 'boolean' ? parsed.allowAnsiblex : defaults.allowAnsiblex,
             ansiblexes: Array.isArray(parsed.ansiblexes) ? parsed.ansiblexes : defaults.ansiblexes,
+            blacklistEnabled: typeof parsed.blacklistEnabled === 'boolean' ? parsed.blacklistEnabled : defaults.blacklistEnabled,
+            blacklist: Array.isArray(parsed.blacklist) ? parsed.blacklist : defaults.blacklist,
           };
         }
       }

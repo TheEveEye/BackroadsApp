@@ -47,8 +47,24 @@ function App() {
     return 6;
   });
   const [startId, setStartId] = useState<number | null>(null);
-  const [settings, setSettings] = useState<{ excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }> }>(() => {
-    const defaults = { excludeZarzakh: true, sameRegionOnly: false, titanBridgeFirstJump: false, allowAnsiblex: false, ansiblexes: [] as Array<{ from: number; to: number; enabled?: boolean }> };
+  const [settings, setSettings] = useState<{
+    excludeZarzakh: boolean;
+    sameRegionOnly: boolean;
+    titanBridgeFirstJump: boolean;
+    allowAnsiblex?: boolean;
+    ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }>;
+    blacklistEnabled?: boolean;
+    blacklist?: Array<{ id: number; enabled?: boolean }>;
+  }>(() => {
+    const defaults = {
+      excludeZarzakh: true,
+      sameRegionOnly: false,
+      titanBridgeFirstJump: false,
+      allowAnsiblex: false,
+      ansiblexes: [] as Array<{ from: number; to: number; enabled?: boolean }>,
+      blacklistEnabled: false,
+      blacklist: [] as Array<{ id: number; enabled?: boolean }>,
+    };
     try {
       const raw = localStorage.getItem('br.settings.v1');
       if (raw) {
@@ -61,6 +77,8 @@ function App() {
             titanBridgeFirstJump: typeof parsed.titanBridgeFirstJump === 'boolean' ? parsed.titanBridgeFirstJump : defaults.titanBridgeFirstJump,
             allowAnsiblex: typeof parsed.allowAnsiblex === 'boolean' ? parsed.allowAnsiblex : defaults.allowAnsiblex,
             ansiblexes: Array.isArray(parsed.ansiblexes) ? parsed.ansiblexes : defaults.ansiblexes,
+            blacklistEnabled: typeof parsed.blacklistEnabled === 'boolean' ? parsed.blacklistEnabled : defaults.blacklistEnabled,
+            blacklist: Array.isArray(parsed.blacklist) ? parsed.blacklist : defaults.blacklist,
           };
         }
       }
@@ -115,7 +133,15 @@ function App() {
   }, [graph, startId, maxJumps, settings, lyRadius]);
 
   // Wrap settings setter to show a warning when enabling titan bridge from high-sec
-  const setSettingsWithGuard = (next: { excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }> }) => {
+  const setSettingsWithGuard = (next: {
+    excludeZarzakh: boolean;
+    sameRegionOnly: boolean;
+    titanBridgeFirstJump: boolean;
+    allowAnsiblex?: boolean;
+    ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }>;
+    blacklistEnabled?: boolean;
+    blacklist?: Array<{ id: number; enabled?: boolean }>;
+  }) => {
     try {
       if (!settings.titanBridgeFirstJump && next.titanBridgeFirstJump) {
         if (startId != null && graph) {
@@ -167,7 +193,15 @@ function App() {
       localStorage.removeItem('br.ansiblex.v1');
       localStorage.removeItem(UI_STORAGE_KEY);
     } catch {}
-    setSettings({ excludeZarzakh: true, sameRegionOnly: false, titanBridgeFirstJump: false, allowAnsiblex: false, ansiblexes: [] });
+    setSettings({
+      excludeZarzakh: true,
+      sameRegionOnly: false,
+      titanBridgeFirstJump: false,
+      allowAnsiblex: false,
+      ansiblexes: [],
+      blacklistEnabled: false,
+      blacklist: [],
+    });
     setQuery('');
     setMaxJumps(5);
     setLyRadius(6);

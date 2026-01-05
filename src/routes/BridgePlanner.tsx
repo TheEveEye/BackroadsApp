@@ -4,6 +4,7 @@ import { resolveQueryToId } from '../lib/graph';
 import { AutocompleteInput } from '../components/AutocompleteInput';
 import { Icon } from '../components/Icon';
 import { AnsiblexModal as SharedAnsiblexModal } from '../components/AnsiblexModal';
+import { BlacklistModal } from '../components/BlacklistModal';
 import { BridgePlannerMap } from '../components/BridgePlannerMap';
 import { SegmentedSlider } from '../components/SegmentedSlider';
 
@@ -69,8 +70,33 @@ export function BridgePlanner() {
 
   const [graph, setGraph] = useState<GraphData | null>(() => (window as any).appGraph || null);
   const [showAnsiblexModal, setShowAnsiblexModal] = useState(false);
-  const [settings, setSettings] = useState<{ excludeZarzakh: boolean; sameRegionOnly: boolean; titanBridgeFirstJump: boolean; bridgeIntoDestination: boolean; bridgeFromStaging: boolean; bridgeCount: number; bridgeContinuous: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }> }>(() => {
-    const defaults = { excludeZarzakh: true, sameRegionOnly: false, titanBridgeFirstJump: false, bridgeIntoDestination: false, bridgeFromStaging: false, bridgeCount: 1, bridgeContinuous: false, allowAnsiblex: false, ansiblexes: [] as Array<{ from: number; to: number; enabled?: boolean }> };
+  const [showBlacklistModal, setShowBlacklistModal] = useState(false);
+  const [settings, setSettings] = useState<{
+    excludeZarzakh: boolean;
+    sameRegionOnly: boolean;
+    titanBridgeFirstJump: boolean;
+    bridgeIntoDestination: boolean;
+    bridgeFromStaging: boolean;
+    bridgeCount: number;
+    bridgeContinuous: boolean;
+    allowAnsiblex?: boolean;
+    ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }>;
+    blacklistEnabled?: boolean;
+    blacklist?: Array<{ id: number; enabled?: boolean }>;
+  }>(() => {
+    const defaults = {
+      excludeZarzakh: true,
+      sameRegionOnly: false,
+      titanBridgeFirstJump: false,
+      bridgeIntoDestination: false,
+      bridgeFromStaging: false,
+      bridgeCount: 1,
+      bridgeContinuous: false,
+      allowAnsiblex: false,
+      ansiblexes: [] as Array<{ from: number; to: number; enabled?: boolean }>,
+      blacklistEnabled: false,
+      blacklist: [] as Array<{ id: number; enabled?: boolean }>,
+    };
     try {
       const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
       if (raw) {
@@ -87,6 +113,8 @@ export function BridgePlanner() {
             bridgeContinuous: typeof parsed.bridgeContinuous === 'boolean' ? parsed.bridgeContinuous : defaults.bridgeContinuous,
             allowAnsiblex: typeof parsed.allowAnsiblex === 'boolean' ? parsed.allowAnsiblex : defaults.allowAnsiblex,
             ansiblexes: Array.isArray(parsed.ansiblexes) ? parsed.ansiblexes : defaults.ansiblexes,
+            blacklistEnabled: typeof parsed.blacklistEnabled === 'boolean' ? parsed.blacklistEnabled : defaults.blacklistEnabled,
+            blacklist: Array.isArray(parsed.blacklist) ? parsed.blacklist : defaults.blacklist,
           };
         }
       }
@@ -194,7 +222,7 @@ export function BridgePlanner() {
     loading: false,
     baselineJumps: null,
   });
-  const [copyStatus, setCopyStatus] = useState<null | 'success' | 'error'>(null);
+  const [copyStatus, setCopyStatus] = useState<null | { target: string; status: 'success' | 'error' }>(null);
   const [headerCopyOpen, setHeaderCopyOpen] = useState(false);
   const [routeCopyOpenKey, setRouteCopyOpenKey] = useState<string | null>(null);
   const workerRef = useRef<Worker | null>(null);
@@ -257,6 +285,8 @@ export function BridgePlanner() {
         bridgeContinuous: settings.bridgeContinuous,
         allowAnsiblex: settings.allowAnsiblex,
         ansiblexes: settings.ansiblexes,
+        blacklistEnabled: settings.blacklistEnabled,
+        blacklist: settings.blacklist,
       },
     });
   }, [
@@ -273,6 +303,8 @@ export function BridgePlanner() {
     settings.bridgeContinuous,
     settings.allowAnsiblex,
     settings.ansiblexes,
+    settings.blacklistEnabled,
+    settings.blacklist,
   ]);
 
   const [selectedRouteKey, setSelectedRouteKey] = useState<string | null>(null);
@@ -377,10 +409,10 @@ export function BridgePlanner() {
     };
   }, [graph]);
 
-  async function copyText(text: string) {
+  async function copyText(text: string, target: string) {
     try {
       await navigator.clipboard.writeText(text);
-      setCopyStatus('success');
+      setCopyStatus({ target, status: 'success' });
       setTimeout(() => setCopyStatus(null), 1200);
     } catch {
       try {
@@ -390,10 +422,10 @@ export function BridgePlanner() {
         ta.select();
         const ok = document.execCommand('copy');
         document.body.removeChild(ta);
-        setCopyStatus(ok ? 'success' : 'error');
+        setCopyStatus({ target, status: ok ? 'success' : 'error' });
         setTimeout(() => setCopyStatus(null), ok ? 1200 : 1800);
       } catch {
-        setCopyStatus('error');
+        setCopyStatus({ target, status: 'error' });
         setTimeout(() => setCopyStatus(null), 1800);
       }
     }
@@ -617,6 +649,23 @@ export function BridgePlanner() {
                   <Icon name="gear" size={16} />
                   <span className="inline-block align-middle">Configure…</span>
                 </button>
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="accent-blue-600"
+                    checked={!!settings.blacklistEnabled}
+                    onChange={(e) => setSettings({ ...settings, blacklistEnabled: e.target.checked })}
+                  />
+                  <span>Enable system blacklist</span>
+                </label>
+                <button
+                  type="button"
+                  className="px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center justify-center gap-1 leading-none"
+                  onClick={() => setShowBlacklistModal(true)}
+                >
+                  <Icon name="gear" size={16} />
+                  <span className="inline-block align-middle">Configure…</span>
+                </button>
               </div>
             </fieldset>
           </section>
@@ -629,10 +678,10 @@ export function BridgePlanner() {
               </div>
               <div className="flex items-center gap-2 text-xs text-slate-500">
                 <div className="relative">
-                  {copyStatus && (
-                    <div className={"pointer-events-none absolute -top-8 right-0 px-3 py-1.5 rounded shadow text-xs inline-flex items-center gap-2 " + (copyStatus === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white')} role="status" aria-live="polite">
-                      <Icon name={copyStatus === 'success' ? 'copy' : 'warn'} size={12} color="white" />
-                      {copyStatus === 'success' ? 'Copied!' : 'Copy failed'}
+                  {copyStatus?.target === 'header' && (
+                    <div className={"pointer-events-none absolute -top-8 right-0 px-3 py-1.5 rounded shadow text-xs inline-flex items-center gap-2 " + (copyStatus.status === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white')} role="status" aria-live="polite">
+                      <Icon name={copyStatus.status === 'success' ? 'copy' : 'warn'} size={12} color="white" />
+                      {copyStatus.status === 'success' ? 'Copied!' : 'Copy failed'}
                     </div>
                   )}
                   <div
@@ -658,7 +707,7 @@ export function BridgePlanner() {
                           <button
                             type="button"
                             onClick={() => {
-                              if (eveLinksMarkup) copyText(eveLinksMarkup);
+                              if (eveLinksMarkup) copyText(eveLinksMarkup, 'header');
                             }}
                             className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50"
                             disabled={!eveLinksMarkup}
@@ -668,7 +717,7 @@ export function BridgePlanner() {
                           <button
                             type="button"
                             onClick={() => {
-                              if (plainTextRoutes) copyText(plainTextRoutes);
+                              if (plainTextRoutes) copyText(plainTextRoutes, 'header');
                             }}
                             className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50"
                             disabled={!plainTextRoutes}
@@ -764,10 +813,10 @@ export function BridgePlanner() {
                           </span>
                         )}
                         <div className="relative pointer-events-auto" onClick={(event) => event.stopPropagation()}>
-                          {copyStatus && (
-                            <div className={"pointer-events-none absolute -top-8 right-0 px-3 py-1.5 rounded shadow text-xs inline-flex items-center gap-2 " + (copyStatus === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white')} role="status" aria-live="polite">
-                              <Icon name={copyStatus === 'success' ? 'copy' : 'warn'} size={12} color="white" />
-                              {copyStatus === 'success' ? 'Copied!' : 'Copy failed'}
+                          {copyStatus?.target === route.key && (
+                            <div className={"pointer-events-none absolute -top-8 right-0 px-3 py-1.5 rounded shadow text-xs inline-flex items-center gap-2 " + (copyStatus.status === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white')} role="status" aria-live="polite">
+                              <Icon name={copyStatus.status === 'success' ? 'copy' : 'warn'} size={12} color="white" />
+                              {copyStatus.status === 'success' ? 'Copied!' : 'Copy failed'}
                             </div>
                           )}
                           <div
@@ -795,7 +844,7 @@ export function BridgePlanner() {
                                     type="button"
                                     onClick={() => {
                                       const payload = buildRouteCopyPayload(route);
-                                      if (payload.eve) copyText(payload.eve);
+                                      if (payload.eve) copyText(payload.eve, route.key);
                                     }}
                                     className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800"
                                   >
@@ -805,7 +854,7 @@ export function BridgePlanner() {
                                     type="button"
                                     onClick={() => {
                                       const payload = buildRouteCopyPayload(route);
-                                      if (payload.plain) copyText(payload.plain);
+                                      if (payload.plain) copyText(payload.plain, route.key);
                                     }}
                                     className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800"
                                   >
@@ -851,6 +900,13 @@ export function BridgePlanner() {
           onClose={() => setShowAnsiblexModal(false)}
           value={settings.ansiblexes || []}
           onChange={(list) => setSettings(s => ({ ...s, ansiblexes: list }))}
+        />
+      )}
+      {showBlacklistModal && (
+        <BlacklistModal
+          onClose={() => setShowBlacklistModal(false)}
+          value={settings.blacklist || []}
+          onChange={(list) => setSettings(s => ({ ...s, blacklist: list }))}
         />
       )}
     </section>
