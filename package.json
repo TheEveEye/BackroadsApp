@@ -6,6 +6,7 @@
   "homepage": "https://backroads.kiwiapps.dev",
   "scripts": {
     "dev": "vite",
+    "setup": "git pull --ff-only && cp .env.example .env.development && cp .env.example .env.production",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
