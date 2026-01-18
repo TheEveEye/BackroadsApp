@@ -94,6 +94,7 @@ export function Scanner() {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [wormholes, setWormholes] = useState<Wormhole[]>([]);
   const [copyStatus, setCopyStatus] = useState<null | 'success' | 'error'>(null);
+  const [publicShare, setPublicShare] = useState(false);
   const location = useLocation();
 
   const TYPE_TO_CODE: Record<WormholeType, string> = {
@@ -202,6 +203,10 @@ export function Scanner() {
           fromQuery: typeof f === 'string' ? f : r.fromQuery,
           toQuery: typeof t === 'string' ? t : r.toQuery,
         }));
+      }
+      const publicParam = params.get('public');
+      if (publicParam === '1' || publicParam === 'true') {
+        setPublicShare(true);
       }
     } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -319,6 +324,19 @@ export function Scanner() {
 
   const norm = (s: string) => s.toUpperCase().replace(/[-\s]/g, '');
 
+  const buildShareUrl = (includePublic: boolean) => {
+    const compact = buildCompact(wormholes);
+    const b64 = btoa(JSON.stringify(compact));
+    const basePath = ((import.meta as any).env?.BASE_URL || '/');
+    const base = `${window.location.origin}${basePath}scanner`;
+    const params = new URLSearchParams();
+    params.set('wh', b64);
+    params.set('from', route.fromQuery || '');
+    params.set('to', route.toQuery || '');
+    if (includePublic) params.set('public', '1');
+    return `${base}?${params.toString()}`;
+  };
+
   const handleCopyDiscord = async () => {
     const now = Math.floor(Date.now() / 1000);
     const regionsById: any = (graph as any)?.regionsById || {};
@@ -356,11 +374,7 @@ export function Scanner() {
     const lines: string[] = [];
     // Build a share link for the current wormholes and linkify the heading text
     try {
-      const compact = buildCompact(wormholes);
-      const b64 = btoa(JSON.stringify(compact));
-      const basePath = ((import.meta as any).env?.BASE_URL || '/');
-      const base = `${window.location.origin}${basePath}scanner`;
-      const url = `${base}?wh=${encodeURIComponent(b64)}&from=${encodeURIComponent(route.fromQuery || '')}&to=${encodeURIComponent(route.toQuery || '')}`;
+      const url = buildShareUrl(publicShare);
       lines.push(`## [Scan was completed <t:${now}:R>](${url})`);
     } catch {
       lines.push(`## Scan was completed <t:${now}:R>`);
@@ -454,11 +468,7 @@ export function Scanner() {
 
   const handleCopyLink = async () => {
     try {
-      const compact = buildCompact(wormholes);
-      const b64 = btoa(JSON.stringify(compact));
-      const basePath = ((import.meta as any).env?.BASE_URL || '/');
-      const base = `${window.location.origin}${basePath}scanner`;
-      const url = `${base}?wh=${encodeURIComponent(b64)}&from=${encodeURIComponent(route.fromQuery || '')}&to=${encodeURIComponent(route.toQuery || '')}`;
+      const url = buildShareUrl(publicShare);
       await navigator.clipboard.writeText(url);
       setCopyStatus('success');
       setTimeout(() => setCopyStatus(null), 1500);
@@ -803,13 +813,23 @@ export function Scanner() {
         <div className="flex-1 flex justify-center">
           <button onClick={addNew} className="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700">New Wormhole</button>
         </div>
-        <div className="flex gap-2">
-          <button type="button" onClick={handleCopyDiscord} className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800" aria-label="Discord">
-            <Icon name="discord" size={20} />
-          </button>
-          <button type="button" onClick={handleCopyLink} className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800" aria-label="Link">
-            <Icon name="link" size={20} />
-          </button>
+        <div className="flex items-center gap-3">
+          <label className="inline-flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+            <input
+              type="checkbox"
+              checked={publicShare}
+              onChange={(e) => setPublicShare(e.target.checked)}
+            />
+            <span>Public link</span>
+          </label>
+          <div className="flex gap-2">
+            <button type="button" onClick={handleCopyDiscord} className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800" aria-label="Discord">
+              <Icon name="discord" size={20} />
+            </button>
+            <button type="button" onClick={handleCopyLink} className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800" aria-label="Link">
+              <Icon name="link" size={20} />
+            </button>
+          </div>
         </div>
       </div>
 

@@ -1,13 +1,20 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { useLocation } from 'react-router-dom';
 import { TOOL_LABELS, type ToolKey } from '../lib/eveAuth';
 import { useAuth } from './AuthProvider';
 
 export function RequireAccess({ tool, children }: { tool: ToolKey; children: ReactNode }) {
   const { session, status, login, logout, hasAccess } = useAuth();
+  const location = useLocation();
   const label = TOOL_LABELS[tool];
   const base = (import.meta as any).env?.BASE_URL || '/';
   const [corpName, setCorpName] = useState<string | null>(null);
   const [allianceName, setAllianceName] = useState<string | null>(null);
+  const isPublicScanner = tool === 'scanner' && (() => {
+    const params = new URLSearchParams(location.search);
+    const flag = params.get('public');
+    return flag === '1' || flag === 'true';
+  })();
 
   useEffect(() => {
     setCorpName(null);
@@ -37,6 +44,10 @@ export function RequireAccess({ tool, children }: { tool: ToolKey; children: Rea
     loadNames();
     return () => { cancelled = true; };
   }, [session?.corporationId, session?.allianceId, session]);
+
+  if (isPublicScanner) {
+    return <>{children}</>;
+  }
 
   if (status === 'loading') {
     return (
