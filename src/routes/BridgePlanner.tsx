@@ -921,10 +921,20 @@ export function BridgePlanner() {
           postBridgePath={selectedRoute?.postBridgePath ?? null}
           fitNodeIds={fitNodeIds}
           bridgeRange={planner.bridgeRange}
-          settings={{ allowAnsiblex: settings.allowAnsiblex, ansiblexes: settings.ansiblexes, cynoBeacons: settings.cynoBeacons }}
+          settings={{
+            excludeZarzakh: settings.excludeZarzakh,
+            sameRegionOnly: settings.sameRegionOnly,
+            allowAnsiblex: settings.allowAnsiblex,
+            ansiblexes: settings.ansiblexes,
+            cynoBeacons: settings.cynoBeacons,
+          }}
           statusMessage={routeResult.message}
           summary={summary}
           baselineJumps={routeResult.baselineJumps}
+          onSystemDoubleClick={(id) => {
+            const name = graph?.namesById?.[String(id)] ?? String(id);
+            setPlanner((prev) => ({ ...prev, targetQuery: name }));
+          }}
         />
       </div>
 

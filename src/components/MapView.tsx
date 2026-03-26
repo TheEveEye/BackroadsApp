@@ -1,21 +1,16 @@
-
 import { useMemo, useState } from 'react';
+import type { GraphData } from '../lib/data';
 import { exploreFrontier, findPathTo } from '../lib/graph';
+import { boundsFromIds, buildAnsiblexSet, buildArcPath, centerFromBounds, fitBoundsScale, fitRadiusScale, LY_IN_METERS, project2D, segmentIntersectsRect } from './map/shared';
 
-const LY = 9.4607e15;
-
-function project2D(x: number, _y: number, z: number) {
-  // Simple orthographic projection: XZ-plane (x,z). Y is depth; ignored.
-  return { px: x, py: -z };
-}
-
-export function MapView({ startId, maxJumps, graph, namesById, lyRadius, settings }: {
+export function MapView({ startId, maxJumps, graph, namesById, lyRadius, settings, onSystemDoubleClick }: {
   startId: number;
   maxJumps: number;
-  graph: any;
+  graph: GraphData;
   namesById?: Record<string, string>;
   lyRadius: number;
   settings: { excludeZarzakh?: boolean; sameRegionOnly?: boolean; titanBridgeFirstJump?: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }>; };
+  onSystemDoubleClick?: (id: number) => void;
 }) {
   const startSystem = graph.systems[String(startId)];
   if (!startSystem) {
@@ -51,37 +46,29 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
   // SVG viewport and centering math
   const w = 800;
   const h = 600;
-  const pad = 12;
-  const cx = w / 2;
-  const cy = h / 2;
+  const pad = 0;
 
-  // Scale so the farthest node fits within the radius (minus padding)
+  const projectedIds = useMemo(() => projected.map((point) => point.id), [projected]);
+  const bounds = useMemo(() => boundsFromIds(graph, projectedIds), [graph, projectedIds]);
+  const center = useMemo(() => centerFromBounds(bounds), [bounds]);
   const baseScale = useMemo(() => {
-    if (projected.length === 0) return 1;
-    // Farthest node distance from start in world units (projected XZ plane)
-    let maxDNodes = 0;
-    for (const p of projected) {
-      const dx = p.px - startProj.px;
-      const dy = p.py - startProj.py;
-      const d = Math.hypot(dx, dy);
-      if (d > maxDNodes) maxDNodes = d;
+    if (!bounds) return 1;
+    const spanX = bounds.maxX - bounds.minX;
+    const spanY = bounds.maxY - bounds.minY;
+    if (spanX === 0 && spanY === 0) {
+      const minWorldRadius = lyRadius * LY_IN_METERS;
+      return fitRadiusScale(projected, startProj, w, h, pad, minWorldRadius);
     }
-    // Target radius in screen pixels
-    const radiusPx = Math.max(1, Math.min(w, h) / 2 - pad);
-    // When maxJumps is 0 the frontier contains only the start node, so maxDNodes≈0.
-    // In that case, also consider the LY radius circle so we don't render an enormous SVG circle.
-    const lyWorld = lyRadius * LY;
-    const maxWorld = maxJumps === 0 ? Math.max(maxDNodes, lyWorld) : maxDNodes;
-    return maxWorld > 0 ? radiusPx / maxWorld : 1;
-  }, [projected, startProj, maxJumps, lyRadius]);
+    return fitBoundsScale(bounds, w, h, pad);
+  }, [bounds, projected, startProj, lyRadius]);
 
   const [zoom, setZoom] = useState(1);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [hoveredId, setHoveredId] = useState<number | null>(null);
   const scale = baseScale * zoom;
 
-  const sx = (x: number) => cx + (x - startProj.px) * scale;
-  const sy = (y: number) => cy + (y - startProj.py) * scale;
+  const sx = (x: number) => (w / 2) + (x - center.cx) * scale;
+  const sy = (y: number) => (h / 2) + (y - center.cy) * scale;
 
   // Quick lookup for edge endpoints
   const idx = useMemo(() => {
@@ -89,25 +76,6 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
     for (const p of projected) m[String(p.id)] = { px: p.px, py: p.py };
     return m;
   }, [projected]);
-
-  // Cohen–Sutherland line clipping test: does segment (x1,y1)-(x2,y2) intersect rect [xMin,xMax]x[yMin,yMax]?
-  function segmentIntersectsRect(x1: number, y1: number, x2: number, y2: number, xMin: number, yMin: number, xMax: number, yMax: number): boolean {
-    const LEFT = 1, RIGHT = 2, BOTTOM = 4, TOP = 8;
-    const code = (x: number, y: number) => ((x < xMin ? LEFT : 0) | (x > xMax ? RIGHT : 0) | (y < yMin ? BOTTOM : 0) | (y > yMax ? TOP : 0));
-    let c1 = code(x1, y1);
-    let c2 = code(x2, y2);
-    while (true) {
-      if ((c1 | c2) === 0) return true; // both inside
-      if ((c1 & c2) !== 0) return false; // trivially outside on same side
-      const co = c1 ? c1 : c2;
-      let x = 0, y = 0;
-      if (co & TOP) { x = x1 + (x2 - x1) * (yMax - y1) / (y2 - y1); y = yMax; }
-      else if (co & BOTTOM) { x = x1 + (x2 - x1) * (yMin - y1) / (y2 - y1); y = yMin; }
-      else if (co & RIGHT) { y = y1 + (y2 - y1) * (xMax - x1) / (x2 - x1); x = xMax; }
-      else { y = y1 + (y2 - y1) * (xMin - x1) / (x2 - x1); x = xMin; }
-      if (co === c1) { x1 = x; y1 = y; c1 = code(x1, y1); } else { x2 = x; y2 = y; c2 = code(x2, y2); }
-    }
-  }
 
   // Determine which nodes are on-screen to avoid rendering off-screen nodes
   const visibleIds = useMemo(() => {
@@ -120,7 +88,7 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
       if (X >= -pad && X <= w + pad && Y >= -pad && Y <= h + pad) ids.add(p.id);
     }
     return ids;
-  }, [projected, startProj, scale]);
+  }, [projected, scale]);
 
   const renderedNodes = useMemo(() => projected.filter(p => visibleIds.has(p.id)), [projected, visibleIds]);
   const renderedEdges = useMemo(() => {
@@ -133,7 +101,15 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
       const x2 = sx(b.px), y2 = sy(b.py);
       return segmentIntersectsRect(x1, y1, x2, y2, 0, 0, w, h);
     });
-  }, [edges, visibleIds, idx, scale, startProj]);
+  }, [edges, visibleIds, idx, scale]);
+
+  const renderedAnsiblexes = useMemo(() => {
+    if (!settings.allowAnsiblex || !Array.isArray(settings.ansiblexes)) return [];
+    return settings.ansiblexes.filter((bridge) => {
+      if (!bridge || bridge.enabled === false) return false;
+      return visibleIds.has(Number(bridge.from)) || visibleIds.has(Number(bridge.to));
+    });
+  }, [settings.allowAnsiblex, settings.ansiblexes, visibleIds]);
 
   const selected = useMemo(() => {
     if (selectedId == null) return null;
@@ -141,7 +117,7 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
     if (!p) return null;
     const sys = graph.systems[String(selectedId)];
     const jumps = p.dist;
-    const ly = Math.hypot(p.x - startPos.x, p.y - startPos.y, p.z - startPos.z) / LY;
+    const ly = Math.hypot(p.x - startPos.x, p.y - startPos.y, p.z - startPos.z) / LY_IN_METERS;
   const name = namesById?.[String(selectedId)] ?? String(selectedId);
   const secColors = ['#833862','#692623','#AC2822','#BD4E26','#CC722C','#F5FD93','#90E56A','#82D8A8','#73CBF3','#5698E5','#4173DB'];
   const sVal = typeof sys.security === 'number' ? sys.security : 0;
@@ -168,20 +144,10 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
   }, [selectedId, projected, graph, startPos, namesById]);
 
   // Build a quick lookup for ansiblex directed edges (u->v) to detect segments in the route
-  const ansiSet = useMemo(() => {
-    const set = new Set<string>();
-    if (settings.allowAnsiblex && Array.isArray(settings.ansiblexes)) {
-      for (const b of settings.ansiblexes) {
-        if (!b || b.enabled === false) continue;
-        const from = Number(b.from), to = Number(b.to);
-        if (!Number.isFinite(from) || !Number.isFinite(to)) continue;
-        set.add(`${from}->${to}`);
-  // Always treat bridges as bidirectional
-  set.add(`${to}->${from}`);
-      }
-    }
-    return set;
-  }, [settings.allowAnsiblex, settings.ansiblexes]);
+  const ansiSet = useMemo(
+    () => buildAnsiblexSet(settings.allowAnsiblex, settings.ansiblexes, { defaultBidirectional: true }),
+    [settings.allowAnsiblex, settings.ansiblexes],
+  );
 
   return (
     <section className="bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
@@ -203,8 +169,8 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
         {/* LY radius circle */}
         <g>
           {(() => {
-            const r = (lyRadius * LY) * scale;
-            return <circle cx={cx} cy={cy} r={r} fill="none" stroke="#60a5fa" strokeDasharray="6 6" strokeWidth={1.5} />;
+            const r = (lyRadius * LY_IN_METERS) * scale;
+            return <circle cx={sx(startProj.px)} cy={sy(startProj.py)} r={r} fill="none" stroke="#60a5fa" strokeDasharray="6 6" strokeWidth={1.5} />;
           })()}
         </g>
 
@@ -232,7 +198,7 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
         </g>
 
         {/* Ansiblex bridges (green arcs). Render when enabled in settings. */}
-        {settings.allowAnsiblex && Array.isArray(settings.ansiblexes) && settings.ansiblexes.filter(b=>b.enabled!==false).map((b, idxArc) => {
+        {renderedAnsiblexes.map((b, idxArc) => {
           const fromSys = graph.systems[String(b.from)];
           const toSys = graph.systems[String(b.to)];
           if (!fromSys || !toSys) return null;
@@ -240,17 +206,7 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
           const p2 = project2D(toSys.position.x, toSys.position.y, toSys.position.z);
           const A = { x: sx(p1.px), y: sy(p1.py) };
           const B = { x: sx(p2.px), y: sy(p2.py) };
-          const mx = (A.x + B.x) / 2;
-          const my = (A.y + B.y) / 2;
-          const dx = B.x - A.x, dy = B.y - A.y;
-          const len = Math.hypot(dx, dy) || 1;
-          let nx = -dy / len, ny = dx / len;
-          if (Math.abs(ny) < 1e-6) { nx = 0; ny = -1; }
-          else if (ny > 0) { nx = -nx; ny = -ny; }
-          const amp = Math.min(120, Math.max(30, len * 0.22));
-          const cxp = mx + nx * amp;
-          const cyp = my + ny * amp;
-          const d = `M ${A.x} ${A.y} Q ${cxp} ${cyp} ${B.x} ${B.y}`;
+          const d = buildArcPath(A, B, 0.22, 30, 120);
           return (
             <g key={`ansi-${idxArc}`}>
               <path d={d} stroke="#00ff00" strokeWidth={2} fill="none" opacity={0.95} />
@@ -270,20 +226,6 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
             return { x: sx(p2.px), y: sy(p2.py) };
           };
 
-          const arcPath = (A: {x:number;y:number}, B: {x:number;y:number}, ampScale = 0.18, minAmp = 24, maxAmp = 120) => {
-            const mx = (A.x + B.x) / 2;
-            const my = (A.y + B.y) / 2;
-            const dx = B.x - A.x, dy = B.y - A.y;
-            const len = Math.hypot(dx, dy) || 1;
-            let nx = -dy / len, ny = dx / len;
-            if (Math.abs(ny) < 1e-6) { nx = 0; ny = -1; }
-            else if (ny > 0) { nx = -nx; ny = -ny; }
-            const amp = Math.min(maxAmp, Math.max(minAmp, len * ampScale));
-            const cxp = mx + nx * amp;
-            const cyp = my + ny * amp;
-            return `M ${A.x} ${A.y} Q ${cxp} ${cyp} ${B.x} ${B.y}`;
-          };
-
           const segs: any[] = [];
           // First segment: if usedTitan (and titan is allowed), draw purple dashed arc; otherwise handle as gate/ansiblex
           for (let i = 0; i < path.length - 1; i++) {
@@ -292,13 +234,13 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
             const P = getPt(u);
             const Q = getPt(v);
             if (i === 0 && res.usedTitan && settings.titanBridgeFirstJump) {
-              const d = arcPath(P, Q, 0.15, 20, 80);
+              const d = buildArcPath(P, Q, 0.15, 20, 80);
               segs.push(<path key={`hl-titan-${i}`} d={d} stroke="#9333ea" strokeWidth={2} fill="none" strokeDasharray="4 3" opacity={0.95} />);
               continue;
             }
             const isAnsi = ansiSet.has(`${u}->${v}`);
             if (isAnsi) {
-              const d = arcPath(P, Q, 0.22, 30, 120);
+              const d = buildArcPath(P, Q, 0.22, 30, 120);
               segs.push(<path key={`hl-ansi-${i}`} d={d} stroke="#facc15" strokeWidth={2.5} fill="none" opacity={0.95} />);
             } else {
               segs.push(<line key={`hl-line-${i}`} x1={P.x} y1={P.y} x2={Q.x} y2={Q.y} stroke="#facc15" strokeWidth={2.5} strokeLinecap="round" />);
@@ -310,7 +252,7 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
         <g>
           {renderedNodes.map(p => {
             const r = p.id === startId ? 5 : 3;
-            const inLy = Math.hypot(p.x - startPos.x, p.y - startPos.y, p.z - startPos.z) <= lyRadius * LY;
+            const inLy = Math.hypot(p.x - startPos.x, p.y - startPos.y, p.z - startPos.z) <= lyRadius * LY_IN_METERS;
             let fill: string;
 if (p.id === startId) {
   fill = '#2563eb';
@@ -325,6 +267,10 @@ if (p.id === startId) {
               <g
                 key={p.id}
                 onClick={(e) => { e.stopPropagation(); setSelectedId(prev => (prev === p.id ? null : p.id)); }}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  onSystemDoubleClick?.(p.id);
+                }}
                 onMouseEnter={() => setHoveredId(p.id)}
                 onMouseLeave={() => setHoveredId(h => (h === p.id ? null : h))}
                 style={{cursor: "pointer"}}

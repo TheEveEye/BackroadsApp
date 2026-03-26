@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { GraphData } from '../lib/data';
-
-function project2D(x: number, _y: number, z: number) {
-  return { px: x, py: -z };
-}
+import { findPathTo } from '../lib/graph';
+import { LY_IN_METERS, boundsFromIds, buildAnsiblexSet, buildArcPath, buildProjectedSystemMap, centerFromBounds, fitBoundsScale, project2D, segmentIntersectsRect } from './map/shared';
 
 function getIsDarkMode() {
   if (typeof window === 'undefined' || typeof document === 'undefined') return false;
@@ -39,6 +37,8 @@ type BridgePlannerMapProps = {
   fitNodeIds?: number[] | null;
   bridgeRange: number;
   settings: {
+    excludeZarzakh?: boolean;
+    sameRegionOnly?: boolean;
     allowAnsiblex?: boolean;
     ansiblexes?: Array<{ from: number; to: number; enabled?: boolean; bidirectional?: boolean }>;
     cynoBeacons?: Array<{ id: number; enabled?: boolean }>;
@@ -46,6 +46,7 @@ type BridgePlannerMapProps = {
   statusMessage?: string | null;
   summary?: string | null;
   baselineJumps?: number | null;
+  onSystemDoubleClick?: (id: number) => void;
 };
 
 type BackgroundNode = { id: number; x: number; y: number };
@@ -69,9 +70,12 @@ export function BridgePlannerMap({
   statusMessage,
   summary,
   baselineJumps,
+  onSystemDoubleClick,
 }: BridgePlannerMapProps) {
   const base = (import.meta as any).env?.BASE_URL || '/';
   const [zoom, setZoom] = useState(1);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [hoveredId, setHoveredId] = useState<number | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(getIsDarkMode);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const hasBase = !!graph && stagingId != null && destinationId != null;
@@ -113,53 +117,22 @@ export function BridgePlannerMap({
   }, [nodeIds, graph, hasRoute]);
 
   const fitBounds = useMemo(() => {
-    if (!graph || !fitNodeIds || fitNodeIds.length === 0) return null;
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (const id of fitNodeIds) {
-      const sys = graph.systems[String(id)];
-      if (!sys) continue;
-      const { px, py } = project2D(sys.position.x, sys.position.y, sys.position.z);
-      minX = Math.min(minX, px);
-      maxX = Math.max(maxX, px);
-      minY = Math.min(minY, py);
-      maxY = Math.max(maxY, py);
-    }
-    if (!Number.isFinite(minX) || !Number.isFinite(minY)) return null;
-    return { minX, maxX, minY, maxY };
+    return boundsFromIds(graph, fitNodeIds);
   }, [graph, fitNodeIds]);
 
   const selectedBounds = useMemo(() => {
     if (!graph || (fitNodeIds && fitNodeIds.length > 0)) return null;
-    if (nodeIds.length === 0) return null;
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (const id of nodeIds) {
-      const sys = graph.systems[String(id)];
-      if (!sys) continue;
-      const { px, py } = project2D(sys.position.x, sys.position.y, sys.position.z);
-      minX = Math.min(minX, px);
-      maxX = Math.max(maxX, px);
-      minY = Math.min(minY, py);
-      maxY = Math.max(maxY, py);
-    }
-    if (!Number.isFinite(minX) || !Number.isFinite(minY)) return null;
-    return { minX, maxX, minY, maxY };
+    return boundsFromIds(graph, nodeIds);
   }, [graph, nodeIds, fitNodeIds]);
 
   const bounds = fitBounds ?? selectedBounds;
 
   const baseScale = useMemo(() => {
-    if (!bounds) return 1;
-    const spanX = bounds.maxX - bounds.minX;
-    const spanY = bounds.maxY - bounds.minY;
-    if (spanX === 0 && spanY === 0) return 1;
-    if (spanX === 0) return (h - pad * 2) / spanY;
-    if (spanY === 0) return (w - pad * 2) / spanX;
-    return Math.min((w - pad * 2) / spanX, (h - pad * 2) / spanY);
+    return fitBoundsScale(bounds, w, h, pad);
   }, [bounds]);
 
   const center = useMemo(() => {
-    if (!bounds) return { cx: 0, cy: 0 };
-    return { cx: (bounds.minX + bounds.maxX) / 2, cy: (bounds.minY + bounds.maxY) / 2 };
+    return centerFromBounds(bounds);
   }, [bounds]);
 
   const scale = baseScale * zoom;
@@ -173,50 +146,14 @@ export function BridgePlannerMap({
   }, [projected]);
 
   const projectedAll = useMemo(() => {
-    if (!graph || !hasRoute) return new Map<number, { px: number; py: number }>();
-    const m = new Map<number, { px: number; py: number }>();
-    for (const [idStr, sys] of Object.entries(graph.systems)) {
-      const id = Number(idStr);
-      if (!Number.isFinite(id)) continue;
-      const { px, py } = project2D(sys.position.x, sys.position.y, sys.position.z);
-      m.set(id, { px, py });
-    }
-    return m;
+    if (!hasRoute) return new Map<number, { px: number; py: number }>();
+    return buildProjectedSystemMap(graph);
   }, [graph, hasRoute]);
 
-  // Cohen–Sutherland line clipping test: does segment (x1,y1)-(x2,y2) intersect rect [xMin,xMax]x[yMin,yMax]?
-  function segmentIntersectsRect(x1: number, y1: number, x2: number, y2: number, xMin: number, yMin: number, xMax: number, yMax: number): boolean {
-    const LEFT = 1, RIGHT = 2, BOTTOM = 4, TOP = 8;
-    const code = (x: number, y: number) => ((x < xMin ? LEFT : 0) | (x > xMax ? RIGHT : 0) | (y < yMin ? BOTTOM : 0) | (y > yMax ? TOP : 0));
-    let c1 = code(x1, y1);
-    let c2 = code(x2, y2);
-    while (true) {
-      if ((c1 | c2) === 0) return true; // both inside
-      if ((c1 & c2) !== 0) return false; // trivially outside on same side
-      const co = c1 ? c1 : c2;
-      let x = 0, y = 0;
-      if (co & TOP) { x = x1 + (x2 - x1) * (yMax - y1) / (y2 - y1); y = yMax; }
-      else if (co & BOTTOM) { x = x1 + (x2 - x1) * (yMin - y1) / (y2 - y1); y = yMin; }
-      else if (co & RIGHT) { y = y1 + (y2 - y1) * (xMax - x1) / (x2 - x1); x = xMax; }
-      else { y = y1 + (y2 - y1) * (xMin - x1) / (x2 - x1); x = xMin; }
-      if (co === c1) { x1 = x; y1 = y; c1 = code(x1, y1); } else { x2 = x; y2 = y; c2 = code(x2, y2); }
-    }
-  }
-
-  const ansiSet = useMemo(() => {
-    const set = new Set<string>();
-    if (settings.allowAnsiblex && Array.isArray(settings.ansiblexes)) {
-      for (const b of settings.ansiblexes) {
-        if (!b || b.enabled === false) continue;
-        const from = Number(b.from);
-        const to = Number(b.to);
-        if (!Number.isFinite(from) || !Number.isFinite(to)) continue;
-        set.add(`${from}->${to}`);
-        if (b.bidirectional !== false) set.add(`${to}->${from}`);
-      }
-    }
-    return set;
-  }, [settings.allowAnsiblex, settings.ansiblexes]);
+  const ansiSet = useMemo(
+    () => buildAnsiblexSet(settings.allowAnsiblex, settings.ansiblexes, { defaultBidirectional: true }),
+    [settings.allowAnsiblex, settings.ansiblexes],
+  );
 
   const routeSegments = useMemo(() => {
     const paths = [travelPath, midTravelPath].filter((p): p is number[] => Array.isArray(p) && p.length > 1);
@@ -308,20 +245,6 @@ export function BridgePlannerMap({
     return edges;
   }, [graph, hasRoute, projectedAll, scale, center]);
 
-  const arcPath = (A: { x: number; y: number }, B: { x: number; y: number }, ampScale = 0.22, minAmp = 28, maxAmp = 140) => {
-    const mx = (A.x + B.x) / 2;
-    const my = (A.y + B.y) / 2;
-    const dx = B.x - A.x, dy = B.y - A.y;
-    const len = Math.hypot(dx, dy) || 1;
-    let nx = -dy / len, ny = dx / len;
-    if (Math.abs(ny) < 1e-6) { nx = 0; ny = -1; }
-    else if (ny > 0) { nx = -nx; ny = -ny; }
-    const amp = Math.min(maxAmp, Math.max(minAmp, len * ampScale));
-    const cxp = mx + nx * amp;
-    const cyp = my + ny * amp;
-    return `M ${A.x} ${A.y} Q ${cxp} ${cyp} ${B.x} ${B.y}`;
-  };
-
   const getPt = (id: number) => {
     const p = pointsById.get(id);
     if (!p) return null;
@@ -333,6 +256,81 @@ export function BridgePlannerMap({
     const ids = new Set<number>([stagingId, parkingId, destinationId, bridgeEndpointId, parking2Id, bridgeEndpoint2Id].filter((v): v is number => v != null));
     return Array.from(ids.values());
   }, [hasRoute, stagingId, parkingId, destinationId, bridgeEndpointId, parking2Id, bridgeEndpoint2Id]);
+
+  const focusNodeColors = useMemo(() => new Map<number, string>([
+    ...(stagingId != null ? [[stagingId, '#2563eb'] as const] : []),
+    ...(destinationId != null ? [[destinationId, '#ef4444'] as const] : []),
+    ...(parkingId != null ? [[parkingId, '#f59e0b'] as const] : []),
+    ...(bridgeEndpointId != null ? [[bridgeEndpointId, '#a855f7'] as const] : []),
+    ...(parking2Id != null ? [[parking2Id, '#fbbf24'] as const] : []),
+    ...(bridgeEndpoint2Id != null ? [[bridgeEndpoint2Id, '#c084fc'] as const] : []),
+  ]), [stagingId, destinationId, parkingId, bridgeEndpointId, parking2Id, bridgeEndpoint2Id]);
+
+  const startPos = useMemo(() => {
+    if (!graph || stagingId == null) return null;
+    const system = graph.systems[String(stagingId)];
+    if (!system) return null;
+    return system.position;
+  }, [graph, stagingId]);
+
+  const selected = useMemo(() => {
+    if (!graph || stagingId == null || startPos == null || selectedId == null) return null;
+    const system = graph.systems[String(selectedId)];
+    const projected = projectedAll.get(selectedId) || pointsById.get(selectedId);
+    if (!system || !projected) return null;
+    const route = findPathTo({
+      startId: stagingId,
+      targetId: selectedId,
+      maxJumps: 200,
+      graph,
+      settings: {
+        excludeZarzakh: settings.excludeZarzakh,
+        sameRegionOnly: settings.sameRegionOnly,
+        allowAnsiblex: settings.allowAnsiblex,
+        ansiblexes: settings.ansiblexes,
+      },
+      lyRadius: bridgeRange,
+    });
+    const jumps = route.path ? route.path.length - 1 : null;
+    const ly = Math.hypot(
+      system.position.x - startPos.x,
+      system.position.y - startPos.y,
+      system.position.z - startPos.z,
+    ) / LY_IN_METERS;
+    const name = namesById?.[String(selectedId)] ?? String(selectedId);
+    const secColors = ['#833862','#692623','#AC2822','#BD4E26','#CC722C','#F5FD93','#90E56A','#82D8A8','#73CBF3','#5698E5','#4173DB'];
+    const sVal = typeof system.security === 'number' ? system.security : 0;
+    const sIdx = sVal <= 0 ? 0 : Math.min(10, Math.ceil(sVal * 10));
+    const secColor = secColors[sIdx] || secColors[0];
+    const secLabel = sVal.toFixed(1);
+    const regionName = graph.regionsById?.[String(system.regionId)] ?? String(system.regionId);
+    const line = `${name} ${secLabel} • ${regionName} • ${jumps == null ? 'unreachable' : `${jumps}j`} • ${ly.toFixed(2)}ly`;
+    let measured = line.length * 7;
+    if (typeof document !== 'undefined') {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif';
+        measured = ctx.measureText(line).width;
+      }
+    }
+    const approxWidth = Math.max(40, Math.min(800, Math.ceil(measured + 16 + 2)));
+    const approxHeight = 32;
+    return { projected, name, regionName, jumps, ly, secColor, secLabel, approxWidth, approxHeight };
+  }, [
+    bridgeRange,
+    graph,
+    namesById,
+    pointsById,
+    projectedAll,
+    selectedId,
+    settings.allowAnsiblex,
+    settings.ansiblexes,
+    settings.excludeZarzakh,
+    settings.sameRegionOnly,
+    stagingId,
+    startPos,
+  ]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
@@ -431,7 +429,7 @@ export function BridgePlannerMap({
 
       <div className="relative w-full h-[480px]">
         <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
-        <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="relative w-full h-full">
+        <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="relative w-full h-full" onClick={() => setSelectedId(null)}>
         <defs>
           <marker id="titanArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
             <path d="M 0 0 L 10 5 L 0 10 z" fill="#9333ea" />
@@ -468,7 +466,7 @@ export function BridgePlannerMap({
               const B = getPt(seg.to);
               if (!A || !B) return null;
               if (seg.type === 'ansi') {
-                const d = arcPath(A, B, 0.25, 26, 140);
+                const d = buildArcPath(A, B, 0.25, 26, 140);
                 return <path key={`seg-ansi-${idx}`} d={d} stroke="#22c55e" strokeWidth={2.5} fill="none" opacity={0.9} />;
               }
               return <line key={`seg-gate-${idx}`} x1={A.x} y1={A.y} x2={B.x} y2={B.y} stroke="#facc15" strokeWidth={2.5} opacity={0.95} />;
@@ -482,7 +480,7 @@ export function BridgePlannerMap({
               const B = getPt(seg.to);
               if (!A || !B) return null;
               if (seg.type === 'ansi') {
-                const d = arcPath(A, B, 0.22, 22, 130);
+                const d = buildArcPath(A, B, 0.22, 22, 130);
                 return <path key={`seg-post-ansi-${idx}`} d={d} stroke="#22c55e" strokeWidth={2} fill="none" opacity={0.6} strokeDasharray="4 4" />;
               }
               return <line key={`seg-post-gate-${idx}`} x1={A.x} y1={A.y} x2={B.x} y2={B.y} stroke="#facc15" strokeWidth={2} opacity={0.6} strokeDasharray="4 4" />;
@@ -494,7 +492,7 @@ export function BridgePlannerMap({
             const A = getPt(parkingId);
             const B = getPt(bridgeEndpointId);
             if (!A || !B) return null;
-            const d = arcPath(A, B, 0.18, 30, 160);
+            const d = buildArcPath(A, B, 0.18, 30, 160);
             return (
               <path
                 d={d}
@@ -511,7 +509,7 @@ export function BridgePlannerMap({
             const A = getPt(parking2Id);
             const B = getPt(bridgeEndpoint2Id);
             if (!A || !B) return null;
-            const d = arcPath(A, B, 0.18, 30, 160);
+            const d = buildArcPath(A, B, 0.18, 30, 160);
             return (
               <path
                 d={d}
@@ -527,25 +525,64 @@ export function BridgePlannerMap({
 
           {/* Highlighted nodes */}
           <g>
-            {[
-              { id: stagingId, color: '#2563eb', label: 'Staging' },
-              { id: destinationId, color: '#ef4444', label: 'Destination' },
-              { id: parkingId, color: '#f59e0b', label: 'Parking' },
-              { id: bridgeEndpointId, color: '#a855f7', label: 'Bridge endpoint' },
-              { id: parking2Id, color: '#fbbf24', label: 'Parking 2' },
-              { id: bridgeEndpoint2Id, color: '#c084fc', label: 'Bridge endpoint 2' },
-            ].map((item) => {
-              if (item.id == null) return null;
-              const pt = getScreenPt(item.id);
-              if (!pt) return null;
+            {backgroundNodes.map((node) => {
+              const label = nameFor(node.id);
+              const fill = focusNodeColors.get(node.id);
               return (
-                <circle key={`focus-${item.label}`} cx={pt.x} cy={pt.y} r={5} fill={item.color}>
-                  <title>{item.label}</title>
-                </circle>
+                <g
+                  key={`node-${node.id}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setSelectedId((prev) => (prev === node.id ? null : node.id));
+                  }}
+                  onDoubleClick={(event) => {
+                    event.stopPropagation();
+                    onSystemDoubleClick?.(node.id);
+                  }}
+                  onMouseEnter={() => setHoveredId(node.id)}
+                  onMouseLeave={() => setHoveredId((prev) => (prev === node.id ? null : prev))}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <circle
+                    cx={node.x}
+                    cy={node.y}
+                    r={fill ? 5 : 6}
+                    fill={fill ?? 'transparent'}
+                    pointerEvents="all"
+                  />
+                  {node.id !== selectedId && hoveredId === node.id && (() => {
+                    const sys = graph.systems[String(node.id)];
+                    const sVal = typeof sys?.security === 'number' ? sys.security : 0;
+                    const idx = sVal <= 0 ? 0 : Math.min(10, Math.ceil(sVal * 10));
+                    const colors = ['#833862','#692623','#AC2822','#BD4E26','#CC722C','#F5FD93','#90E56A','#82D8A8','#73CBF3','#5698E5','#4173DB'];
+                    const color = colors[idx] || colors[0];
+                    return (
+                      <text x={node.x + 8} y={node.y - 8} className="text-xs fill-current pointer-events-none">
+                        {label} <tspan style={{ fill: color, fontWeight: 700 }}>{sVal.toFixed(1)}</tspan>
+                      </text>
+                    );
+                  })()}
+                </g>
               );
             })}
           </g>
         </g>
+
+        {selected && (
+          <foreignObject
+            onClick={(event) => event.stopPropagation()}
+            x={sx(selected.projected.px) + 10}
+            y={Math.round(sy(selected.projected.py) - 12)}
+            width={selected.approxWidth}
+            height={selected.approxHeight}
+          >
+            <div className="rounded-md border border-solid border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1 shadow text-xs whitespace-nowrap" style={{ fontSize: 12, fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif' }}>
+              <span>{selected.name} </span>
+              <span style={{ color: selected.secColor, fontWeight: 700 }}>{selected.secLabel}</span>
+              <span>{` • ${selected.regionName} • ${selected.jumps == null ? 'unreachable' : `${selected.jumps}j`} • ${selected.ly.toFixed(2)}ly`}</span>
+            </div>
+          </foreignObject>
+        )}
 
         {/* Labels */}
         <g className="text-xs fill-current text-slate-900 dark:text-slate-100">

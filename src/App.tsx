@@ -259,8 +259,12 @@ function App() {
               maxJumps={maxJumps}
               graph={graph}
               namesById={graph.namesById}
-                lyRadius={lyRadius}
-                settings={settings}
+              lyRadius={lyRadius}
+              settings={settings}
+              onSystemDoubleClick={(id) => {
+                const name = graph.namesById?.[String(id)] ?? String(id);
+                setQuery(name);
+              }}
             />
           ) : (
             <div className="bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
