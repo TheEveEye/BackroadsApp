@@ -5,6 +5,7 @@ import { AutocompleteInput } from '../components/AutocompleteInput';
 import { Icon } from '../components/Icon';
 import { AnsiblexModal as SharedAnsiblexModal } from '../components/AnsiblexModal';
 import { BlacklistModal } from '../components/BlacklistModal';
+import { CynoBeaconModal } from '../components/CynoBeaconModal';
 import { BridgePlannerMap } from '../components/BridgePlannerMap';
 import { SegmentedSlider } from '../components/SegmentedSlider';
 
@@ -53,23 +54,12 @@ const RANGE_PRESETS = [
 export function BridgePlanner() {
   const UI_KEY = 'br.bridgePlanner.ui.v1';
   const SETTINGS_STORAGE_KEY = 'br.settings.v1';
-  const base = (import.meta as any).env?.BASE_URL || '/';
-  const shipIconByLabel: Record<string, string> = {
-    'Black Ops': 'battleship.png',
-    'Carrier Jump': 'carrier.png',
-    'Carrier Conduit': 'carrier.png',
-    'Dreadnought': 'dreadnought.png',
-    'Force Auxiliary': 'force_auxiliary.png',
-    'Lancer Dreadnought': 'dreadnought.png',
-    'Rorqual': 'industrial_capital.png',
-    'Jump Freighter': 'industrial_capital.png',
-    'Supercarrier Jump': 'supercarrier.png',
-    'Titan Bridge': 'titan.png',
-    'Titan Jump': 'titan.png',
-  };
+  const ANSIBLEX_STORAGE_KEY = 'br.ansiblex.v1';
+  const CYNO_BEACONS_STORAGE_KEY = 'br.cynoBeacons.v1';
 
   const [graph, setGraph] = useState<GraphData | null>(() => (window as any).appGraph || null);
   const [showAnsiblexModal, setShowAnsiblexModal] = useState(false);
+  const [showCynoBeaconModal, setShowCynoBeaconModal] = useState(false);
   const [showBlacklistModal, setShowBlacklistModal] = useState(false);
   const [settings, setSettings] = useState<{
     excludeZarzakh: boolean;
@@ -81,6 +71,8 @@ export function BridgePlanner() {
     bridgeContinuous: boolean;
     allowAnsiblex?: boolean;
     ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }>;
+    limitToCynoBeacons?: boolean;
+    cynoBeacons?: Array<{ id: number; enabled?: boolean }>;
     blacklistEnabled?: boolean;
     blacklist?: Array<{ id: number; enabled?: boolean }>;
   }>(() => {
@@ -94,10 +86,25 @@ export function BridgePlanner() {
       bridgeContinuous: false,
       allowAnsiblex: false,
       ansiblexes: [] as Array<{ from: number; to: number; enabled?: boolean }>,
+      limitToCynoBeacons: false,
+      cynoBeacons: [] as Array<{ id: number; enabled?: boolean }>,
       blacklistEnabled: false,
       blacklist: [] as Array<{ id: number; enabled?: boolean }>,
     };
     try {
+      const fallbackAnsiblexes = (() => {
+        const rawAX = localStorage.getItem(ANSIBLEX_STORAGE_KEY);
+        if (!rawAX) return defaults.ansiblexes;
+        const arr = JSON.parse(rawAX);
+        return Array.isArray(arr) ? arr : defaults.ansiblexes;
+      })();
+      const fallbackBeacons = (() => {
+        const rawBeacons = localStorage.getItem(CYNO_BEACONS_STORAGE_KEY);
+        if (!rawBeacons) return defaults.cynoBeacons;
+        const arr = JSON.parse(rawBeacons);
+        return Array.isArray(arr) ? arr : defaults.cynoBeacons;
+      })();
+
       const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
@@ -111,20 +118,24 @@ export function BridgePlanner() {
             bridgeFromStaging: typeof parsed.bridgeFromStaging === 'boolean' ? parsed.bridgeFromStaging : defaults.bridgeFromStaging,
             bridgeCount: Number.isFinite(parsed.bridgeCount) ? Math.max(1, Math.min(2, Number(parsed.bridgeCount))) : defaults.bridgeCount,
             bridgeContinuous: typeof parsed.bridgeContinuous === 'boolean' ? parsed.bridgeContinuous : defaults.bridgeContinuous,
-            allowAnsiblex: typeof parsed.allowAnsiblex === 'boolean' ? parsed.allowAnsiblex : defaults.allowAnsiblex,
-            ansiblexes: Array.isArray(parsed.ansiblexes) ? parsed.ansiblexes : defaults.ansiblexes,
+            allowAnsiblex: typeof parsed.allowAnsiblex === 'boolean'
+              ? parsed.allowAnsiblex
+              : (fallbackAnsiblexes.length > 0 ? true : defaults.allowAnsiblex),
+            ansiblexes: Array.isArray(parsed.ansiblexes) ? parsed.ansiblexes : fallbackAnsiblexes,
+            limitToCynoBeacons: typeof parsed.limitToCynoBeacons === 'boolean' ? parsed.limitToCynoBeacons : defaults.limitToCynoBeacons,
+            cynoBeacons: Array.isArray(parsed.cynoBeacons) ? parsed.cynoBeacons : fallbackBeacons,
             blacklistEnabled: typeof parsed.blacklistEnabled === 'boolean' ? parsed.blacklistEnabled : defaults.blacklistEnabled,
             blacklist: Array.isArray(parsed.blacklist) ? parsed.blacklist : defaults.blacklist,
           };
         }
       }
-      const rawAX = localStorage.getItem('br.ansiblex.v1');
-      if (rawAX) {
-        const arr = JSON.parse(rawAX);
-        if (Array.isArray(arr) && arr.length > 0) {
-          return { ...defaults, ansiblexes: arr, allowAnsiblex: true };
-        }
-      }
+
+      return {
+        ...defaults,
+        allowAnsiblex: fallbackAnsiblexes.length > 0 ? true : defaults.allowAnsiblex,
+        ansiblexes: fallbackAnsiblexes,
+        cynoBeacons: fallbackBeacons,
+      };
     } catch {}
     return defaults;
   });
@@ -179,9 +190,14 @@ export function BridgePlanner() {
   }, [settings]);
   useEffect(() => {
     try {
-      localStorage.setItem('br.ansiblex.v1', JSON.stringify(settings.ansiblexes || []));
+      localStorage.setItem(ANSIBLEX_STORAGE_KEY, JSON.stringify(settings.ansiblexes || []));
     } catch {}
   }, [settings.ansiblexes]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(CYNO_BEACONS_STORAGE_KEY, JSON.stringify(settings.cynoBeacons || []));
+    } catch {}
+  }, [settings.cynoBeacons]);
   useEffect(() => {
     try {
       localStorage.setItem(UI_KEY, JSON.stringify(planner));
@@ -285,6 +301,8 @@ export function BridgePlanner() {
         bridgeContinuous: settings.bridgeContinuous,
         allowAnsiblex: settings.allowAnsiblex,
         ansiblexes: settings.ansiblexes,
+        limitToCynoBeacons: settings.limitToCynoBeacons,
+        cynoBeacons: settings.cynoBeacons,
         blacklistEnabled: settings.blacklistEnabled,
         blacklist: settings.blacklist,
       },
@@ -303,6 +321,8 @@ export function BridgePlanner() {
     settings.bridgeContinuous,
     settings.allowAnsiblex,
     settings.ansiblexes,
+    settings.limitToCynoBeacons,
+    settings.cynoBeacons,
     settings.blacklistEnabled,
     settings.blacklist,
   ]);
@@ -528,11 +548,7 @@ export function BridgePlanner() {
                                 }
                                 aria-pressed={isSelected}
                               >
-                                <img
-                                  src={`${base}ships/${shipIconByLabel[preset.label]}`}
-                                  alt=""
-                                  className="w-4 h-4"
-                                />
+                                <Icon ship={preset.label} size={16} />
                                 <span>{preset.label}</span>
                               </button>
                             );
@@ -547,8 +563,8 @@ export function BridgePlanner() {
                           value={String(planner.presetJdc)}
                           onChange={(value) => {
                             const jdc = Math.max(0, Math.min(5, Number(value)));
-                            const base = RANGE_PRESETS.find((p) => p.label === planner.presetShipClass)?.base ?? planner.bridgeRange;
-                            const range = Number((base * (1 + 0.2 * jdc)).toFixed(1));
+                            const baseRange = RANGE_PRESETS.find((p) => p.label === planner.presetShipClass)?.base ?? planner.bridgeRange;
+                            const range = Number((baseRange * (1 + 0.2 * jdc)).toFixed(1));
                             setPlanner((prev) => ({ ...prev, presetJdc: jdc, bridgeRange: range }));
                           }}
                           height={28}
@@ -645,6 +661,23 @@ export function BridgePlanner() {
                   type="button"
                   className="px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center justify-center gap-1 leading-none"
                   onClick={() => setShowAnsiblexModal(true)}
+                >
+                  <Icon name="gear" size={16} />
+                  <span className="inline-block align-middle">Configure…</span>
+                </button>
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="accent-blue-600"
+                    checked={!!settings.limitToCynoBeacons}
+                    onChange={(e) => setSettings({ ...settings, limitToCynoBeacons: e.target.checked })}
+                  />
+                  <span>Only bridge to cyno beacons</span>
+                </label>
+                <button
+                  type="button"
+                  className="px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center justify-center gap-1 leading-none"
+                  onClick={() => setShowCynoBeaconModal(true)}
                 >
                   <Icon name="gear" size={16} />
                   <span className="inline-block align-middle">Configure…</span>
@@ -888,7 +921,7 @@ export function BridgePlanner() {
           postBridgePath={selectedRoute?.postBridgePath ?? null}
           fitNodeIds={fitNodeIds}
           bridgeRange={planner.bridgeRange}
-          settings={{ allowAnsiblex: settings.allowAnsiblex, ansiblexes: settings.ansiblexes }}
+          settings={{ allowAnsiblex: settings.allowAnsiblex, ansiblexes: settings.ansiblexes, cynoBeacons: settings.cynoBeacons }}
           statusMessage={routeResult.message}
           summary={summary}
           baselineJumps={routeResult.baselineJumps}
@@ -900,6 +933,13 @@ export function BridgePlanner() {
           onClose={() => setShowAnsiblexModal(false)}
           value={settings.ansiblexes || []}
           onChange={(list) => setSettings(s => ({ ...s, ansiblexes: list }))}
+        />
+      )}
+      {showCynoBeaconModal && (
+        <CynoBeaconModal
+          onClose={() => setShowCynoBeaconModal(false)}
+          value={settings.cynoBeacons || []}
+          onChange={(list) => setSettings(s => ({ ...s, cynoBeacons: list }))}
         />
       )}
       {showBlacklistModal && (

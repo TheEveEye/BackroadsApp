@@ -29,10 +29,6 @@ export function Results({ results, namesById, lyRadius, graph }: { results: Obse
 
   if (!results.length) return <p>No observatories found within the selected jump range.</p>;
 
-  const base = (import.meta as any).env?.BASE_URL || '/';
-  const titanSvg = `${base}ships/titan.svg`;
-  const titanPng = `${base}ships/titan.png`;
-
   // Precompute lists for copying
   const systemNames = useMemo(() => results.map(r => namesById?.[String(r.systemId)] ?? String(r.systemId)), [results, namesById]);
   const eveLinksMarkup = useMemo(() => {
@@ -163,21 +159,13 @@ export function Results({ results, namesById, lyRadius, graph }: { results: Obse
                     if (i < path.length - 1) {
                       if (i === 0 && usedTitan) {
                         chips.push(
-                          <img
+                          <Icon
                             key={`sep-${i}`}
-                            src={titanSvg}
-                            alt="Titan bridge"
+                            ship="Titan Bridge"
+                            size={18}
+                            ariaLabel="Titan bridge"
                             title="Titan bridge"
-                            style={{ display: 'inline-block', verticalAlign: 'middle', width: 18, height: 18, margin: '0 6px' }}
-                            onError={(e) => {
-                              const img = e.target as HTMLImageElement;
-                              if (!img.dataset.fallback) {
-                                img.dataset.fallback = '1';
-                                img.src = titanPng;
-                              } else {
-                                img.style.display = 'none';
-                              }
-                            }}
+                            className="mx-1.5"
                           />
                         );
                       } else {

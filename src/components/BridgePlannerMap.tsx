@@ -38,7 +38,11 @@ type BridgePlannerMapProps = {
   postBridgePath: number[] | null;
   fitNodeIds?: number[] | null;
   bridgeRange: number;
-  settings: { allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean; bidirectional?: boolean }> };
+  settings: {
+    allowAnsiblex?: boolean;
+    ansiblexes?: Array<{ from: number; to: number; enabled?: boolean; bidirectional?: boolean }>;
+    cynoBeacons?: Array<{ id: number; enabled?: boolean }>;
+  };
   statusMessage?: string | null;
   summary?: string | null;
   baselineJumps?: number | null;
@@ -66,6 +70,7 @@ export function BridgePlannerMap({
   summary,
   baselineJumps,
 }: BridgePlannerMapProps) {
+  const base = (import.meta as any).env?.BASE_URL || '/';
   const [zoom, setZoom] = useState(1);
   const [isDarkMode, setIsDarkMode] = useState(getIsDarkMode);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -240,6 +245,29 @@ export function BridgePlannerMap({
     return segs;
   }, [postBridgePath, ansiSet]);
 
+  const nameFor = (id: number) => namesById?.[String(id)] ?? String(id);
+  const getScreenPt = (id: number) => {
+    const p = projectedAll.get(id);
+    if (!p) return null;
+    return { x: sx(p.px), y: sy(p.py) };
+  };
+
+  const cynoBeaconMarkers = useMemo(() => {
+    if (!graph || !settings.cynoBeacons?.length) return [] as Array<{ id: number; x: number; y: number; enabled: boolean }>;
+    const seen = new Set<number>();
+    const markers: Array<{ id: number; x: number; y: number; enabled: boolean }> = [];
+    for (const entry of settings.cynoBeacons) {
+      if (!entry) continue;
+      const id = Number(entry.id);
+      if (!Number.isFinite(id) || seen.has(id)) continue;
+      seen.add(id);
+      const pt = getScreenPt(id);
+      if (!pt) continue;
+      markers.push({ id, x: pt.x, y: pt.y, enabled: entry.enabled !== false });
+    }
+    return markers;
+  }, [graph, settings.cynoBeacons, projectedAll, scale, center]);
+
   const backgroundNodes = useMemo(() => {
     if (!graph || !hasRoute) return [] as BackgroundNode[];
     const list: BackgroundNode[] = [];
@@ -305,13 +333,6 @@ export function BridgePlannerMap({
     const ids = new Set<number>([stagingId, parkingId, destinationId, bridgeEndpointId, parking2Id, bridgeEndpoint2Id].filter((v): v is number => v != null));
     return Array.from(ids.values());
   }, [hasRoute, stagingId, parkingId, destinationId, bridgeEndpointId, parking2Id, bridgeEndpoint2Id]);
-
-  const nameFor = (id: number) => namesById?.[String(id)] ?? String(id);
-  const getScreenPt = (id: number) => {
-    const p = projectedAll.get(id);
-    if (!p) return null;
-    return { x: sx(p.px), y: sy(p.py) };
-  };
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
@@ -421,6 +442,25 @@ export function BridgePlannerMap({
         </defs>
 
         <g clipPath="url(#mapClip)">
+          {/* Configured cyno beacons */}
+          <g>
+            {cynoBeaconMarkers.map((marker) => (
+              <image
+                key={`cyno-beacon-${marker.id}`}
+                href={`${base}eve/cynosuralBeacon.png`}
+                x={marker.x - 8}
+                y={marker.y - 8}
+                width={16}
+                height={16}
+                opacity={marker.enabled ? 0.95 : 0.35}
+                style={{ filter: isDarkMode ? undefined : 'invert(1)' }}
+                preserveAspectRatio="xMidYMid meet"
+              >
+                <title>{`${nameFor(marker.id)} cyno beacon${marker.enabled ? '' : ' (offline)'}`}</title>
+              </image>
+            ))}
+          </g>
+
           {/* Travel path segments (pre-bridge) */}
           <g strokeLinecap="round">
             {routeSegments.map((seg, idx) => {
@@ -535,6 +575,7 @@ export function BridgePlannerMap({
         )}
         <span className="inline-flex items-center gap-1"><span className="inline-block w-4 h-px" style={{ background: '#facc15' }}></span>Gates</span>
         <span className="inline-flex items-center gap-1"><span className="inline-block w-4 h-px" style={{ background: '#22c55e' }}></span>Ansiblex</span>
+        <span className="inline-flex items-center gap-1"><img src={`${base}eve/cynosuralBeacon.png`} alt="" className="w-4 h-4 opacity-90" style={{ filter: isDarkMode ? undefined : 'invert(1)' }} />Cyno beacon</span>
         <span className="inline-flex items-center gap-1"><span className="inline-block w-4 h-px border-t-2 border-dashed" style={{ borderColor: '#facc15' }}></span>Post-bridge route</span>
         <span className="inline-flex items-center gap-1"><span className="inline-block w-4 h-px border-t-2 border-dashed" style={{ borderColor: '#9333ea' }}></span>Titan bridge</span>
       </div>

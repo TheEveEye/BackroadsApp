@@ -7,7 +7,8 @@
   - `src/workers/` holds web workers (route computation).
   - `src/lib/` holds data loaders and graph utilities.
 - `public/` contains static assets.
-  - `public/icons/` for UI icons, `public/ships/` for ship icons.
+  - `public/icons/` for UI icons.
+  - `public/eve/` for EVE-related raster assets such as ship icons and beacon icons.
   - `public/data/` for JSON data files consumed by the app.
 - `docs/` mirrors some data for documentation.
 - Build outputs land in `dist/` or `build/` (depending on script).
@@ -37,5 +38,7 @@
 
 ## Notes & Configuration
 - Icons resolve via `src/components/Icon.tsx` from `public/icons/`.
-- Ship images resolve from `public/ships/`.
+- Ship images and cyno beacon map markers resolve from `public/eve/`.
+- Bridge planner settings persist in `localStorage` under the shared `br.settings.v1` key, with fallback list keys for Ansiblex and cyno beacons.
+- Cyno beacon imports support the tabular alliance-format clipboard input as well as JSON list import.
 - Web workers live under `src/workers/` and are loaded via Vite `new URL(...)` syntax.

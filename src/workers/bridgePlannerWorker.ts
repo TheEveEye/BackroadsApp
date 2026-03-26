@@ -11,6 +11,7 @@ type GraphData = {
 };
 
 type AnsiblexBridge = { from: number; to: number; enabled?: boolean; bidirectional?: boolean };
+type CynoBeacon = { id: number; enabled?: boolean };
 type TravelSettings = {
   excludeZarzakh?: boolean;
   sameRegionOnly?: boolean;
@@ -20,6 +21,8 @@ type TravelSettings = {
   bridgeContinuous?: boolean;
   allowAnsiblex?: boolean;
   ansiblexes?: AnsiblexBridge[];
+  limitToCynoBeacons?: boolean;
+  cynoBeacons?: CynoBeacon[];
   blacklistEnabled?: boolean;
   blacklist?: Array<{ id: number; enabled?: boolean }>;
 };
@@ -131,6 +134,18 @@ function buildBlacklistSet(settings: TravelSettings) {
   const set = new Set<number>();
   if (!settings.blacklistEnabled || !settings.blacklist?.length) return set;
   for (const entry of settings.blacklist) {
+    if (!entry || entry.enabled === false) continue;
+    const id = Number(entry.id);
+    if (!Number.isFinite(id)) continue;
+    set.add(id);
+  }
+  return set;
+}
+
+function buildCynoBeaconSet(settings: TravelSettings) {
+  const set = new Set<number>();
+  if (!settings.cynoBeacons?.length) return set;
+  for (const entry of settings.cynoBeacons) {
     if (!entry || entry.enabled === false) continue;
     const id = Number(entry.id);
     if (!Number.isFinite(id)) continue;
@@ -465,6 +480,8 @@ function computeRoutes(
   if (!destinationNode) return { routes: [], message: 'Destination system not found.', baselineJumps: null };
   if (!stagingNode) return { routes: [], message: 'Staging system not found.', baselineJumps: null };
   const blacklist = buildBlacklistSet(payload.settings);
+  const activeCynoBeacons = buildCynoBeaconSet(payload.settings);
+  const limitToCynoBeacons = !!payload.settings.limitToCynoBeacons;
   if (payload.settings.blacklistEnabled && blacklist.has(payload.destinationId)) {
     return { routes: [], message: 'Destination system is blacklisted.', baselineJumps: null };
   }
@@ -476,6 +493,9 @@ function computeRoutes(
   }
   if (payload.settings.bridgeFromStaging && isForbiddenSystem(stagingNode)) {
     return { routes: [], message: 'Starting system is in highsec or Pochven.', baselineJumps: null };
+  }
+  if (limitToCynoBeacons && activeCynoBeacons.size === 0) {
+    return { routes: [], message: 'No active cyno beacons configured.', baselineJumps: null };
   }
 
   const maxMeters = payload.bridgeRange * LY;
@@ -489,7 +509,7 @@ function computeRoutes(
   const endpointList: Array<{ id: number; x: number; y: number; z: number; jumps: number }> = [];
   if (payload.settings.bridgeIntoDestination) {
     const destJumps = destinationDist.get(payload.destinationId);
-    if (destJumps != null) {
+    if (destJumps != null && (!limitToCynoBeacons || activeCynoBeacons.has(payload.destinationId))) {
       endpointList.push({
         id: payload.destinationId,
         x: destinationNode.position.x,
@@ -501,6 +521,7 @@ function computeRoutes(
   } else {
     for (const sys of systemsList) {
       if (payload.settings.blacklistEnabled && blacklist.has(sys.id)) continue;
+      if (limitToCynoBeacons && !activeCynoBeacons.has(sys.id)) continue;
       const jumps = destinationDist.get(sys.id);
       if (jumps == null) continue;
       endpointList.push({ id: sys.id, x: sys.x, y: sys.y, z: sys.z, jumps });
@@ -508,6 +529,12 @@ function computeRoutes(
   }
 
   if (endpointList.length === 0) {
+    if (limitToCynoBeacons) {
+      if (payload.settings.bridgeIntoDestination) {
+        return { routes: [], message: 'Destination does not have an active cyno beacon.', baselineJumps };
+      }
+      return { routes: [], message: 'No bridge destinations with active cyno beacons found.', baselineJumps };
+    }
     return { routes: [], message: 'No destination routes found.', baselineJumps };
   }
 
@@ -566,6 +593,9 @@ function computeRoutes(
     }
 
     if (best.length === 0) {
+      if (limitToCynoBeacons) {
+        return { routes: [], message: 'No reachable parking systems found within bridge range of an active cyno beacon.', baselineJumps };
+      }
       return { routes: [], message: 'No reachable parking systems found.', baselineJumps };
     }
 
@@ -605,6 +635,9 @@ function computeRoutes(
   }
 
   if (bridgeSources.length === 0) {
+    if (limitToCynoBeacons) {
+      return { routes: [], message: 'No reachable second-bridge parking systems found near an active cyno beacon.', baselineJumps };
+    }
     return { routes: [], message: 'No reachable second-bridge parking systems found.', baselineJumps };
   }
 
@@ -615,10 +648,14 @@ function computeRoutes(
     if (cost == null) continue;
     if (payload.settings.bridgeContinuous && sourceParking.get(sys.id) !== sys.id) continue;
     if (payload.settings.blacklistEnabled && blacklist.has(sys.id)) continue;
+    if (limitToCynoBeacons && !activeCynoBeacons.has(sys.id)) continue;
     endpoint1List.push({ id: sys.id, x: sys.x, y: sys.y, z: sys.z, cost });
   }
 
   if (endpoint1List.length === 0) {
+    if (limitToCynoBeacons) {
+      return { routes: [], message: 'No reachable bridge endpoints with active cyno beacons found.', baselineJumps };
+    }
     return { routes: [], message: 'No reachable bridge endpoints found.', baselineJumps };
   }
 
@@ -692,6 +729,9 @@ function computeRoutes(
   }
 
   if (bestTwo.length === 0) {
+    if (limitToCynoBeacons) {
+      return { routes: [], message: 'No reachable two-bridge routes found using active cyno beacons.', baselineJumps };
+    }
     return { routes: [], message: 'No reachable two-bridge routes found.', baselineJumps };
   }
 

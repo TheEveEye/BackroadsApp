@@ -1,16 +1,16 @@
-## Jove Observatory Finder (EVE Online)
+## Backroads (EVE Online)
 
-Find nearby Jove Observatories from any starting system within a chosen number of gate jumps. The app provides an autocomplete search for systems, a jump limit slider, a lightyear radius overlay on a simple map, and an option to exclude Zarzakh.
+Backroads is a client-side navigation toolset for EVE Online. It includes observatory finding, route scanning, and bridge planning with Ansiblex and cyno-beacon aware workflows.
 
 Live app: https://backroads.kiwiapps.dev
 
 ### Features
 
-- Search for a start system (autocomplete by name)
-- Set maximum gate jumps to explore
-- Optional: exclude Zarzakh
-- Map view of the explored frontier with a configurable LY radius overlay
-- Results list with shortest paths to observatories
+- Jove Observatory finder with autocomplete system search and jump-distance filtering
+- Scanner route planning with optional Ansiblex support
+- Bridge planner with ship-range presets, one- and two-bridge routing, blacklist support, and optional Ansiblex traversal
+- Cyno beacon management in the bridge planner, including manual add/remove plus clipboard import/export
+- Map views for explored frontiers and bridge routes, including route overlays and bridge/beacon indicators
 
 ### Tech stack
 
@@ -66,6 +66,11 @@ All data is loaded client-side from `public/data`:
   - Shape: `{ byId: Record<string,string> }`
 
 If `systems_index.json` is missing, the app will show an error on load.
+
+## Assets
+
+- `public/icons` contains UI icon assets used by `src/components/Icon.tsx`
+- `public/eve` contains EVE-specific PNG assets, including ship icons and `cynosuralBeacon.png`
 
 ## License
 
