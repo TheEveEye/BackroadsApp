@@ -367,8 +367,25 @@ export function BridgePlanner() {
     if (id == null) return '—';
     return graph?.namesById?.[String(id)] ?? String(id);
   };
-  const stagingName = nameFor(stagingId);
-  const destinationName = nameFor(destinationId);
+  const securityInfoFor = (id: number | null) => {
+    const SEC_COLORS = ['#833862','#692623','#AC2822','#BD4E26','#CC722C','#F5FD93','#90E56A','#82D8A8','#73CBF3','#5698E5','#4173DB'];
+    const security = id == null ? undefined : graph?.systems[String(id)]?.security;
+    const value = typeof security === 'number' ? security : 0;
+    const index = value <= 0 ? 0 : Math.min(10, Math.ceil(value * 10));
+    return {
+      color: SEC_COLORS[index] || SEC_COLORS[0],
+      label: value.toFixed(1),
+    };
+  };
+  const renderSystemName = (id: number | null) => {
+    const { color, label } = securityInfoFor(id);
+    return (
+      <>
+        <span>{nameFor(id)}</span>
+        <span style={{ color, fontWeight: 700 }}>{label}</span>
+      </>
+    );
+  };
 
   const routesForCopy = useMemo(() => routeResult.routes.slice(0, 10), [routeResult.routes]);
   const eveLinksMarkup = useMemo(() => {
@@ -796,10 +813,6 @@ export function BridgePlanner() {
                     );
                   }
 
-                  const parkingName = nameFor(route.parkingId);
-                  const endpointName = nameFor(route.bridgeEndpointId);
-                  const parking2Name = route.parking2Id != null ? nameFor(route.parking2Id) : null;
-                  const endpoint2Name = route.bridgeEndpoint2Id != null ? nameFor(route.bridgeEndpoint2Id) : null;
                   const isSelected = selectedRoute?.key === route.key;
                   return (
                     <div
@@ -826,9 +839,22 @@ export function BridgePlanner() {
                       }}
                     >
                       <div className="w-full text-left pointer-events-none">
-                        <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
-                          {stagingName} → {parkingName} → {endpointName}
-                          {parking2Name && endpoint2Name ? ` → ${parking2Name} → ${endpoint2Name}` : ''} → {destinationName}
+                        <div className="text-sm font-medium text-slate-900 dark:text-slate-100 flex flex-wrap items-center gap-x-1 gap-y-0.5">
+                          {renderSystemName(stagingId)}
+                          <span aria-hidden="true">→</span>
+                          {renderSystemName(route.parkingId)}
+                          <span aria-hidden="true">→</span>
+                          {renderSystemName(route.bridgeEndpointId)}
+                          {route.parking2Id != null && route.bridgeEndpoint2Id != null && (
+                            <>
+                              <span aria-hidden="true">→</span>
+                              {renderSystemName(route.parking2Id)}
+                              <span aria-hidden="true">→</span>
+                              {renderSystemName(route.bridgeEndpoint2Id)}
+                            </>
+                          )}
+                          <span aria-hidden="true">→</span>
+                          {renderSystemName(destinationId)}
                         </div>
                         <div className="mt-1 flex items-center justify-between text-xs text-slate-600 dark:text-slate-300">
                           <span>

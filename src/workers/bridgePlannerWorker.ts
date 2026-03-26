@@ -488,9 +488,6 @@ function computeRoutes(
   if (payload.settings.blacklistEnabled && blacklist.has(payload.stagingId)) {
     return { routes: [], message: 'Staging system is blacklisted.', baselineJumps: null };
   }
-  if (isForbiddenSystem(destinationNode)) {
-    return { routes: [], message: 'Destination is in highsec or Pochven.', baselineJumps: null };
-  }
   if (payload.settings.bridgeFromStaging && isForbiddenSystem(stagingNode)) {
     return { routes: [], message: 'Starting system is in highsec or Pochven.', baselineJumps: null };
   }
@@ -508,6 +505,9 @@ function computeRoutes(
 
   const endpointList: Array<{ id: number; x: number; y: number; z: number; jumps: number }> = [];
   if (payload.settings.bridgeIntoDestination) {
+    if (isForbiddenSystem(destinationNode)) {
+      return { routes: [], message: 'Cannot bridge directly into a destination in highsec or Pochven.', baselineJumps };
+    }
     const destJumps = destinationDist.get(payload.destinationId);
     if (destJumps != null && (!limitToCynoBeacons || activeCynoBeacons.has(payload.destinationId))) {
       endpointList.push({
@@ -521,6 +521,7 @@ function computeRoutes(
   } else {
     for (const sys of systemsList) {
       if (payload.settings.blacklistEnabled && blacklist.has(sys.id)) continue;
+      if (isForbiddenSystem(sys)) continue;
       if (limitToCynoBeacons && !activeCynoBeacons.has(sys.id)) continue;
       const jumps = destinationDist.get(sys.id);
       if (jumps == null) continue;
@@ -648,6 +649,7 @@ function computeRoutes(
     if (cost == null) continue;
     if (payload.settings.bridgeContinuous && sourceParking.get(sys.id) !== sys.id) continue;
     if (payload.settings.blacklistEnabled && blacklist.has(sys.id)) continue;
+    if (isForbiddenSystem(sys)) continue;
     if (limitToCynoBeacons && !activeCynoBeacons.has(sys.id)) continue;
     endpoint1List.push({ id: sys.id, x: sys.x, y: sys.y, z: sys.z, cost });
   }
