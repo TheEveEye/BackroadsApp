@@ -1,8 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { AUTH_RETURN_KEY, AUTH_STATE_KEY, AUTH_STORAGE_KEY, AUTH_VERIFIER_KEY, getAuthConfig, isWhitelisted, type EveSession, type ToolKey } from '../lib/eveAuth';
+import { AUTH_RETURN_KEY, AUTH_STATE_KEY, AUTH_STORAGE_KEY, AUTH_VERIFIER_KEY, getAuthConfig, isAuthBypassed, isWhitelisted, type EveSession, type ToolKey } from '../lib/eveAuth';
 
 const AuthContext = createContext<{
+  bypassEnabled: boolean;
   session: EveSession | null;
   status: 'idle' | 'loading' | 'authenticated' | 'error';
   error: string | null;
@@ -76,16 +77,29 @@ const createChallenge = async (verifier: string) => {
   return base64UrlEncode(digest);
 };
 
+const createBypassSession = (): EveSession => ({
+  characterId: 0,
+  characterName: 'Auth Bypass',
+});
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
+  const bypassEnabled = useMemo(() => isAuthBypassed(), []);
+  const bypassSession = useMemo(() => (bypassEnabled ? createBypassSession() : null), [bypassEnabled]);
   const hasProcessedCallback = useRef(false);
-  const [session, setSession] = useState<EveSession | null>(() => loadStoredSession());
-  const [status, setStatus] = useState<'idle' | 'loading' | 'authenticated' | 'error'>(() => (session ? 'authenticated' : 'idle'));
+  const [session, setSession] = useState<EveSession | null>(() => (bypassEnabled ? createBypassSession() : loadStoredSession()));
+  const [status, setStatus] = useState<'idle' | 'loading' | 'authenticated' | 'error'>(() => (bypassEnabled || session ? 'authenticated' : 'idle'));
   const [error, setError] = useState<string | null>(null);
   const config = useMemo(() => getAuthConfig(), []);
 
   const logout = useCallback(() => {
+    if (bypassEnabled) {
+      setSession(bypassSession);
+      setStatus('authenticated');
+      setError(null);
+      return;
+    }
     setSession(null);
     setStatus('idle');
     setError(null);
@@ -95,9 +109,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       sessionStorage.removeItem(AUTH_RETURN_KEY);
     } catch {}
-  }, []);
+  }, [bypassEnabled, bypassSession]);
 
   const login = useCallback(async () => {
+    if (bypassEnabled) {
+      setSession(bypassSession);
+      setStatus('authenticated');
+      setError(null);
+      return;
+    }
     if (!config.clientId) {
       setError('Missing EVE client id.');
       setStatus('error');
@@ -124,11 +144,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setError(err?.message || 'Failed to start login.');
       setStatus('error');
     }
-  }, [config, location.hash, location.pathname, location.search]);
+  }, [bypassEnabled, bypassSession, config, location.hash, location.pathname, location.search]);
 
-  const hasAccess = useCallback((tool: ToolKey) => isWhitelisted(session, tool), [session]);
+  const hasAccess = useCallback((tool: ToolKey) => (bypassEnabled ? true : isWhitelisted(session, tool)), [bypassEnabled, session]);
 
   useEffect(() => {
+    if (!bypassEnabled || !bypassSession) return;
+    setSession(bypassSession);
+    setStatus('authenticated');
+    setError(null);
+  }, [bypassEnabled, bypassSession]);
+
+  useEffect(() => {
+    if (bypassEnabled) return;
     const params = new URLSearchParams(location.search);
     const code = params.get('code');
     const state = params.get('state');
@@ -239,18 +267,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     finishLogin();
-  }, [config, location.pathname, location.search, navigate]);
+  }, [bypassEnabled, config, location.pathname, location.search, navigate]);
 
   useEffect(() => {
+    if (bypassEnabled) return;
     if (!session?.expiresAt) return;
     if (Date.now() > session.expiresAt) {
       logout();
     }
-  }, [session, logout]);
+  }, [bypassEnabled, session, logout]);
 
   return (
     <AuthContext.Provider
       value={{
+        bypassEnabled,
         session,
         status,
         error,

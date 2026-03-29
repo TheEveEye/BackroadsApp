@@ -4,7 +4,7 @@ import { TOOL_LABELS, type ToolKey } from '../lib/eveAuth';
 import { useAuth } from './AuthProvider';
 
 export function RequireAccess({ tool, children }: { tool: ToolKey; children: ReactNode }) {
-  const { session, status, login, logout, hasAccess } = useAuth();
+  const { bypassEnabled, session, status, login, logout, hasAccess } = useAuth();
   const location = useLocation();
   const label = TOOL_LABELS[tool];
   const base = (import.meta as any).env?.BASE_URL || '/';
@@ -44,6 +44,10 @@ export function RequireAccess({ tool, children }: { tool: ToolKey; children: Rea
     loadNames();
     return () => { cancelled = true; };
   }, [session?.corporationId, session?.allianceId, session]);
+
+  if (bypassEnabled) {
+    return <>{children}</>;
+  }
 
   if (isPublicScanner) {
     return <>{children}</>;

@@ -1,7 +1,7 @@
 import { useAuth } from './AuthProvider';
 
 export function AuthStatus() {
-  const { session, status, login, logout } = useAuth();
+  const { bypassEnabled, session, status, login, logout } = useAuth();
   const base = (import.meta as any).env?.BASE_URL || '/';
   const portraitUrl = session ? `https://images.evetech.net/characters/${session.characterId}/portrait?size=64` : '';
   const orgLogoUrl = session?.allianceId
@@ -14,6 +14,14 @@ export function AuthStatus() {
     return (
       <div className="px-2 py-1 text-xs text-slate-600 dark:text-slate-300">
         Signing in...
+      </div>
+    );
+  }
+
+  if (bypassEnabled) {
+    return (
+      <div className="px-3 py-1.5 rounded-md border border-amber-200 bg-amber-50 text-xs font-medium text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-100">
+        Auth bypass
       </div>
     );
   }

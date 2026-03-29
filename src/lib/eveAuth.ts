@@ -53,10 +53,20 @@ const parseIdList = (value?: string): number[] => {
     .filter((entry) => Number.isFinite(entry) && entry > 0);
 };
 
+const parseEnvBoolean = (value: unknown, fallback: boolean): boolean => {
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (!raw) return fallback;
+  return raw === 'true' || raw === '1' || raw === 'yes' || raw === 'on';
+};
+
 const isWhitelistEnabled = (): boolean => {
   const env = (import.meta as any).env || {};
-  const raw = String(env.VITE_WHITELIST_ENABLED ?? 'true').trim().toLowerCase();
-  return raw === 'true' || raw === '1' || raw === 'yes' || raw === 'on';
+  return parseEnvBoolean(env.VITE_WHITELIST_ENABLED, true);
+};
+
+export const isAuthBypassed = (): boolean => {
+  const env = (import.meta as any).env || {};
+  return parseEnvBoolean(env.VITE_AUTH_BYPASS, false);
 };
 
 export const getToolWhitelist = (tool: ToolKey): ToolWhitelist => {
