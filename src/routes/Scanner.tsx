@@ -685,7 +685,7 @@ export function Scanner() {
       </section>
 
       <div className="flex items-center">
-        <h1 className="text-2xl font-semibold">Scanner</h1>
+        <h1 className="text-2xl font-semibold">Drifter Scanner</h1>
       </div>
 
       {wormholes.length === 0 && (
@@ -718,6 +718,7 @@ export function Scanner() {
                   options={(['Conflux','Barbican','Redoubt','Sentinel','Vidette'] as WormholeType[]).map(t => ({ label: t[0], value: t }))}
                   value={wh.type ?? undefined}
                   onChange={(v) => setWormholes(list => list.map((x,i)=> i===idx ? { ...x, type: v as WormholeType } : x))}
+                  disableFirstSelectionSlide
                   getColorForValue={(v) => {
                     // Reuse the same hues as route type pills (Scanner.typePillClass)
                     if (v === 'Conflux') return 'bg-blue-600';
@@ -765,29 +766,8 @@ export function Scanner() {
                   }}
                 />
               </div>
-              <div className="flex-none self-start">
-                <div className="font-semibold mb-2">Bookmarks</div>
-                <div className="flex items-center gap-4">
-                  <label className="inline-flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={wh.bookmarkInside}
-                      onChange={(e)=> setWormholes(list => list.map((x,i)=> i===idx ? { ...x, bookmarkInside: e.target.checked } : x))}
-                    />
-                    <span>In</span>
-                  </label>
-                  <label className="inline-flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={wh.bookmarkOutside}
-                      onChange={(e)=> setWormholes(list => list.map((x,i)=> i===idx ? { ...x, bookmarkOutside: e.target.checked } : x))}
-                    />
-                    <span>Out</span>
-                  </label>
-                </div>
-              </div>
             </div>
-            <div className="mt-3 flex items-center gap-3">
+            <div className="mt-3 flex flex-wrap items-center gap-3">
               <button className="px-3 py-1.5 rounded bg-red-500 text-white hover:bg-red-600" onClick={() => setWormholes(list => list.filter((_,i)=> i!==idx))}>Remove</button>
               {(() => { const jc = jumpCounts.get(wh.id); return (
                 <span className="flex-1 min-w-0 text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap truncate">
@@ -796,6 +776,24 @@ export function Scanner() {
                   {toId != null && jc?.to != null ? `${jc.to} jumps from destination` : '—'}
                 </span>
               ); })()}
+              <div className="ml-auto flex items-center gap-4 text-sm text-gray-700 dark:text-gray-300">
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={wh.bookmarkInside}
+                    onChange={(e)=> setWormholes(list => list.map((x,i)=> i===idx ? { ...x, bookmarkInside: e.target.checked } : x))}
+                  />
+                  <span>Bookmark In</span>
+                </label>
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={wh.bookmarkOutside}
+                    onChange={(e)=> setWormholes(list => list.map((x,i)=> i===idx ? { ...x, bookmarkOutside: e.target.checked } : x))}
+                  />
+                  <span>Bookmark Out</span>
+                </label>
+              </div>
             </div>
           </li>
         ))}

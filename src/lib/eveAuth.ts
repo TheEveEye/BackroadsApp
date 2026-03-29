@@ -33,7 +33,7 @@ export const AUTH_RETURN_KEY = 'br.eve.return_to.v1';
 
 export const TOOL_LABELS: Record<ToolKey, string> = {
   observatories: 'Observatory Finder',
-  scanner: 'Wormhole Scanner',
+  scanner: 'Drifter Scanner',
   bridgePlanner: 'Bridge Planner',
 };
 

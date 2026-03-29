@@ -18,6 +18,7 @@ export type SegmentedSliderProps = {
   // If a raw CSS color value is returned (e.g., '#fff' or 'rgb(...)'), it will be applied via inline style.
   getColorForValue?: (value: string) => string | undefined;
   disableInitialAnimation?: boolean;
+  disableFirstSelectionSlide?: boolean;
 };
 
 // A horizontal, single-select segmented slider with click and drag.
@@ -38,6 +39,7 @@ export function SegmentedSlider({
   disabled = false,
   getColorForValue,
   disableInitialAnimation = true,
+  disableFirstSelectionSlide = false,
 }: SegmentedSliderProps) {
   const isControlled = value != null;
   const [internal, setInternal] = useState<string | undefined>(() => value ?? defaultValue);
@@ -58,6 +60,8 @@ export function SegmentedSlider({
   const selectedIndexRaw = options.findIndex(o => o.value === selectedValue);
   const hasSelection = selectedIndexRaw >= 0;
   const selectedIndex = Math.max(0, selectedIndexRaw);
+  const previousHasSelectionRef = useRef(hasSelection);
+  const suppressFirstSelectionSlide = disableFirstSelectionSlide && hasSelection && !previousHasSelectionRef.current;
 
   // Drag state
   const [dragging, setDragging] = useState(false);
@@ -89,6 +93,10 @@ export function SegmentedSlider({
       if (raf2) window.cancelAnimationFrame(raf2);
     };
   }, [disableInitialAnimation, measuredSegW, suppressTransition]);
+
+  useLayoutEffect(() => {
+    previousHasSelectionRef.current = hasSelection;
+  }, [hasSelection]);
 
   // Measure per-option width based on content; all segments share max width
   useLayoutEffect(() => {
@@ -241,7 +249,7 @@ export function SegmentedSlider({
           opacity: dragging ? 1 : (hasSelection ? 1 : 0),
           transition: dragging
             ? 'background-color 200ms ease-in-out'
-            : (suppressTransition ? 'none' : 'transform 200ms ease-in-out, background-color 200ms ease-in-out'),
+            : ((suppressTransition || suppressFirstSelectionSlide) ? 'none' : 'transform 200ms ease-in-out, background-color 200ms ease-in-out'),
         }}
       />
 

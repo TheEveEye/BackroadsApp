@@ -7,7 +7,7 @@ Live app: https://backroads.kiwiapps.dev
 ### Features
 
 - Jove Observatory finder with autocomplete system search and jump-distance filtering
-- Scanner route planning with optional Ansiblex support
+- Drifter Scanner route planning with optional Ansiblex support
 - Bridge planner with ship-range presets, one- and two-bridge routing, blacklist support, and optional Ansiblex traversal
 - Cyno beacon management in the bridge planner, including manual add/remove plus clipboard import/export
 - Map views for explored frontiers and bridge routes, including route overlays and bridge/beacon indicators
