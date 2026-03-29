@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { GraphData } from '../lib/data';
 import { findPathTo } from '../lib/graph';
+import { Icon } from './Icon';
 import { LY_IN_METERS, boundsFromIds, buildAnsiblexSet, buildArcPath, buildProjectedSystemMap, centerFromBounds, fitBoundsScale, project2D, segmentIntersectsRect } from './map/shared';
 
 function getIsDarkMode() {
@@ -74,10 +75,23 @@ export function BridgePlannerMap({
 }: BridgePlannerMapProps) {
   const base = (import.meta as any).env?.BASE_URL || '/';
   const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [hoveredId, setHoveredId] = useState<number | null>(null);
+  const [isPanning, setIsPanning] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(getIsDarkMode);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const resetAnimationFrameRef = useRef<number | null>(null);
+  const viewportRef = useRef({ zoom: 1, pan: { x: 0, y: 0 } });
+  const dragStateRef = useRef<{
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    startPanX: number;
+    startPanY: number;
+    moved: boolean;
+  } | null>(null);
+  const suppressClickRef = useRef(false);
   const hasBase = !!graph && stagingId != null && destinationId != null;
   const hasRoute = hasBase && !!travelPath && travelPath.length > 0 && parkingId != null && bridgeEndpointId != null;
 
@@ -136,8 +150,119 @@ export function BridgePlannerMap({
   }, [bounds]);
 
   const scale = baseScale * zoom;
-  const sx = useCallback((x: number) => (w / 2) + (x - center.cx) * scale, [center.cx, scale, w]);
-  const sy = useCallback((y: number) => (h / 2) + (y - center.cy) * scale, [center.cy, h, scale]);
+  const sx = useCallback((x: number) => (w / 2) + (x - center.cx) * scale + pan.x, [center.cx, pan.x, scale, w]);
+  const sy = useCallback((y: number) => (h / 2) + (y - center.cy) * scale + pan.y, [center.cy, h, pan.y, scale]);
+
+  const consumeSuppressedClick = useCallback(() => {
+    if (!suppressClickRef.current) return false;
+    suppressClickRef.current = false;
+    return true;
+  }, []);
+
+  const cancelViewportAnimation = useCallback(() => {
+    if (resetAnimationFrameRef.current == null) return;
+    window.cancelAnimationFrame(resetAnimationFrameRef.current);
+    resetAnimationFrameRef.current = null;
+  }, []);
+
+  const resetViewport = useCallback(() => {
+    const startZoom = viewportRef.current.zoom;
+    const startPan = viewportRef.current.pan;
+    if (startZoom === 1 && startPan.x === 0 && startPan.y === 0) return;
+    cancelViewportAnimation();
+    const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const durationMs = 240;
+    const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+
+    const tick = (now: number) => {
+      const elapsed = now - startedAt;
+      const t = Math.min(1, elapsed / durationMs);
+      const eased = easeOutCubic(t);
+      setZoom(startZoom + (1 - startZoom) * eased);
+      setPan({
+        x: startPan.x * (1 - eased),
+        y: startPan.y * (1 - eased),
+      });
+      if (t < 1) {
+        resetAnimationFrameRef.current = window.requestAnimationFrame(tick);
+      } else {
+        resetAnimationFrameRef.current = null;
+        setZoom(1);
+        setPan({ x: 0, y: 0 });
+      }
+    };
+
+    resetAnimationFrameRef.current = window.requestAnimationFrame(tick);
+  }, [cancelViewportAnimation]);
+
+  const handleZoomChange = useCallback((nextZoom: number) => {
+    cancelViewportAnimation();
+    const currentZoom = viewportRef.current.zoom;
+    const currentPan = viewportRef.current.pan;
+    if (currentZoom <= 0) {
+      setZoom(nextZoom);
+      return;
+    }
+    const ratio = nextZoom / currentZoom;
+    setZoom(nextZoom);
+    setPan({
+      x: currentPan.x * ratio,
+      y: currentPan.y * ratio,
+    });
+  }, [cancelViewportAnimation]);
+
+  const handlePointerDown = useCallback((event: ReactPointerEvent<SVGSVGElement>) => {
+    if (event.button !== 0) return;
+    cancelViewportAnimation();
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startPanX: pan.x,
+      startPanY: pan.y,
+      moved: false,
+    };
+    suppressClickRef.current = false;
+  }, [cancelViewportAnimation, pan.x, pan.y]);
+
+  useEffect(() => {
+    viewportRef.current = { zoom, pan };
+  }, [zoom, pan]);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const drag = dragStateRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const dx = event.clientX - drag.startClientX;
+      const dy = event.clientY - drag.startClientY;
+      if (!drag.moved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+        drag.moved = true;
+        suppressClickRef.current = true;
+        setIsPanning(true);
+        setHoveredId(null);
+      }
+      if (!drag.moved) return;
+      setPan({ x: drag.startPanX + dx, y: drag.startPanY + dy });
+    };
+
+    const finishPan = (event: PointerEvent) => {
+      const drag = dragStateRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      dragStateRef.current = null;
+      setIsPanning(false);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', finishPan);
+    window.addEventListener('pointercancel', finishPan);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', finishPan);
+      window.removeEventListener('pointercancel', finishPan);
+    };
+  }, []);
+
+  useEffect(() => () => cancelViewportAnimation(), [cancelViewportAnimation]);
 
   const pointsById = useMemo(() => {
     const m = new Map<number, { px: number; py: number }>();
@@ -414,6 +539,16 @@ export function BridgePlannerMap({
           {summary && <div className="text-sm text-slate-600 dark:text-slate-300">{summary}</div>}
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800 disabled:opacity-50"
+            onClick={resetViewport}
+            disabled={zoom === 1 && pan.x === 0 && pan.y === 0}
+            aria-label="Reset view"
+            title="Reset view"
+          >
+            <Icon name="scope" size={18} />
+          </button>
           <label className="text-sm">Zoom: {Math.round(zoom * 100)}%</label>
           <input
             type="range"
@@ -421,7 +556,7 @@ export function BridgePlannerMap({
             max={220}
             step={5}
             value={Math.round(zoom * 100)}
-            onChange={(e) => setZoom(Number(e.target.value) / 100)}
+            onChange={(e) => handleZoomChange(Number(e.target.value) / 100)}
             className="w-32 accent-amber-600"
           />
         </div>
@@ -429,7 +564,17 @@ export function BridgePlannerMap({
 
       <div className="relative w-full h-[480px]">
         <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
-        <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="relative w-full h-full" onClick={() => setSelectedId(null)}>
+        <svg
+          viewBox={`0 0 ${w} ${h}`}
+          preserveAspectRatio="none"
+          className={`relative w-full h-full ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
+          onClick={() => {
+            if (consumeSuppressedClick()) return;
+            setSelectedId(null);
+          }}
+          onPointerDown={handlePointerDown}
+          style={{ touchAction: 'none' }}
+        >
         <defs>
           <marker id="titanArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
             <path d="M 0 0 L 10 5 L 0 10 z" fill="#9333ea" />
@@ -533,13 +678,15 @@ export function BridgePlannerMap({
                   key={`node-${node.id}`}
                   onClick={(event) => {
                     event.stopPropagation();
+                    if (consumeSuppressedClick()) return;
                     setSelectedId((prev) => (prev === node.id ? null : node.id));
                   }}
                   onDoubleClick={(event) => {
                     event.stopPropagation();
+                    if (consumeSuppressedClick()) return;
                     onSystemDoubleClick?.(node.id);
                   }}
-                  onMouseEnter={() => setHoveredId(node.id)}
+                  onMouseEnter={() => { if (!isPanning) setHoveredId(node.id); }}
                   onMouseLeave={() => setHoveredId((prev) => (prev === node.id ? null : prev))}
                   style={{ cursor: 'pointer' }}
                 >
@@ -570,6 +717,7 @@ export function BridgePlannerMap({
 
         {selected && (
           <foreignObject
+            data-map-no-pan="true"
             onClick={(event) => event.stopPropagation()}
             x={sx(selected.projected.px) + 10}
             y={Math.round(sy(selected.projected.py) - 12)}

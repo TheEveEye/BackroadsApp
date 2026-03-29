@@ -11,6 +11,7 @@ const NAME_TO_STEM: Record<string, string> = {
   copy: 'square.on.square',
   close: 'xmark',
   'chevron-down': 'chevron.down',
+  scope: 'scope',
 };
 
 const SHIP_TO_FILENAME: Record<string, string> = {

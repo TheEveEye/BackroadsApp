@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { GraphData, SystemNode } from '../lib/data';
 import { exploreFrontier, findPathTo } from '../lib/graph';
+import { Icon } from './Icon';
 import { boundsFromIds, buildAnsiblexSet, buildArcPath, centerFromBounds, fitBoundsScale, fitRadiusScale, LY_IN_METERS, project2D, segmentIntersectsRect } from './map/shared';
 
 type MapViewSettings = {
@@ -79,12 +80,136 @@ function MapViewBody({ startId, maxJumps, graph, namesById, lyRadius, settings, 
   }, [bounds, projected, startProj, lyRadius]);
 
   const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [hoveredId, setHoveredId] = useState<number | null>(null);
+  const [isPanning, setIsPanning] = useState(false);
+  const resetAnimationFrameRef = useRef<number | null>(null);
+  const viewportRef = useRef({ zoom: 1, pan: { x: 0, y: 0 } });
+  const dragStateRef = useRef<{
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    startPanX: number;
+    startPanY: number;
+    moved: boolean;
+  } | null>(null);
+  const suppressClickRef = useRef(false);
   const scale = baseScale * zoom;
 
-  const sx = useCallback((x: number) => (w / 2) + (x - center.cx) * scale, [center.cx, scale, w]);
-  const sy = useCallback((y: number) => (h / 2) + (y - center.cy) * scale, [center.cy, h, scale]);
+  const sx = useCallback((x: number) => (w / 2) + (x - center.cx) * scale + pan.x, [center.cx, pan.x, scale, w]);
+  const sy = useCallback((y: number) => (h / 2) + (y - center.cy) * scale + pan.y, [center.cy, h, pan.y, scale]);
+
+  const consumeSuppressedClick = useCallback(() => {
+    if (!suppressClickRef.current) return false;
+    suppressClickRef.current = false;
+    return true;
+  }, []);
+
+  const cancelViewportAnimation = useCallback(() => {
+    if (resetAnimationFrameRef.current == null) return;
+    window.cancelAnimationFrame(resetAnimationFrameRef.current);
+    resetAnimationFrameRef.current = null;
+  }, []);
+
+  const resetViewport = useCallback(() => {
+    const startZoom = viewportRef.current.zoom;
+    const startPan = viewportRef.current.pan;
+    if (startZoom === 1 && startPan.x === 0 && startPan.y === 0) return;
+    cancelViewportAnimation();
+    const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const durationMs = 240;
+    const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+
+    const tick = (now: number) => {
+      const elapsed = now - startedAt;
+      const t = Math.min(1, elapsed / durationMs);
+      const eased = easeOutCubic(t);
+      setZoom(startZoom + (1 - startZoom) * eased);
+      setPan({
+        x: startPan.x * (1 - eased),
+        y: startPan.y * (1 - eased),
+      });
+      if (t < 1) {
+        resetAnimationFrameRef.current = window.requestAnimationFrame(tick);
+      } else {
+        resetAnimationFrameRef.current = null;
+        setZoom(1);
+        setPan({ x: 0, y: 0 });
+      }
+    };
+
+    resetAnimationFrameRef.current = window.requestAnimationFrame(tick);
+  }, [cancelViewportAnimation]);
+
+  const handleZoomChange = useCallback((nextZoom: number) => {
+    cancelViewportAnimation();
+    const currentZoom = viewportRef.current.zoom;
+    const currentPan = viewportRef.current.pan;
+    if (currentZoom <= 0) {
+      setZoom(nextZoom);
+      return;
+    }
+    const ratio = nextZoom / currentZoom;
+    setZoom(nextZoom);
+    setPan({
+      x: currentPan.x * ratio,
+      y: currentPan.y * ratio,
+    });
+  }, [cancelViewportAnimation]);
+
+  const handlePointerDown = useCallback((event: ReactPointerEvent<SVGSVGElement>) => {
+    if (event.button !== 0) return;
+    cancelViewportAnimation();
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startPanX: pan.x,
+      startPanY: pan.y,
+      moved: false,
+    };
+    suppressClickRef.current = false;
+  }, [cancelViewportAnimation, pan.x, pan.y]);
+
+  useEffect(() => {
+    viewportRef.current = { zoom, pan };
+  }, [zoom, pan]);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const drag = dragStateRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const dx = event.clientX - drag.startClientX;
+      const dy = event.clientY - drag.startClientY;
+      if (!drag.moved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+        drag.moved = true;
+        suppressClickRef.current = true;
+        setIsPanning(true);
+        setHoveredId(null);
+      }
+      if (!drag.moved) return;
+      setPan({ x: drag.startPanX + dx, y: drag.startPanY + dy });
+    };
+
+    const finishPan = (event: PointerEvent) => {
+      const drag = dragStateRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      dragStateRef.current = null;
+      setIsPanning(false);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', finishPan);
+    window.addEventListener('pointercancel', finishPan);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', finishPan);
+      window.removeEventListener('pointercancel', finishPan);
+    };
+  }, []);
+
+  useEffect(() => () => cancelViewportAnimation(), [cancelViewportAnimation]);
 
   // Quick lookup for edge endpoints
   const idx = useMemo(() => {
@@ -168,7 +293,17 @@ function MapViewBody({ startId, maxJumps, graph, namesById, lyRadius, settings, 
   return (
     <section className="bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
       <h2 className="text-xl font-medium mb-3">Map (range: {maxJumps} jump(s))</h2>
-      <div className="flex items-center justify-end mb-2">
+      <div className="flex items-center justify-end gap-2 mb-2">
+        <button
+          type="button"
+          className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800 disabled:opacity-50"
+          onClick={resetViewport}
+          disabled={zoom === 1 && pan.x === 0 && pan.y === 0}
+          aria-label="Reset view"
+          title="Reset view"
+        >
+          <Icon name="scope" size={18} />
+        </button>
         <label className="text-sm mr-2">Zoom: {Math.round(zoom * 100)}%</label>
         <input
           type="range"
@@ -176,12 +311,21 @@ function MapViewBody({ startId, maxJumps, graph, namesById, lyRadius, settings, 
           max={1000}
           step={10}
           value={Math.round(zoom * 100)}
-          onChange={(e) => setZoom(Number(e.target.value) / 100)}
+          onChange={(e) => handleZoomChange(Number(e.target.value) / 100)}
           className="w-40 accent-blue-600"
         />
       </div>
 
-      <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-[480px]" onClick={() => setSelectedId(null)}>
+      <svg
+        viewBox={`0 0 ${w} ${h}`}
+        className={`w-full h-[480px] ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
+        onClick={() => {
+          if (consumeSuppressedClick()) return;
+          setSelectedId(null);
+        }}
+        onPointerDown={handlePointerDown}
+        style={{ touchAction: 'none' }}
+      >
         {/* LY radius circle */}
         <g>
           {(() => {
@@ -282,12 +426,17 @@ if (p.id === startId) {
             return (
               <g
                 key={p.id}
-                onClick={(e) => { e.stopPropagation(); setSelectedId(prev => (prev === p.id ? null : p.id)); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (consumeSuppressedClick()) return;
+                  setSelectedId(prev => (prev === p.id ? null : p.id));
+                }}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
+                  if (consumeSuppressedClick()) return;
                   onSystemDoubleClick?.(p.id);
                 }}
-                onMouseEnter={() => setHoveredId(p.id)}
+                onMouseEnter={() => { if (!isPanning) setHoveredId(p.id); }}
                 onMouseLeave={() => setHoveredId(h => (h === p.id ? null : h))}
                 style={{cursor: "pointer"}}
               >
@@ -315,7 +464,14 @@ if (p.id === startId) {
         </g>
 
         {selected && (
-          <foreignObject onClick={(e) => e.stopPropagation()} x={sx(selected.p.px)+10} y={Math.round(sy(selected.p.py) - 12)} width={selected.approxWidth} height={selected.approxHeight}>
+          <foreignObject
+            data-map-no-pan="true"
+            onClick={(e) => e.stopPropagation()}
+            x={sx(selected.p.px)+10}
+            y={Math.round(sy(selected.p.py) - 12)}
+            width={selected.approxWidth}
+            height={selected.approxHeight}
+          >
             <div className="rounded-md border border-solid border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1 shadow text-xs whitespace-nowrap" style={{ fontSize: 12, fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif' }}>
               <span>{selected.name} </span>
               <span style={{ color: selected.secColor, fontWeight: 700 }}>{selected.secLabel}</span>
