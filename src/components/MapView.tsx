@@ -293,7 +293,21 @@ function MapViewBody({ startId, maxJumps, graph, namesById, lyRadius, settings, 
   return (
     <section className="bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
       <h2 className="text-xl font-medium mb-3">Map (range: {maxJumps} jump(s))</h2>
-      <div className="flex items-center justify-end gap-2 mb-2">
+      <div className="relative">
+      <div className="absolute top-3 right-3 z-10 flex flex-col items-center gap-2">
+        <div className="flex h-32 w-10 items-center justify-center">
+          <input
+            type="range"
+            min={50}
+            max={1000}
+            step={10}
+            value={Math.round(zoom * 100)}
+            onChange={(e) => handleZoomChange(Number(e.target.value) / 100)}
+            aria-label="Zoom"
+            title="Zoom"
+            className="w-28 -rotate-90 accent-blue-600"
+          />
+        </div>
         <button
           type="button"
           className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800 disabled:opacity-50"
@@ -304,18 +318,7 @@ function MapViewBody({ startId, maxJumps, graph, namesById, lyRadius, settings, 
         >
           <Icon name="scope" size={18} />
         </button>
-        <label className="text-sm mr-2">Zoom: {Math.round(zoom * 100)}%</label>
-        <input
-          type="range"
-          min={50}
-          max={1000}
-          step={10}
-          value={Math.round(zoom * 100)}
-          onChange={(e) => handleZoomChange(Number(e.target.value) / 100)}
-          className="w-40 accent-blue-600"
-        />
       </div>
-
       <svg
         viewBox={`0 0 ${w} ${h}`}
         className={`w-full h-[480px] ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
@@ -481,6 +484,7 @@ if (p.id === startId) {
         )}
 
       </svg>
+      </div>
       <div className="text-sm text-gray-600 dark:text-gray-400 mt-2">
         <span className="inline-flex items-center mr-4"><span className="w-2 h-2 rounded-full inline-block mr-1" style={{background:'#2563eb'}}></span>Start</span>
         <span className="inline-flex items-center mr-4"><span className="w-2 h-2 rounded-full inline-block mr-1" style={{background:'#16a34a'}}></span>Observatory</span>

@@ -529,7 +529,7 @@ export function BridgePlannerMap({
 
   return (
     <section className="bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+      <div className="mb-2">
         <div>
           <h2 className="text-xl font-medium">Map</h2>
           <div className="text-sm text-slate-600 dark:text-slate-300">Bridge range: {bridgeRange.toFixed(1)} ly</div>
@@ -538,7 +538,23 @@ export function BridgePlannerMap({
           </div>
           {summary && <div className="text-sm text-slate-600 dark:text-slate-300">{summary}</div>}
         </div>
-        <div className="flex items-center gap-2">
+      </div>
+
+      <div className="relative w-full h-[480px]">
+        <div className="absolute top-3 right-3 z-10 flex flex-col items-center gap-2">
+          <div className="flex h-32 w-10 items-center justify-center">
+            <input
+              type="range"
+              min={60}
+              max={220}
+              step={5}
+              value={Math.round(zoom * 100)}
+              onChange={(e) => handleZoomChange(Number(e.target.value) / 100)}
+              aria-label="Zoom"
+              title="Zoom"
+              className="w-28 -rotate-90 accent-amber-600"
+            />
+          </div>
           <button
             type="button"
             className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800 disabled:opacity-50"
@@ -549,20 +565,7 @@ export function BridgePlannerMap({
           >
             <Icon name="scope" size={18} />
           </button>
-          <label className="text-sm">Zoom: {Math.round(zoom * 100)}%</label>
-          <input
-            type="range"
-            min={60}
-            max={220}
-            step={5}
-            value={Math.round(zoom * 100)}
-            onChange={(e) => handleZoomChange(Number(e.target.value) / 100)}
-            className="w-32 accent-amber-600"
-          />
         </div>
-      </div>
-
-      <div className="relative w-full h-[480px]">
         <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
         <svg
           viewBox={`0 0 ${w} ${h}`}
