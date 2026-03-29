@@ -933,35 +933,37 @@ export function BridgePlanner() {
           </section>
         </div>
 
-        <BridgePlannerMap
-          graph={graph}
-          namesById={graph?.namesById || {}}
-          stagingId={stagingId}
-          destinationId={destinationId}
-          parkingId={selectedRoute?.parkingId ?? null}
-          bridgeEndpointId={selectedRoute?.bridgeEndpointId ?? null}
-          parking2Id={selectedRoute?.parking2Id ?? null}
-          bridgeEndpoint2Id={selectedRoute?.bridgeEndpoint2Id ?? null}
-          travelPath={selectedRoute?.travelPath ?? null}
-          midTravelPath={selectedRoute?.midTravelPath ?? null}
-          postBridgePath={selectedRoute?.postBridgePath ?? null}
-          fitNodeIds={fitNodeIds}
-          bridgeRange={planner.bridgeRange}
-          settings={{
-            excludeZarzakh: settings.excludeZarzakh,
-            sameRegionOnly: settings.sameRegionOnly,
-            allowAnsiblex: settings.allowAnsiblex,
-            ansiblexes: settings.ansiblexes,
-            cynoBeacons: settings.cynoBeacons,
-          }}
-          statusMessage={routeResult.message}
-          summary={summary}
-          baselineJumps={routeResult.baselineJumps}
-          onSystemDoubleClick={(id) => {
-            const name = graph?.namesById?.[String(id)] ?? String(id);
-            setPlanner((prev) => ({ ...prev, targetQuery: name }));
-          }}
-        />
+        <div className="lg:sticky lg:top-20 lg:self-start">
+          <BridgePlannerMap
+            graph={graph}
+            namesById={graph?.namesById || {}}
+            stagingId={stagingId}
+            destinationId={destinationId}
+            parkingId={selectedRoute?.parkingId ?? null}
+            bridgeEndpointId={selectedRoute?.bridgeEndpointId ?? null}
+            parking2Id={selectedRoute?.parking2Id ?? null}
+            bridgeEndpoint2Id={selectedRoute?.bridgeEndpoint2Id ?? null}
+            travelPath={selectedRoute?.travelPath ?? null}
+            midTravelPath={selectedRoute?.midTravelPath ?? null}
+            postBridgePath={selectedRoute?.postBridgePath ?? null}
+            fitNodeIds={fitNodeIds}
+            bridgeRange={planner.bridgeRange}
+            settings={{
+              excludeZarzakh: settings.excludeZarzakh,
+              sameRegionOnly: settings.sameRegionOnly,
+              allowAnsiblex: settings.allowAnsiblex,
+              ansiblexes: settings.ansiblexes,
+              cynoBeacons: settings.cynoBeacons,
+            }}
+            statusMessage={routeResult.message}
+            summary={summary}
+            baselineJumps={routeResult.baselineJumps}
+            onSystemDoubleClick={(id) => {
+              const name = graph?.namesById?.[String(id)] ?? String(id);
+              setPlanner((prev) => ({ ...prev, targetQuery: name }));
+            }}
+          />
+        </div>
       </div>
 
       {showAnsiblexModal && (

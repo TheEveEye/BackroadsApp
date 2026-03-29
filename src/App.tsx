@@ -252,7 +252,7 @@ function App() {
             <Results results={results} namesById={graph?.namesById || {}} lyRadius={lyRadius} graph={graph} />
           )}
         </section>
-        <section>
+        <section className="md:sticky md:top-20 md:self-start">
           {!loading && !error && startId != null && graph ? (
             <MapView
               startId={startId}
