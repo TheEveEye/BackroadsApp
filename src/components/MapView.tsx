@@ -1,18 +1,32 @@
-import { useMemo, useState } from 'react';
-import type { GraphData } from '../lib/data';
+import { useCallback, useMemo, useState } from 'react';
+import type { GraphData, SystemNode } from '../lib/data';
 import { exploreFrontier, findPathTo } from '../lib/graph';
 import { boundsFromIds, buildAnsiblexSet, buildArcPath, centerFromBounds, fitBoundsScale, fitRadiusScale, LY_IN_METERS, project2D, segmentIntersectsRect } from './map/shared';
 
-export function MapView({ startId, maxJumps, graph, namesById, lyRadius, settings, onSystemDoubleClick }: {
+type MapViewSettings = {
+  excludeZarzakh?: boolean;
+  sameRegionOnly?: boolean;
+  titanBridgeFirstJump?: boolean;
+  allowAnsiblex?: boolean;
+  ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }>;
+};
+
+type MapViewProps = {
   startId: number;
   maxJumps: number;
   graph: GraphData;
   namesById?: Record<string, string>;
   lyRadius: number;
-  settings: { excludeZarzakh?: boolean; sameRegionOnly?: boolean; titanBridgeFirstJump?: boolean; allowAnsiblex?: boolean; ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }>; };
+  settings: MapViewSettings;
   onSystemDoubleClick?: (id: number) => void;
-}) {
-  const startSystem = graph.systems[String(startId)];
+};
+
+type MapViewBodyProps = MapViewProps & {
+  startSystem: SystemNode;
+};
+
+export function MapView(props: MapViewProps) {
+  const startSystem = props.graph.systems[String(props.startId)];
   if (!startSystem) {
     return (
       <section className="bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
@@ -22,6 +36,10 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
     );
   }
 
+  return <MapViewBody {...props} startSystem={startSystem} />;
+}
+
+function MapViewBody({ startId, maxJumps, graph, namesById, lyRadius, settings, onSystemDoubleClick, startSystem }: MapViewBodyProps) {
   const { nodes, edges } = useMemo(() => exploreFrontier({ startId, maxJumps, graph, settings, lyRadius }), [startId, maxJumps, graph, settings, lyRadius]);
 
   const projected = useMemo(() => {
@@ -33,15 +51,13 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
   }, [nodes, graph]);
 
   const startProj = useMemo(() => {
-    const s = graph.systems[String(startId)];
-    const { px, py } = project2D(s.position.x, s.position.y, s.position.z);
+    const { px, py } = project2D(startSystem.position.x, startSystem.position.y, startSystem.position.z);
     return { px, py };
-  }, [graph, startId]);
+  }, [startSystem]);
 
   const startPos = useMemo(() => {
-    const s = graph.systems[String(startId)];
-    return { x: s.position.x, y: s.position.y, z: s.position.z };
-  }, [graph, startId]);
+    return { x: startSystem.position.x, y: startSystem.position.y, z: startSystem.position.z };
+  }, [startSystem]);
 
   // SVG viewport and centering math
   const w = 800;
@@ -67,8 +83,8 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
   const [hoveredId, setHoveredId] = useState<number | null>(null);
   const scale = baseScale * zoom;
 
-  const sx = (x: number) => (w / 2) + (x - center.cx) * scale;
-  const sy = (y: number) => (h / 2) + (y - center.cy) * scale;
+  const sx = useCallback((x: number) => (w / 2) + (x - center.cx) * scale, [center.cx, scale, w]);
+  const sy = useCallback((y: number) => (h / 2) + (y - center.cy) * scale, [center.cy, h, scale]);
 
   // Quick lookup for edge endpoints
   const idx = useMemo(() => {
@@ -88,7 +104,7 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
       if (X >= -pad && X <= w + pad && Y >= -pad && Y <= h + pad) ids.add(p.id);
     }
     return ids;
-  }, [projected, scale]);
+  }, [projected, sx, sy, w, h]);
 
   const renderedNodes = useMemo(() => projected.filter(p => visibleIds.has(p.id)), [projected, visibleIds]);
   const renderedEdges = useMemo(() => {
@@ -101,7 +117,7 @@ export function MapView({ startId, maxJumps, graph, namesById, lyRadius, setting
       const x2 = sx(b.px), y2 = sy(b.py);
       return segmentIntersectsRect(x1, y1, x2, y2, 0, 0, w, h);
     });
-  }, [edges, visibleIds, idx, scale]);
+  }, [edges, visibleIds, idx, sx, sy, w, h]);
 
   const renderedAnsiblexes = useMemo(() => {
     if (!settings.allowAnsiblex || !Array.isArray(settings.ansiblexes)) return [];

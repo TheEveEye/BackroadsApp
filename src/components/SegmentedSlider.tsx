@@ -63,6 +63,7 @@ export function SegmentedSlider({
   const [dragging, setDragging] = useState(false);
   const [dragX, setDragX] = useState<number | null>(null); // left offset of pill while dragging
   const [suppressTransition, setSuppressTransition] = useState(disableInitialAnimation);
+  const optionsKey = useMemo(() => options.map((o) => `${o.label}|${o.value}`).join('|'), [options]);
 
   useEffect(() => {
     if (!disableInitialAnimation) {
@@ -111,7 +112,7 @@ export function SegmentedSlider({
     doMeasure();
     window.addEventListener('resize', doMeasure);
     return () => window.removeEventListener('resize', doMeasure);
-  }, [options.map(o => o.label + '|' + o.value).join('|')]);
+  }, [measuredPadX, optionsKey]);
 
   // Compute pill left position in px for the current selection (non-dragging)
   const selectedLeft = useMemo(() => selectedIndex * stepWidth, [selectedIndex, stepWidth]);

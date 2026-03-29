@@ -27,8 +27,6 @@ export function Results({ results, namesById, lyRadius, graph }: { results: Obse
     }
   }
 
-  if (!results.length) return <p>No observatories found within the selected jump range.</p>;
-
   // Precompute lists for copying
   const systemNames = useMemo(() => results.map(r => namesById?.[String(r.systemId)] ?? String(r.systemId)), [results, namesById]);
   const eveLinksMarkup = useMemo(() => {
@@ -39,6 +37,8 @@ export function Results({ results, namesById, lyRadius, graph }: { results: Obse
     const body = anchors.join('<br>');
     return `<font size="13" color="#bfffffff"></font><font size="13" color="#ffd98d00"><loc>${body}</loc></font>`;
   }, [results, systemNames]);
+
+  if (!results.length) return <p>No observatories found within the selected jump range.</p>;
 
   async function copyText(text: string) {
     try {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GraphData } from '../lib/data';
 import { findPathTo } from '../lib/graph';
 import { LY_IN_METERS, boundsFromIds, buildAnsiblexSet, buildArcPath, buildProjectedSystemMap, centerFromBounds, fitBoundsScale, project2D, segmentIntersectsRect } from './map/shared';
@@ -136,8 +136,8 @@ export function BridgePlannerMap({
   }, [bounds]);
 
   const scale = baseScale * zoom;
-  const sx = (x: number) => (w / 2) + (x - center.cx) * scale;
-  const sy = (y: number) => (h / 2) + (y - center.cy) * scale;
+  const sx = useCallback((x: number) => (w / 2) + (x - center.cx) * scale, [center.cx, scale, w]);
+  const sy = useCallback((y: number) => (h / 2) + (y - center.cy) * scale, [center.cy, h, scale]);
 
   const pointsById = useMemo(() => {
     const m = new Map<number, { px: number; py: number }>();
@@ -183,11 +183,11 @@ export function BridgePlannerMap({
   }, [postBridgePath, ansiSet]);
 
   const nameFor = (id: number) => namesById?.[String(id)] ?? String(id);
-  const getScreenPt = (id: number) => {
+  const getScreenPt = useCallback((id: number) => {
     const p = projectedAll.get(id);
     if (!p) return null;
     return { x: sx(p.px), y: sy(p.py) };
-  };
+  }, [projectedAll, sx, sy]);
 
   const cynoBeaconMarkers = useMemo(() => {
     if (!graph || !settings.cynoBeacons?.length) return [] as Array<{ id: number; x: number; y: number; enabled: boolean }>;
@@ -203,7 +203,7 @@ export function BridgePlannerMap({
       markers.push({ id, x: pt.x, y: pt.y, enabled: entry.enabled !== false });
     }
     return markers;
-  }, [graph, settings.cynoBeacons, projectedAll, scale, center]);
+  }, [getScreenPt, graph, settings.cynoBeacons]);
 
   const backgroundNodes = useMemo(() => {
     if (!graph || !hasRoute) return [] as BackgroundNode[];
@@ -216,7 +216,7 @@ export function BridgePlannerMap({
       list.push({ id, x, y });
     }
     return list;
-  }, [graph, hasRoute, projectedAll, scale, center]);
+  }, [graph, hasRoute, projectedAll, sx, sy, w, h]);
 
   const backgroundEdges = useMemo(() => {
     if (!graph || !hasRoute) return [] as BackgroundEdge[];
@@ -243,7 +243,7 @@ export function BridgePlannerMap({
       }
     }
     return edges;
-  }, [graph, hasRoute, projectedAll, scale, center]);
+  }, [graph, hasRoute, projectedAll, sx, sy, w, h]);
 
   const getPt = (id: number) => {
     const p = pointsById.get(id);

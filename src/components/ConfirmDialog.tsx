@@ -20,8 +20,6 @@ export function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  if (!open) return null;
-  // Close on Escape
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -33,6 +31,9 @@ export function ConfirmDialog({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onCancel]);
+
+  if (!open) return null;
+
   const toneClasses = tone === 'danger'
     ? { icon: '#b91c1c', btn: 'bg-red-600 hover:bg-red-700 text-white' }
     : tone === 'warn'

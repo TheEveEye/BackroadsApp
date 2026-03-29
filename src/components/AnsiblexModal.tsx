@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { GraphData } from '../lib/data';
 import { resolveQueryToId } from '../lib/graph';
 import { Icon } from './Icon';
@@ -35,10 +35,10 @@ export function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ fro
     }
   }, [value, list]);
 
-  const attemptClose = () => {
+  const attemptClose = useCallback(() => {
     if (hasUnsaved) setShowUnsavedConfirm(true);
     else onClose();
-  };
+  }, [hasUnsaved, onClose]);
 
   // Close on Escape
   useEffect(() => {
@@ -51,7 +51,7 @@ export function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ fro
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [hasUnsaved, showUnsavedConfirm]);
+  }, [attemptClose, showUnsavedConfirm]);
 
   const graphForNames: GraphData | null = (window as any).appGraph || null;
   const getName = (id: number) => graphForNames?.namesById?.[String(id)] ?? String(id);

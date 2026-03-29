@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { GraphData } from '../lib/data';
 import { resolveQueryToId } from '../lib/graph';
 import { AutocompleteInput } from './AutocompleteInput';
@@ -41,10 +41,10 @@ export function BlacklistModal({
     }
   }, [value, list]);
 
-  const attemptClose = () => {
+  const attemptClose = useCallback(() => {
     if (hasUnsaved) setShowUnsavedConfirm(true);
     else onClose();
-  };
+  }, [hasUnsaved, onClose]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -56,7 +56,7 @@ export function BlacklistModal({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [hasUnsaved, showUnsavedConfirm]);
+  }, [attemptClose, showUnsavedConfirm]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-4 bg-black/50">
