@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useState } from 'react';
+import { type CSSProperties, type HTMLAttributes, useEffect, useState } from 'react';
 
 const NAME_TO_STEM: Record<string, string> = {
   plus: 'plus',
@@ -44,7 +44,9 @@ function getIsDarkMode() {
         return luminance < 0.45;
       }
     }
-  } catch {}
+  } catch {
+    // Ignore style read errors and fall back to media query.
+  }
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
 }
 
@@ -70,7 +72,7 @@ export function Icon({
   title?: string;
   offsetY?: number;
 }) {
-  const base = (import.meta as any).env?.BASE_URL || '/';
+  const base = import.meta.env.BASE_URL || '/';
   const [selectedUrl, setSelectedUrl] = useState('');
   const [isDarkMode, setIsDarkMode] = useState(getIsDarkMode);
   // Keep icons square for reliable centering in flex containers
@@ -151,7 +153,9 @@ export function Icon({
     maskSize: '100% 100%',
   };
 
-  const ariaProps = ariaLabel ? { role: 'img', 'aria-label': ariaLabel } : { 'aria-hidden': true } as any;
+  const ariaProps: HTMLAttributes<HTMLSpanElement> = ariaLabel
+    ? { role: 'img', 'aria-label': ariaLabel }
+    : { 'aria-hidden': true };
 
   return <span className={className} style={style} {...ariaProps} title={title} />;
 }

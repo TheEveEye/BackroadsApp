@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type PointerEvent as ReactPointerEvent } from 'react';
 import type { GraphData, SystemNode } from '../lib/data';
 import { exploreFrontier, findPathTo } from '../lib/graph';
 import { Icon } from './Icon';
@@ -389,7 +389,7 @@ function MapViewBody({ startId, maxJumps, graph, namesById, lyRadius, settings, 
             return { x: sx(p2.px), y: sy(p2.py) };
           };
 
-          const segs: any[] = [];
+          const segs: Array<JSX.Element> = [];
           // First segment: if usedTitan (and titan is allowed), draw purple dashed arc; otherwise handle as gate/ansiblex
           for (let i = 0; i < path.length - 1; i++) {
             const u = path[i];
