@@ -1,5 +1,6 @@
-import { useEffect, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { Icon } from './Icon';
+import { ModalShell } from './ModalShell';
 
 export function ConfirmDialog({
   open,
@@ -20,18 +21,6 @@ export function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onCancel();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onCancel]);
-
   if (!open) return null;
 
   const toneClasses = tone === 'danger'
@@ -40,14 +29,14 @@ export function ConfirmDialog({
     ? { icon: '#b45309', btn: 'bg-amber-600 hover:bg-amber-700 text-white' }
     : { icon: '#1d4ed8', btn: 'bg-blue-600 hover:bg-blue-700 text-white' };
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50" onClick={onCancel} />
-      <div
-        className="relative w-full max-w-md rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 shadow-xl"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="confirm-title"
-      >
+    <ModalShell
+      open={open}
+      onClose={onCancel}
+      position="center"
+      closeOnBackdrop
+      panelClassName="w-full max-w-md rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 shadow-xl"
+      labelledBy="confirm-title"
+    >
         <div className="flex items-start gap-3">
           <Icon name="warn" size={22} color={toneClasses.icon} />
           <div className="min-w-0">
@@ -65,13 +54,12 @@ export function ConfirmDialog({
           </button>
           {/* Confirm (Clear): primary destructive */}
           <button
-            className="px-3 py-1.5 rounded bg-red-600 hover:bg-red-700 text-white"
+            className={toneClasses.btn + ' px-3 py-1.5 rounded'}
             onClick={onConfirm}
           >
             {confirmLabel}
           </button>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   );
 }

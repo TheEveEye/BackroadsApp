@@ -4,6 +4,7 @@ import { resolveQueryToId } from '../lib/graph';
 import { AutocompleteInput } from './AutocompleteInput';
 import { Icon } from './Icon';
 import { ConfirmDialog } from './ConfirmDialog';
+import { ModalShell } from './ModalShell';
 
 export type BlacklistEntry = { id: number; enabled?: boolean };
 
@@ -46,23 +47,15 @@ export function BlacklistModal({
     else onClose();
   }, [hasUnsaved, onClose]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        if (showUnsavedConfirm) return;
-        e.preventDefault();
-        attemptClose();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [attemptClose, showUnsavedConfirm]);
-
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 bg-black/50">
-      <div className="w-full max-w-[480px] max-h-[85vh] overflow-visible rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-4 flex flex-col">
+    <ModalShell
+      onClose={attemptClose}
+      closeOnEscape={!showUnsavedConfirm}
+      panelClassName="w-full max-w-[480px] max-h-[85vh] overflow-visible rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-4 flex flex-col"
+      labelledBy="blacklist-modal-title"
+    >
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-semibold">Blacklist Systems</h2>
+          <h2 id="blacklist-modal-title" className="text-lg font-semibold">Blacklist Systems</h2>
           <button
             className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
             onClick={attemptClose}
@@ -116,7 +109,6 @@ export function BlacklistModal({
           <button className="px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700" onClick={attemptClose}>Close</button>
           <button className="px-3 py-1.5 rounded bg-blue-600 text-white" onClick={() => { onChange(list); onClose(); }}>Save</button>
         </div>
-      </div>
       {showUnsavedConfirm && (
         <ConfirmDialog
           open={showUnsavedConfirm}
@@ -129,6 +121,6 @@ export function BlacklistModal({
           onConfirm={() => { setShowUnsavedConfirm(false); onClose(); }}
         />
       )}
-    </div>
+    </ModalShell>
   );
 }

@@ -8,6 +8,7 @@ import { BlacklistModal } from '../components/BlacklistModal';
 import { CynoBeaconModal } from '../components/CynoBeaconModal';
 import { BridgePlannerMap } from '../components/BridgePlannerMap';
 import { SegmentedSlider } from '../components/SegmentedSlider';
+import { ModalShell } from '../components/ModalShell';
 import { getCopyButtonClass, getCopyButtonIconColor, getCopyButtonIconName, getCopyButtonLabel, useCopyStatuses } from '../lib/copy';
 
 //const LY = 9.4607e15;
@@ -1261,11 +1262,14 @@ export function BridgePlanner() {
       </div>
 
       {showWaypointsModal && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center p-4 bg-black/50">
-          <div className="w-full max-w-[640px] max-h-[85vh] overflow-y-auto rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-4 flex flex-col gap-4">
+        <ModalShell
+          onClose={() => setShowWaypointsModal(false)}
+          panelClassName="w-full max-w-[640px] overflow-visible rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-4 flex flex-col gap-4"
+          labelledBy="route-stops-modal-title"
+        >
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-lg font-semibold">Route stops</h2>
+                <h2 id="route-stops-modal-title" className="text-lg font-semibold">Route stops</h2>
                 <p className="text-sm text-slate-600 dark:text-slate-300">
                   Manage the ordered list of systems the planner must route through.
                 </p>
@@ -1393,8 +1397,7 @@ export function BridgePlanner() {
                 Done
               </button>
             </div>
-          </div>
-        </div>
+        </ModalShell>
       )}
 
       {showAnsiblexModal && (

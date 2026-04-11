@@ -4,6 +4,7 @@ import { resolveQueryToId } from '../lib/graph';
 import { Icon } from './Icon';
 import { AutocompleteInput } from './AutocompleteInput';
 import { ConfirmDialog } from './ConfirmDialog';
+import { ModalShell } from './ModalShell';
 
 export function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ from: number; to: number; enabled?: boolean }>; onChange: (v: Array<{ from: number; to: number; enabled?: boolean }>) => void; onClose: () => void }) {
   const LY = 9.4607e15; // meters per lightyear
@@ -39,19 +40,6 @@ export function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ fro
     if (hasUnsaved) setShowUnsavedConfirm(true);
     else onClose();
   }, [hasUnsaved, onClose]);
-
-  // Close on Escape
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        if (showUnsavedConfirm) return; // let nested dialog handle it
-        e.preventDefault();
-        attemptClose();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [attemptClose, showUnsavedConfirm]);
 
   const graphForNames: GraphData | null = (window as any).appGraph || null;
   const getName = (id: number) => graphForNames?.namesById?.[String(id)] ?? String(id);
@@ -159,10 +147,14 @@ export function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ fro
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 bg-black/50">
-      <div className="w-full max-w-[600px] max-h-[85vh] overflow-visible rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-4 flex flex-col">
+    <ModalShell
+      onClose={attemptClose}
+      closeOnEscape={!showUnsavedConfirm}
+      panelClassName="w-full max-w-[600px] max-h-[85vh] overflow-visible rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-4 flex flex-col"
+      labelledBy="ansiblex-modal-title"
+    >
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-semibold">Configure Ansiblex Bridges</h2>
+          <h2 id="ansiblex-modal-title" className="text-lg font-semibold">Configure Ansiblex Bridges</h2>
           <button className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800" onClick={attemptClose} aria-label="Close">
             <Icon name="close" size={20} />
           </button>
@@ -243,9 +235,8 @@ export function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ fro
           <button className="px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700" onClick={attemptClose}>Close</button>
           <button className="px-3 py-1.5 rounded bg-blue-600 text-white" onClick={() => { onChange(list); onClose(); }}>Save</button>
         </div>
-      </div>
-      {showUnsavedConfirm && (
-        <ConfirmDialog
+        {showUnsavedConfirm && (
+          <ConfirmDialog
           open={showUnsavedConfirm}
           title="Discard changes?"
           message="You have unsaved changes. Do you want to discard them?"
@@ -254,8 +245,8 @@ export function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ fro
           tone="warn"
           onCancel={() => setShowUnsavedConfirm(false)}
           onConfirm={() => { setShowUnsavedConfirm(false); onClose(); }}
-        />
-      )}
-    </div>
+          />
+        )}
+    </ModalShell>
   );
 }
