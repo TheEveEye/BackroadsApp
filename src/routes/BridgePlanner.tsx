@@ -197,7 +197,7 @@ export function BridgePlanner() {
       bridgeRange: 6,
       routesToShow: 5,
       presetShipClass: 'Titan Bridge',
-      presetJdc: 0,
+      presetJdc: 5,
     };
     try {
       const raw = localStorage.getItem(UI_KEY);
@@ -228,6 +228,7 @@ export function BridgePlanner() {
     initialRouteStops.map((_, index) => `route-stop-${index}`)
   );
   const [rangePopoverOpen, setRangePopoverOpen] = useState(false);
+  const rangePopoverRef = useRef<HTMLDivElement | null>(null);
   const jdcSliderRef = useRef<HTMLDivElement | null>(null);
   const [jdcSliderWidth, setJdcSliderWidth] = useState<number | null>(null);
 
@@ -263,6 +264,18 @@ export function BridgePlanner() {
       localStorage.setItem(UI_KEY, JSON.stringify(planner));
     } catch {}
   }, [planner]);
+
+  useEffect(() => {
+    if (!rangePopoverOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (rangePopoverRef.current && target && !rangePopoverRef.current.contains(target)) {
+        setRangePopoverOpen(false);
+      }
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => window.removeEventListener('pointerdown', onPointerDown);
+  }, [rangePopoverOpen]);
 
   useEffect(() => {
     if (!rangePopoverOpen) return;
@@ -710,16 +723,7 @@ export function BridgePlanner() {
         <div className="grid gap-4">
           <section className="grid gap-4 md:grid-cols-2 bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
             <div className="md:col-span-2 grid gap-2">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-medium text-slate-900 dark:text-slate-100">Route mode</div>
-                  <div className="text-xs text-slate-600 dark:text-slate-300">
-                    {isBridgeOnlyMode
-                      ? 'Chain titan bridges only.'
-                      : 'Mix titan bridges with normal gate travel.'}
-                  </div>
-                </div>
-              </div>
+              <div className="text-sm font-medium text-slate-900 dark:text-slate-100">Route mode</div>
               <div className="relative grid grid-cols-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-900/40 p-1 overflow-hidden">
                 <div
                   className="pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-md bg-amber-500 shadow-sm transition-transform duration-200 ease-out"
@@ -790,10 +794,10 @@ export function BridgePlanner() {
               </button>
             </div>
 
-            <label className="grid gap-2 md:col-span-2">
+            <div className="grid gap-2 md:col-span-2">
               <div className="flex items-center justify-between gap-2">
-                <span>Bridge range: {planner.bridgeRange.toFixed(1)} ly</span>
-                <div className="relative">
+                <label htmlFor="bridge-range-slider">Bridge range: {planner.bridgeRange.toFixed(1)} ly</label>
+                <div className="relative" ref={rangePopoverRef}>
                   <button
                     type="button"
                     className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center gap-1"
@@ -856,6 +860,7 @@ export function BridgePlanner() {
                 </div>
               </div>
               <input
+                id="bridge-range-slider"
                 type="range"
                 className="accent-amber-600 w-full"
                 min={1}
@@ -864,7 +869,7 @@ export function BridgePlanner() {
                 value={planner.bridgeRange}
                 onChange={(e) => setPlanner((prev) => ({ ...prev, bridgeRange: Number(e.target.value) }))}
               />
-            </label>
+            </div>
 
             <fieldset className="md:col-span-2 border border-gray-200 dark:border-gray-700 rounded-md p-3">
               <legend className="px-1 text-sm text-gray-700 dark:text-gray-300">Options</legend>
