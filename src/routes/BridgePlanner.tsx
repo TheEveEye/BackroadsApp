@@ -8,33 +8,45 @@ import { BlacklistModal } from '../components/BlacklistModal';
 import { CynoBeaconModal } from '../components/CynoBeaconModal';
 import { BridgePlannerMap } from '../components/BridgePlannerMap';
 import { SegmentedSlider } from '../components/SegmentedSlider';
+import { getCopyButtonClass, getCopyButtonIconColor, getCopyButtonIconName, getCopyButtonLabel, useCopyStatuses } from '../lib/copy';
 
 //const LY = 9.4607e15;
 
 type PlannerState = {
-  targetQuery: string;
-  stagingQuery: string;
+  routeStops: string[];
   bridgeRange: number;
   routesToShow: number;
   presetShipClass: string;
   presetJdc: number;
 };
 
+type TravelMode = 'bridge-gate' | 'bridge-only';
+
+type RouteStopDragState = {
+  activeIndex: number;
+  targetIndex: number;
+  startY: number;
+  currentY: number;
+  rowTops: number[];
+  rowHeights: number[];
+};
+
+type RouteBridgeLeg = {
+  parkingId: number;
+  endpointId: number;
+  approachPath: number[];
+  approachJumps: number;
+  bridgeLy: number;
+};
+
 type RouteOption = {
   key: string;
-  travelPath: number[];
-  postBridgePath: number[];
-  parkingId: number;
-  bridgeEndpointId: number;
-  travelJumps: number;
+  bridgeLegs: RouteBridgeLeg[];
+  postBridgePaths: number[][];
   postBridgeJumps: number;
   totalJumps: number;
-  bridgeLy: number;
-  midTravelPath?: number[] | null;
-  parking2Id?: number | null;
-  bridgeEndpoint2Id?: number | null;
-  midTravelJumps?: number;
-  bridge2Ly?: number;
+  totalBridges: number;
+  waypointIds?: number[];
 };
 
 const RANGE_PRESETS = [
@@ -51,6 +63,41 @@ const RANGE_PRESETS = [
   { label: 'Titan Jump', base: 3.0 }, // 6.0 at JDC 5
 ] as const;
 
+function pushUnique(ids: number[], id: number) {
+  if (ids[ids.length - 1] !== id) ids.push(id);
+}
+
+function getBridgeSequence(route: RouteOption) {
+  const ids: number[] = [];
+  for (const leg of route.bridgeLegs) {
+    pushUnique(ids, leg.parkingId);
+    pushUnique(ids, leg.endpointId);
+  }
+  return ids;
+}
+
+function getAllRouteIds(route: RouteOption) {
+  const ids: number[] = [];
+  for (const leg of route.bridgeLegs) {
+    for (const id of leg.approachPath) pushUnique(ids, id);
+    pushUnique(ids, leg.parkingId);
+    pushUnique(ids, leg.endpointId);
+  }
+  for (const path of route.postBridgePaths) {
+    for (const id of path) pushUnique(ids, id);
+  }
+  return ids;
+}
+
+function normalizeRouteStops(stops: string[] | undefined | null) {
+  const list = Array.isArray(stops)
+    ? stops.filter((stop): stop is string => typeof stop === 'string').map((stop) => stop)
+    : [];
+  if (list.length >= 2) return list;
+  if (list.length === 1) return [list[0], ''];
+  return ['', ''];
+}
+
 export function BridgePlanner() {
   const UI_KEY = 'br.bridgePlanner.ui.v1';
   const SETTINGS_STORAGE_KEY = 'br.settings.v1';
@@ -61,6 +108,7 @@ export function BridgePlanner() {
   const [showAnsiblexModal, setShowAnsiblexModal] = useState(false);
   const [showCynoBeaconModal, setShowCynoBeaconModal] = useState(false);
   const [showBlacklistModal, setShowBlacklistModal] = useState(false);
+  const [showWaypointsModal, setShowWaypointsModal] = useState(false);
   const [settings, setSettings] = useState<{
     excludeZarzakh: boolean;
     sameRegionOnly: boolean;
@@ -69,6 +117,7 @@ export function BridgePlanner() {
     bridgeFromStaging: boolean;
     bridgeCount: number;
     bridgeContinuous: boolean;
+    bridgeOnlyChain: boolean;
     allowAnsiblex?: boolean;
     ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }>;
     limitToCynoBeacons?: boolean;
@@ -84,6 +133,7 @@ export function BridgePlanner() {
       bridgeFromStaging: false,
       bridgeCount: 1,
       bridgeContinuous: false,
+      bridgeOnlyChain: false,
       allowAnsiblex: false,
       ansiblexes: [] as Array<{ from: number; to: number; enabled?: boolean }>,
       limitToCynoBeacons: false,
@@ -118,6 +168,7 @@ export function BridgePlanner() {
             bridgeFromStaging: typeof parsed.bridgeFromStaging === 'boolean' ? parsed.bridgeFromStaging : defaults.bridgeFromStaging,
             bridgeCount: Number.isFinite(parsed.bridgeCount) ? Math.max(1, Math.min(2, Number(parsed.bridgeCount))) : defaults.bridgeCount,
             bridgeContinuous: typeof parsed.bridgeContinuous === 'boolean' ? parsed.bridgeContinuous : defaults.bridgeContinuous,
+            bridgeOnlyChain: typeof parsed.bridgeOnlyChain === 'boolean' ? parsed.bridgeOnlyChain : defaults.bridgeOnlyChain,
             allowAnsiblex: typeof parsed.allowAnsiblex === 'boolean'
               ? parsed.allowAnsiblex
               : (fallbackAnsiblexes.length > 0 ? true : defaults.allowAnsiblex),
@@ -141,8 +192,7 @@ export function BridgePlanner() {
   });
   const [planner, setPlanner] = useState<PlannerState>(() => {
     const defaults: PlannerState = {
-      targetQuery: '',
-      stagingQuery: '',
+      routeStops: ['', ''],
       bridgeRange: 6,
       routesToShow: 5,
       presetShipClass: 'Titan Bridge',
@@ -153,10 +203,14 @@ export function BridgePlanner() {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === 'object') {
+          const parsedStops = normalizeRouteStops(
+            Array.isArray(parsed.routeStops)
+              ? parsed.routeStops
+              : [typeof parsed.stagingQuery === 'string' ? parsed.stagingQuery : '', typeof parsed.targetQuery === 'string' ? parsed.targetQuery : '']
+          );
           return {
             ...defaults,
-            targetQuery: typeof parsed.targetQuery === 'string' ? parsed.targetQuery : defaults.targetQuery,
-            stagingQuery: typeof parsed.stagingQuery === 'string' ? parsed.stagingQuery : defaults.stagingQuery,
+            routeStops: parsedStops,
             bridgeRange: Number.isFinite(parsed.bridgeRange) ? Number(parsed.bridgeRange) : defaults.bridgeRange,
             routesToShow: Number.isFinite(parsed.routesToShow) ? Math.max(1, Math.min(25, Number(parsed.routesToShow))) : defaults.routesToShow,
             presetShipClass: typeof parsed.presetShipClass === 'string' ? parsed.presetShipClass : defaults.presetShipClass,
@@ -167,6 +221,11 @@ export function BridgePlanner() {
     } catch {}
     return defaults;
   });
+  const initialRouteStops = normalizeRouteStops(planner.routeStops);
+  const routeStopKeyRef = useRef(initialRouteStops.length);
+  const [routeStopKeys, setRouteStopKeys] = useState<string[]>(() =>
+    initialRouteStops.map((_, index) => `route-stop-${index}`)
+  );
   const [rangePopoverOpen, setRangePopoverOpen] = useState(false);
   const jdcSliderRef = useRef<HTMLDivElement | null>(null);
   const [jdcSliderWidth, setJdcSliderWidth] = useState<number | null>(null);
@@ -229,8 +288,176 @@ export function BridgePlanner() {
     };
   }, [rangePopoverOpen]);
 
-  const destinationId = useMemo(() => (graph ? resolveQueryToId(planner.targetQuery, graph) : null), [graph, planner.targetQuery]);
-  const stagingId = useMemo(() => (graph ? resolveQueryToId(planner.stagingQuery, graph) : null), [graph, planner.stagingQuery]);
+  const routeStops = useMemo(() => normalizeRouteStops(planner.routeStops), [planner.routeStops]);
+  const travelMode: TravelMode = settings.bridgeOnlyChain ? 'bridge-only' : 'bridge-gate';
+  const isBridgeOnlyMode = travelMode === 'bridge-only';
+  const [dragState, setDragState] = useState<RouteStopDragState | null>(null);
+  const [isRouteStopDropping, setIsRouteStopDropping] = useState(false);
+  const dragStateRef = useRef<RouteStopDragState | null>(null);
+  const routeStopDropRafRef = useRef<number | null>(null);
+  const routeStopRowRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const stagingQuery = routeStops[0] ?? '';
+  const targetQuery = routeStops[routeStops.length - 1] ?? '';
+  const waypointQueries = routeStops.slice(1, -1);
+  const makeRouteStopKey = () => `route-stop-${routeStopKeyRef.current++}`;
+  const setRouteStops = (updater: string[] | ((prev: string[]) => string[])) => {
+    setPlanner((prev) => {
+      const currentStops = normalizeRouteStops(prev.routeStops);
+      const nextStops = normalizeRouteStops(typeof updater === 'function' ? updater(currentStops) : updater);
+      return { ...prev, routeStops: nextStops };
+    });
+  };
+  const updateRouteStop = (index: number, value: string) => {
+    setRouteStops((prev) => prev.map((stop, stopIdx) => (stopIdx === index ? value : stop)));
+  };
+  const addWaypoint = () => {
+    const insertIndex = Math.max(1, routeStops.length - 1);
+    setRouteStops((prev) => {
+      const next = [...prev];
+      next.splice(next.length - 1, 0, '');
+      return next;
+    });
+    setRouteStopKeys((prev) => {
+      const next = [...prev];
+      next.splice(insertIndex, 0, makeRouteStopKey());
+      return next;
+    });
+  };
+  const removeWaypoint = (index: number) => {
+    if (routeStopDropRafRef.current != null) {
+      window.cancelAnimationFrame(routeStopDropRafRef.current);
+      routeStopDropRafRef.current = null;
+    }
+    setIsRouteStopDropping(false);
+    dragStateRef.current = null;
+    setDragState(null);
+    setRouteStops((prev) => prev.filter((_, stopIdx) => stopIdx !== index));
+    setRouteStopKeys((prev) => prev.filter((_, stopIdx) => stopIdx !== index));
+  };
+  const reorderWaypoint = (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex) return;
+    setRouteStops((prev) => {
+      if (fromIndex < 0 || fromIndex >= prev.length) return prev;
+      if (toIndex < 0 || toIndex >= prev.length) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+    setRouteStopKeys((prev) => {
+      if (fromIndex < 0 || fromIndex >= prev.length) return prev;
+      if (toIndex < 0 || toIndex >= prev.length) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  };
+  const startRouteStopDrag = (index: number, clientY: number) => {
+    const rowTops = routeStops.map((_, rowIndex) => routeStopRowRefs.current[rowIndex]?.offsetTop ?? 0);
+    const rowHeights = routeStops.map((_, rowIndex) => routeStopRowRefs.current[rowIndex]?.offsetHeight ?? 0);
+    const nextState = {
+      activeIndex: index,
+      targetIndex: index,
+      startY: clientY,
+      currentY: clientY,
+      rowTops,
+      rowHeights,
+    };
+    dragStateRef.current = nextState;
+    setDragState(nextState);
+  };
+  const updateRouteStopDrag = (clientY: number) => {
+    setDragState((current) => {
+      if (!current) return current;
+      const deltaY = clientY - current.startY;
+      const draggedMidpoint = current.rowTops[current.activeIndex] + deltaY + (current.rowHeights[current.activeIndex] ?? 0) / 2;
+      let targetIndex = current.activeIndex;
+
+      while (
+        targetIndex < current.rowTops.length - 1 &&
+        draggedMidpoint >= (current.rowTops[targetIndex + 1] ?? 0)
+      ) {
+        targetIndex += 1;
+      }
+
+      while (
+        targetIndex > 0 &&
+        draggedMidpoint <= ((current.rowTops[targetIndex - 1] ?? 0) + (current.rowHeights[targetIndex - 1] ?? 0))
+      ) {
+        targetIndex -= 1;
+      }
+      const nextState = {
+        ...current,
+        currentY: clientY,
+        targetIndex,
+      };
+      dragStateRef.current = nextState;
+      return nextState;
+    });
+  };
+  const finishRouteStopDrag = () => {
+    const current = dragStateRef.current;
+    if (!current) return;
+    const { activeIndex, targetIndex } = current;
+    setIsRouteStopDropping(true);
+    dragStateRef.current = null;
+    setDragState(null);
+    if (activeIndex !== targetIndex) {
+      reorderWaypoint(activeIndex, targetIndex);
+    }
+    if (routeStopDropRafRef.current != null) {
+      window.cancelAnimationFrame(routeStopDropRafRef.current);
+    }
+    routeStopDropRafRef.current = window.requestAnimationFrame(() => {
+      routeStopDropRafRef.current = null;
+      setIsRouteStopDropping(false);
+    });
+  };
+  const getRouteStopRowTransform = (index: number) => {
+    if (!dragState) return undefined;
+    const { activeIndex, targetIndex, startY, currentY, rowTops } = dragState;
+    if (index === activeIndex) {
+      return `translateY(${currentY - startY}px)`;
+    }
+    if (activeIndex < targetIndex && index > activeIndex && index <= targetIndex) {
+      const prevTop = rowTops[index - 1] ?? rowTops[index] ?? 0;
+      return `translateY(-${(rowTops[index] ?? 0) - prevTop}px)`;
+    }
+    if (activeIndex > targetIndex && index >= targetIndex && index < activeIndex) {
+      const nextTop = rowTops[index + 1] ?? rowTops[index] ?? 0;
+      return `translateY(${nextTop - (rowTops[index] ?? 0)}px)`;
+    }
+    return undefined;
+  };
+  const routeStopIds = useMemo(
+    () => routeStops.map((stop) => (graph ? resolveQueryToId(stop, graph) : null)),
+    [graph, routeStops]
+  );
+  useEffect(() => {
+    setRouteStopKeys((prev) => {
+      if (prev.length === routeStops.length) return prev;
+      const next = prev.slice(0, routeStops.length);
+      while (next.length < routeStops.length) next.push(makeRouteStopKey());
+      return next;
+    });
+    routeStopRowRefs.current = routeStopRowRefs.current.slice(0, routeStops.length);
+  }, [routeStops.length]);
+  useEffect(() => {
+    return () => {
+      if (routeStopDropRafRef.current != null) {
+        window.cancelAnimationFrame(routeStopDropRafRef.current);
+      }
+    };
+  }, []);
+  const stagingId = routeStopIds[0] ?? null;
+  const destinationId = routeStopIds[routeStopIds.length - 1] ?? null;
+  const waypointIds = useMemo(
+    () => routeStopIds.slice(1, -1).filter((id): id is number => id != null),
+    [routeStopIds]
+  );
+  const hasBlankWaypoint = waypointQueries.some((stop) => !stop.trim());
+  const hasInvalidWaypoint = waypointQueries.some((stop, idx) => stop.trim() && routeStopIds[idx + 1] == null);
 
   const [routeResult, setRouteResult] = useState<{ routes: RouteOption[]; message: string | null; loading: boolean; baselineJumps: number | null }>({
     routes: [],
@@ -238,7 +465,7 @@ export function BridgePlanner() {
     loading: false,
     baselineJumps: null,
   });
-  const [copyStatus, setCopyStatus] = useState<null | { target: string; status: 'success' | 'error' }>(null);
+  const { copyStatuses, copyText } = useCopyStatuses();
   const [headerCopyOpen, setHeaderCopyOpen] = useState(false);
   const [routeCopyOpenKey, setRouteCopyOpenKey] = useState<string | null>(null);
   const workerRef = useRef<Worker | null>(null);
@@ -279,6 +506,10 @@ export function BridgePlanner() {
       setRouteResult({ routes: [], message: 'Enter a destination and staging system to calculate a route.', loading: false, baselineJumps: null });
       return;
     }
+    if (hasBlankWaypoint || hasInvalidWaypoint) {
+      setRouteResult({ routes: [], message: 'Enter valid systems for all waypoints to calculate a route.', loading: false, baselineJumps: null });
+      return;
+    }
     if (!workerRef.current) return;
     requestIdRef.current += 1;
     const requestId = requestIdRef.current;
@@ -290,6 +521,7 @@ export function BridgePlanner() {
       requestId,
       destinationId,
       stagingId,
+      waypointIds,
       bridgeRange: planner.bridgeRange,
       routesToShow: planner.routesToShow,
       settings: {
@@ -299,6 +531,7 @@ export function BridgePlanner() {
         bridgeFromStaging: settings.bridgeFromStaging,
         bridgeCount: settings.bridgeCount,
         bridgeContinuous: settings.bridgeContinuous,
+        bridgeOnlyChain: settings.bridgeOnlyChain,
         allowAnsiblex: settings.allowAnsiblex,
         ansiblexes: settings.ansiblexes,
         limitToCynoBeacons: settings.limitToCynoBeacons,
@@ -311,6 +544,9 @@ export function BridgePlanner() {
     graph,
     destinationId,
     stagingId,
+    waypointIds,
+    hasBlankWaypoint,
+    hasInvalidWaypoint,
     planner.bridgeRange,
     planner.routesToShow,
     settings.excludeZarzakh,
@@ -319,6 +555,7 @@ export function BridgePlanner() {
     settings.bridgeFromStaging,
     settings.bridgeCount,
     settings.bridgeContinuous,
+    settings.bridgeOnlyChain,
     settings.allowAnsiblex,
     settings.ansiblexes,
     settings.limitToCynoBeacons,
@@ -352,16 +589,28 @@ export function BridgePlanner() {
 
   const summary = useMemo(() => {
     if (!graph || !selectedRoute) return null;
-    const parkingName = graph.namesById?.[String(selectedRoute.parkingId)] ?? String(selectedRoute.parkingId);
-    const endpointName = graph.namesById?.[String(selectedRoute.bridgeEndpointId)] ?? String(selectedRoute.bridgeEndpointId);
-    if (selectedRoute.parking2Id != null && selectedRoute.bridgeEndpoint2Id != null && selectedRoute.bridge2Ly != null) {
-      const parking2Name = graph.namesById?.[String(selectedRoute.parking2Id)] ?? String(selectedRoute.parking2Id);
-      const endpoint2Name = graph.namesById?.[String(selectedRoute.bridgeEndpoint2Id)] ?? String(selectedRoute.bridgeEndpoint2Id);
-      const midTravel = selectedRoute.midTravelJumps ?? 0;
-      return `${parkingName} | ${selectedRoute.travelJumps}j to park | bridge to ${endpointName} (${selectedRoute.bridgeLy.toFixed(2)} ly) | ${midTravel}j to ${parking2Name} | bridge to ${endpoint2Name} (${selectedRoute.bridge2Ly.toFixed(2)} ly) | ${selectedRoute.postBridgeJumps}j to destination | total ${selectedRoute.totalJumps}j`;
+    const parts: string[] = [];
+    selectedRoute.bridgeLegs.forEach((leg, idx) => {
+      const parkingName = graph.namesById?.[String(leg.parkingId)] ?? String(leg.parkingId);
+      const endpointName = graph.namesById?.[String(leg.endpointId)] ?? String(leg.endpointId);
+      if (leg.approachJumps > 0) {
+        parts.push(`${leg.approachJumps}j to ${parkingName}`);
+      } else if (idx === 0 && stagingId === leg.parkingId) {
+        parts.push(`start at ${parkingName}`);
+      }
+      parts.push(`bridge to ${endpointName} (${leg.bridgeLy.toFixed(2)} ly)`);
+    });
+    if (selectedRoute.postBridgeJumps > 0) {
+      parts.push(
+        selectedRoute.waypointIds?.length
+          ? `${selectedRoute.postBridgeJumps}j after bridges across waypoints`
+          : `${selectedRoute.postBridgeJumps}j to destination`
+      );
     }
-    return `${parkingName} | ${selectedRoute.travelJumps}j to park | bridge to ${endpointName} (${selectedRoute.bridgeLy.toFixed(2)} ly) | ${selectedRoute.postBridgeJumps}j to destination | total ${selectedRoute.totalJumps}j`;
-  }, [graph, selectedRoute]);
+    parts.push(`total ${selectedRoute.totalJumps}j`);
+    parts.push(`${selectedRoute.totalBridges} bridge${selectedRoute.totalBridges === 1 ? '' : 's'}`);
+    return parts.join(' | ');
+  }, [graph, selectedRoute, stagingId]);
 
   const nameFor = (id: number | null) => {
     if (id == null) return '—';
@@ -392,19 +641,10 @@ export function BridgePlanner() {
     if (!graph || routesForCopy.length === 0) return '';
     const namesById = graph.namesById || {};
     const lines = routesForCopy.map((route) => {
-      const parkingName = namesById[String(route.parkingId)] ?? String(route.parkingId);
-      const endpointName = namesById[String(route.bridgeEndpointId)] ?? String(route.bridgeEndpointId);
-      const parkingAnchor = `<a href="showinfo:5//${route.parkingId}">${parkingName}</a>`;
-      const endpointAnchor = `<a href="showinfo:5//${route.bridgeEndpointId}">${endpointName}</a>`;
-      let line = `${parkingAnchor} - ${endpointAnchor}`;
-      if (route.parking2Id != null && route.bridgeEndpoint2Id != null) {
-        const parking2Name = namesById[String(route.parking2Id)] ?? String(route.parking2Id);
-        const endpoint2Name = namesById[String(route.bridgeEndpoint2Id)] ?? String(route.bridgeEndpoint2Id);
-        const parking2Anchor = `<a href="showinfo:5//${route.parking2Id}">${parking2Name}</a>`;
-        const endpoint2Anchor = `<a href="showinfo:5//${route.bridgeEndpoint2Id}">${endpoint2Name}</a>`;
-        line += ` - ${parking2Anchor} - ${endpoint2Anchor}`;
-      }
-      return `${line} (${route.totalJumps}j)`;
+      const chain = getBridgeSequence(route)
+        .map((id) => `<a href="showinfo:5//${id}">${namesById[String(id)] ?? String(id)}</a>`)
+        .join(' - ');
+      return `${chain} (${route.totalJumps}j, ${route.totalBridges}b)`;
     });
     const body = lines.join('<br>');
     return `<font size="13" color="#bfffffff"></font><font size="13" color="#ffffffff"><loc>${body}</loc></font>`;
@@ -413,74 +653,32 @@ export function BridgePlanner() {
     if (!graph || routesForCopy.length === 0) return '';
     const namesById = graph.namesById || {};
     const lines = routesForCopy.map((route) => {
-      const parkingName = namesById[String(route.parkingId)] ?? String(route.parkingId);
-      const endpointName = namesById[String(route.bridgeEndpointId)] ?? String(route.bridgeEndpointId);
-      let line = `${parkingName} - ${endpointName}`;
-      if (route.parking2Id != null && route.bridgeEndpoint2Id != null) {
-        const parking2Name = namesById[String(route.parking2Id)] ?? String(route.parking2Id);
-        const endpoint2Name = namesById[String(route.bridgeEndpoint2Id)] ?? String(route.bridgeEndpoint2Id);
-        line += ` - ${parking2Name} - ${endpoint2Name}`;
-      }
-      return `${line} (${route.totalJumps}j)`;
+      const chain = getBridgeSequence(route)
+        .map((id) => namesById[String(id)] ?? String(id))
+        .join(' - ');
+      return `${chain} (${route.totalJumps}j, ${route.totalBridges}b)`;
     });
     return lines.join('\n');
   }, [graph, routesForCopy]);
   const buildRouteCopyPayload = useMemo(() => {
-    if (!graph) return (_route: RouteOption) => ({ eve: '', plain: '' });
+    if (!graph) return () => ({ eve: '', plain: '' });
     const namesById = graph.namesById || {};
     return (route: RouteOption) => {
-      const parkingName = namesById[String(route.parkingId)] ?? String(route.parkingId);
-      const endpointName = namesById[String(route.bridgeEndpointId)] ?? String(route.bridgeEndpointId);
-      let eveLine = `<a href="showinfo:5//${route.parkingId}">${parkingName}</a> - <a href="showinfo:5//${route.bridgeEndpointId}">${endpointName}</a>`;
-      let plainLine = `${parkingName} - ${endpointName}`;
-      if (route.parking2Id != null && route.bridgeEndpoint2Id != null) {
-        const parking2Name = namesById[String(route.parking2Id)] ?? String(route.parking2Id);
-        const endpoint2Name = namesById[String(route.bridgeEndpoint2Id)] ?? String(route.bridgeEndpoint2Id);
-        eveLine += ` - <a href="showinfo:5//${route.parking2Id}">${parking2Name}</a> - <a href="showinfo:5//${route.bridgeEndpoint2Id}">${endpoint2Name}</a>`;
-        plainLine += ` - ${parking2Name} - ${endpoint2Name}`;
-      }
-      eveLine += ` (${route.totalJumps}j)`;
-      plainLine += ` (${route.totalJumps}j)`;
+      const ids = getBridgeSequence(route);
+      let eveLine = ids.map((id) => `<a href="showinfo:5//${id}">${namesById[String(id)] ?? String(id)}</a>`).join(' - ');
+      let plainLine = ids.map((id) => namesById[String(id)] ?? String(id)).join(' - ');
+      eveLine += ` (${route.totalJumps}j, ${route.totalBridges}b)`;
+      plainLine += ` (${route.totalJumps}j, ${route.totalBridges}b)`;
       const eve = `<font size="13" color="#bfffffff"></font><font size="13" color="#ffffffff"><loc>${eveLine}</loc></font>`;
       return { eve, plain: plainLine };
     };
   }, [graph]);
 
-  async function copyText(text: string, target: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopyStatus({ target, status: 'success' });
-      setTimeout(() => setCopyStatus(null), 1200);
-    } catch {
-      try {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        document.body.appendChild(ta);
-        ta.select();
-        const ok = document.execCommand('copy');
-        document.body.removeChild(ta);
-        setCopyStatus({ target, status: ok ? 'success' : 'error' });
-        setTimeout(() => setCopyStatus(null), ok ? 1200 : 1800);
-      } catch {
-        setCopyStatus({ target, status: 'error' });
-        setTimeout(() => setCopyStatus(null), 1800);
-      }
-    }
-  }
-
   const fitNodeIds = useMemo(() => {
     if (routeResult.routes.length === 0) return [] as number[];
     const ids = new Set<number>();
     for (const route of routeResult.routes) {
-      for (const id of route.travelPath) ids.add(id);
-      for (const id of route.postBridgePath) ids.add(id);
-      if (route.midTravelPath) {
-        for (const id of route.midTravelPath) ids.add(id);
-      }
-      ids.add(route.parkingId);
-      ids.add(route.bridgeEndpointId);
-      if (route.parking2Id != null) ids.add(route.parking2Id);
-      if (route.bridgeEndpoint2Id != null) ids.add(route.bridgeEndpoint2Id);
+      for (const id of getAllRouteIds(route)) ids.add(id);
     }
     if (stagingId != null) ids.add(stagingId);
     if (destinationId != null) ids.add(destinationId);
@@ -510,12 +708,57 @@ export function BridgePlanner() {
       <div className="grid gap-6 lg:grid-cols-2 items-start">
         <div className="grid gap-4">
           <section className="grid gap-4 md:grid-cols-2 bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+            <div className="md:col-span-2 grid gap-2">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium text-slate-900 dark:text-slate-100">Route mode</div>
+                  <div className="text-xs text-slate-600 dark:text-slate-300">
+                    {isBridgeOnlyMode
+                      ? 'Chain titan bridges only.'
+                      : 'Mix titan bridges with normal gate travel.'}
+                  </div>
+                </div>
+              </div>
+              <div className="relative grid grid-cols-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-900/40 p-1 overflow-hidden">
+                <div
+                  className="pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-md bg-amber-500 shadow-sm transition-transform duration-200 ease-out"
+                  style={{ transform: isBridgeOnlyMode ? 'translateX(100%)' : 'translateX(0%)' }}
+                  aria-hidden="true"
+                />
+                {([
+                  { value: 'bridge-gate', label: 'Bridge + gate' },
+                  { value: 'bridge-only', label: 'Bridge only' },
+                ] as const).map((option) => {
+                  const isActive = travelMode === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className={
+                        'relative z-10 rounded-md px-3 py-2 text-sm font-medium transition-colors duration-200 ' +
+                        (isActive
+                          ? 'text-white'
+                          : 'text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white')
+                      }
+                      aria-pressed={isActive}
+                      onClick={() => setSettings((prev) => ({
+                        ...prev,
+                        bridgeOnlyChain: option.value === 'bridge-only',
+                      }))}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <label className="grid gap-2">
-            Starting system
+              Starting system
               <AutocompleteInput
                 graph={graph}
-                value={planner.stagingQuery}
-                onChange={(value) => setPlanner((prev) => ({ ...prev, stagingQuery: value }))}
+                value={stagingQuery}
+                onChange={(value) => updateRouteStop(0, value)}
                 placeholder="e.g. UALX-3"
               />
             </label>
@@ -524,11 +767,27 @@ export function BridgePlanner() {
               Destination system
               <AutocompleteInput
                 graph={graph}
-                value={planner.targetQuery}
-                onChange={(value) => setPlanner((prev) => ({ ...prev, targetQuery: value }))}
+                value={targetQuery}
+                onChange={(value) => updateRouteStop(routeStops.length - 1, value)}
                 placeholder="e.g. C-J6MT"
               />
             </label>
+
+            <div className="md:col-span-2 flex items-center justify-between gap-3 rounded-md border border-gray-200 dark:border-gray-700 bg-white/60 dark:bg-gray-900/30 px-3 py-2">
+              <div className="text-sm text-slate-700 dark:text-slate-300">
+                {waypointQueries.length === 0
+                  ? 'No waypoints configured.'
+                  : `Waypoints: ${waypointQueries.map((stop) => stop.trim() || '—').join(' → ')}`}
+              </div>
+              <button
+                type="button"
+                className="px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center justify-center gap-1 leading-none"
+                onClick={() => setShowWaypointsModal(true)}
+              >
+                <Icon name="gear" size={16} />
+                <span>{waypointQueries.length > 0 ? 'Edit route stops…' : 'Add waypoints…'}</span>
+              </button>
+            </div>
 
             <label className="grid gap-2 md:col-span-2">
               <div className="flex items-center justify-between gap-2">
@@ -607,54 +866,60 @@ export function BridgePlanner() {
             </label>
 
             <fieldset className="md:col-span-2 border border-gray-200 dark:border-gray-700 rounded-md p-3">
-              <legend className="px-1 text-sm text-gray-700 dark:text-gray-300">Travel graph</legend>
+              <legend className="px-1 text-sm text-gray-700 dark:text-gray-300">Options</legend>
               <div className="flex flex-wrap items-center gap-3">
-                <label className="inline-flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    className="accent-blue-600"
-                    checked={!!settings.bridgeIntoDestination}
-                    onChange={(e) => setSettings({
-                      ...settings,
-                      bridgeIntoDestination: e.target.checked,
-                      bridgeFromStaging: e.target.checked ? false : settings.bridgeFromStaging,
-                    })}
-                  />
-                  <span>Bridge into destination</span>
-                </label>
-                <label className="inline-flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    className="accent-blue-600"
-                    checked={!!settings.bridgeFromStaging}
-                    onChange={(e) => setSettings({
-                      ...settings,
-                      bridgeFromStaging: e.target.checked,
-                      bridgeIntoDestination: e.target.checked ? false : settings.bridgeIntoDestination,
-                    })}
-                  />
-                  <span>Bridge from starting system</span>
-                </label>
-                <label className="inline-flex items-center gap-2">
-                  <span>Bridges</span>
-                  <select
-                    className="rounded border border-gray-300 dark:border-gray-700 bg-white/80 dark:bg-gray-900 px-2 py-1 text-xs"
-                    value={settings.bridgeCount}
-                    onChange={(e) => {
-                      const nextCount = Math.max(1, Math.min(2, Number(e.target.value)));
-                      setSettings({
-                        ...settings,
-                        bridgeCount: nextCount,
-                        bridgeContinuous: nextCount === 2 ? settings.bridgeContinuous : false,
-                      });
-                    }}
-                  >
-                    {[1, 2].map((n) => (
-                      <option key={n} value={n}>{n}</option>
-                    ))}
-                  </select>
-                </label>
-                {settings.bridgeCount === 2 && (
+                {!isBridgeOnlyMode && (
+                  <>
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        className="accent-blue-600"
+                        checked={!!settings.bridgeIntoDestination}
+                        onChange={(e) => setSettings({
+                          ...settings,
+                          bridgeIntoDestination: e.target.checked,
+                          bridgeFromStaging: e.target.checked && settings.bridgeCount === 1 ? false : settings.bridgeFromStaging,
+                        })}
+                      />
+                      <span>Bridge into destination</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        className="accent-blue-600"
+                        checked={!!settings.bridgeFromStaging}
+                        onChange={(e) => setSettings({
+                          ...settings,
+                          bridgeFromStaging: e.target.checked,
+                          bridgeIntoDestination: e.target.checked && settings.bridgeCount === 1 ? false : settings.bridgeIntoDestination,
+                        })}
+                      />
+                      <span>Bridge from starting system</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2">
+                      <span>Bridges</span>
+                      <select
+                        className="rounded border border-gray-300 dark:border-gray-700 bg-white/80 dark:bg-gray-900 px-2 py-1 text-xs"
+                        value={settings.bridgeCount}
+                        onChange={(e) => {
+                          const nextCount = Math.max(1, Math.min(2, Number(e.target.value)));
+                          setSettings({
+                            ...settings,
+                            bridgeCount: nextCount,
+                            bridgeContinuous: nextCount === 2 ? settings.bridgeContinuous : false,
+                            bridgeIntoDestination: nextCount === 1 && settings.bridgeFromStaging ? false : settings.bridgeIntoDestination,
+                            bridgeFromStaging: nextCount === 1 && settings.bridgeIntoDestination ? false : settings.bridgeFromStaging,
+                          });
+                        }}
+                      >
+                        {[1, 2].map((n) => (
+                          <option key={n} value={n}>{n}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </>
+                )}
+                {settings.bridgeCount === 2 && !isBridgeOnlyMode && (
                   <label className="inline-flex items-center gap-2">
                     <input
                       type="checkbox"
@@ -665,23 +930,32 @@ export function BridgePlanner() {
                     <span>Continuous bridges</span>
                   </label>
                 )}
-                <label className="inline-flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    className="accent-blue-600"
-                    checked={!!settings.allowAnsiblex}
-                    onChange={(e) => setSettings({ ...settings, allowAnsiblex: e.target.checked })}
-                  />
-                  <span>Allow Ansiblex jump bridges</span>
-                </label>
-                <button
-                  type="button"
-                  className="px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center justify-center gap-1 leading-none"
-                  onClick={() => setShowAnsiblexModal(true)}
-                >
-                  <Icon name="gear" size={16} />
-                  <span className="inline-block align-middle">Configure…</span>
-                </button>
+                {isBridgeOnlyMode && (
+                  <span className="text-xs text-slate-600 dark:text-slate-300">
+                    Uses only titan bridges. Gate travel and Ansiblex options are hidden in this mode.
+                  </span>
+                )}
+                {!isBridgeOnlyMode && (
+                  <>
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        className="accent-blue-600"
+                        checked={!!settings.allowAnsiblex}
+                        onChange={(e) => setSettings({ ...settings, allowAnsiblex: e.target.checked })}
+                      />
+                      <span>Allow Ansiblex jump bridges</span>
+                    </label>
+                    <button
+                      type="button"
+                      className="px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center justify-center gap-1 leading-none"
+                      onClick={() => setShowAnsiblexModal(true)}
+                    >
+                      <Icon name="gear" size={16} />
+                      <span className="inline-block align-middle">Configure…</span>
+                    </button>
+                  </>
+                )}
                 <label className="inline-flex items-center gap-2">
                   <input
                     type="checkbox"
@@ -727,26 +1001,27 @@ export function BridgePlanner() {
                 {routeResult.loading && <span className="text-xs text-slate-500">Updating…</span>}
               </div>
               <div className="flex items-center gap-2 text-xs text-slate-500">
+                {(() => {
+                  const headerCopyState = copyStatuses.header ?? null;
+                  return (
                 <div className="relative">
-                  {copyStatus?.target === 'header' && (
-                    <div className={"pointer-events-none absolute -top-8 right-0 px-3 py-1.5 rounded shadow text-xs inline-flex items-center gap-2 " + (copyStatus.status === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white')} role="status" aria-live="polite">
-                      <Icon name={copyStatus.status === 'success' ? 'copy' : 'warn'} size={12} color="white" />
-                      {copyStatus.status === 'success' ? 'Copied!' : 'Copy failed'}
-                    </div>
-                  )}
                   <div
                     className="relative"
                     onMouseLeave={() => setHeaderCopyOpen(false)}
                   >
                     <button
                       type="button"
-                      className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center gap-1"
+                      className={getCopyButtonClass(headerCopyState, "px-2 py-1 text-xs rounded border inline-flex items-center gap-1 transition-colors")}
                       disabled={!eveLinksMarkup && !plainTextRoutes}
                       aria-label="Copy"
                       onMouseEnter={() => setHeaderCopyOpen(true)}
                     >
-                      <Icon name="copy" size={14} />
-                      <span>Copy</span>
+                      <Icon
+                        name={getCopyButtonIconName(headerCopyState)}
+                        size={14}
+                        color={getCopyButtonIconColor(headerCopyState)}
+                      />
+                      <span>{getCopyButtonLabel(headerCopyState)}</span>
                     </button>
                     {headerCopyOpen && (
                       <div className="absolute right-0 top-full pt-1 z-10">
@@ -757,6 +1032,7 @@ export function BridgePlanner() {
                           <button
                             type="button"
                             onClick={() => {
+                              setHeaderCopyOpen(false);
                               if (eveLinksMarkup) copyText(eveLinksMarkup, 'header');
                             }}
                             className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50"
@@ -767,6 +1043,7 @@ export function BridgePlanner() {
                           <button
                             type="button"
                             onClick={() => {
+                              setHeaderCopyOpen(false);
                               if (plainTextRoutes) copyText(plainTextRoutes, 'header');
                             }}
                             className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50"
@@ -779,6 +1056,8 @@ export function BridgePlanner() {
                     )}
                   </div>
                 </div>
+                  );
+                })()}
                 <span>Show</span>
                 <select
                   className="rounded border border-gray-300 dark:border-gray-700 bg-white/80 dark:bg-gray-900 px-2 py-1 text-xs"
@@ -814,6 +1093,19 @@ export function BridgePlanner() {
                   }
 
                   const isSelected = selectedRoute?.key === route.key;
+                  const chainIds = getBridgeSequence(route);
+                  const displayChainIds = stagingId != null && chainIds[0] !== stagingId ? [stagingId, ...chainIds] : chainIds;
+                  const stopChainIds = [
+                    stagingId,
+                    ...(route.waypointIds ?? []),
+                    destinationId,
+                  ].filter((id): id is number => id != null);
+                  const gateDetails = route.bridgeLegs
+                    .map((leg, legIdx) => leg.approachJumps > 0 ? `${leg.approachJumps}j to park${route.bridgeLegs.length > 1 ? ` ${legIdx + 1}` : ''}` : null)
+                    .filter((value): value is string => value != null);
+                  if (route.postBridgeJumps > 0) gateDetails.push(`${route.postBridgeJumps}j after`);
+                  const bridgeDetails = route.bridgeLegs.map((leg) => `${leg.bridgeLy.toFixed(2)} ly bridge`);
+                  const routeCopyState = copyStatuses[route.key] ?? null;
                   return (
                     <div
                       key={route.key}
@@ -840,27 +1132,34 @@ export function BridgePlanner() {
                     >
                       <div className="w-full text-left pointer-events-none">
                         <div className="text-sm font-medium text-slate-900 dark:text-slate-100 flex flex-wrap items-center gap-x-1 gap-y-0.5">
-                          {renderSystemName(stagingId)}
-                          <span aria-hidden="true">→</span>
-                          {renderSystemName(route.parkingId)}
-                          <span aria-hidden="true">→</span>
-                          {renderSystemName(route.bridgeEndpointId)}
-                          {route.parking2Id != null && route.bridgeEndpoint2Id != null && (
-                            <>
+                          {displayChainIds.map((id, chainIdx) => (
+                            <span key={`${route.key}-${id}-${chainIdx}`} className="inline-flex items-center gap-x-1 gap-y-0.5 flex-wrap">
+                              {chainIdx > 0 && <span aria-hidden="true">→</span>}
+                              {renderSystemName(id)}
+                            </span>
+                          ))}
+                          {destinationId != null && displayChainIds[displayChainIds.length - 1] !== destinationId && (
+                            <span className="inline-flex items-center gap-x-1 gap-y-0.5 flex-wrap">
                               <span aria-hidden="true">→</span>
-                              {renderSystemName(route.parking2Id)}
-                              <span aria-hidden="true">→</span>
-                              {renderSystemName(route.bridgeEndpoint2Id)}
-                            </>
+                              {renderSystemName(destinationId)}
+                            </span>
                           )}
-                          <span aria-hidden="true">→</span>
-                          {renderSystemName(destinationId)}
                         </div>
+                        {route.waypointIds && route.waypointIds.length > 0 && (
+                          <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 flex flex-wrap items-center gap-x-1 gap-y-0.5">
+                            <span>Stops:</span>
+                            {stopChainIds.map((id, chainIdx) => (
+                              <span key={`${route.key}-stop-${id}-${chainIdx}`} className="inline-flex items-center gap-x-1 gap-y-0.5 flex-wrap">
+                                {chainIdx > 0 && <span aria-hidden="true">→</span>}
+                                {renderSystemName(id)}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                         <div className="mt-1 flex items-center justify-between text-xs text-slate-600 dark:text-slate-300">
                           <span>
-                            {route.travelJumps}j to park • {route.bridgeLy.toFixed(2)} ly bridge
-                            {route.parking2Id != null && route.bridge2Ly != null ? ` • ${route.midTravelJumps ?? 0}j to park 2 • ${route.bridge2Ly.toFixed(2)} ly bridge` : ''}
-                            {' '}• {route.postBridgeJumps}j after
+                            {route.totalBridges} bridge{route.totalBridges === 1 ? '' : 's'} • {bridgeDetails.join(' • ')}
+                            {gateDetails.length > 0 ? ` • ${gateDetails.join(' • ')}` : ''}
                           </span>
                           <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{route.totalJumps}j</span>
                         </div>
@@ -872,25 +1171,23 @@ export function BridgePlanner() {
                           </span>
                         )}
                         <div className="relative pointer-events-auto" onClick={(event) => event.stopPropagation()}>
-                          {copyStatus?.target === route.key && (
-                            <div className={"pointer-events-none absolute -top-8 right-0 px-3 py-1.5 rounded shadow text-xs inline-flex items-center gap-2 " + (copyStatus.status === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white')} role="status" aria-live="polite">
-                              <Icon name={copyStatus.status === 'success' ? 'copy' : 'warn'} size={12} color="white" />
-                              {copyStatus.status === 'success' ? 'Copied!' : 'Copy failed'}
-                            </div>
-                          )}
                           <div
                             className="relative"
                             onMouseLeave={() => setRouteCopyOpenKey(null)}
                           >
                             <button
                               type="button"
-                              className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center gap-1"
+                              className={getCopyButtonClass(routeCopyState, "px-2 py-1 text-xs rounded border inline-flex items-center gap-1 transition-colors")}
                               aria-label="Copy"
                               onMouseEnter={() => setRouteCopyOpenKey(route.key)}
                               onClick={(event) => event.stopPropagation()}
                             >
-                              <Icon name="copy" size={14} />
-                              <span>Copy</span>
+                              <Icon
+                                name={getCopyButtonIconName(routeCopyState)}
+                                size={14}
+                                color={getCopyButtonIconColor(routeCopyState)}
+                              />
+                              <span>{getCopyButtonLabel(routeCopyState)}</span>
                             </button>
                             {routeCopyOpenKey === route.key && (
                               <div className="absolute right-0 top-full pt-1 z-10">
@@ -903,6 +1200,7 @@ export function BridgePlanner() {
                                     type="button"
                                     onClick={() => {
                                       const payload = buildRouteCopyPayload(route);
+                                      setRouteCopyOpenKey(null);
                                       if (payload.eve) copyText(payload.eve, route.key);
                                     }}
                                     className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800"
@@ -913,6 +1211,7 @@ export function BridgePlanner() {
                                     type="button"
                                     onClick={() => {
                                       const payload = buildRouteCopyPayload(route);
+                                      setRouteCopyOpenKey(null);
                                       if (payload.plain) copyText(payload.plain, route.key);
                                     }}
                                     className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800"
@@ -939,13 +1238,8 @@ export function BridgePlanner() {
             namesById={graph?.namesById || {}}
             stagingId={stagingId}
             destinationId={destinationId}
-            parkingId={selectedRoute?.parkingId ?? null}
-            bridgeEndpointId={selectedRoute?.bridgeEndpointId ?? null}
-            parking2Id={selectedRoute?.parking2Id ?? null}
-            bridgeEndpoint2Id={selectedRoute?.bridgeEndpoint2Id ?? null}
-            travelPath={selectedRoute?.travelPath ?? null}
-            midTravelPath={selectedRoute?.midTravelPath ?? null}
-            postBridgePath={selectedRoute?.postBridgePath ?? null}
+            bridgeLegs={selectedRoute?.bridgeLegs ?? null}
+            postBridgePaths={selectedRoute?.postBridgePaths ?? null}
             fitNodeIds={fitNodeIds}
             bridgeRange={planner.bridgeRange}
             settings={{
@@ -960,11 +1254,148 @@ export function BridgePlanner() {
             baselineJumps={routeResult.baselineJumps}
             onSystemDoubleClick={(id) => {
               const name = graph?.namesById?.[String(id)] ?? String(id);
-              setPlanner((prev) => ({ ...prev, targetQuery: name }));
+              updateRouteStop(routeStops.length - 1, name);
             }}
           />
         </div>
       </div>
+
+      {showWaypointsModal && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center p-4 bg-black/50">
+          <div className="w-full max-w-[640px] max-h-[85vh] overflow-y-auto rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-4 flex flex-col gap-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold">Route stops</h2>
+                <p className="text-sm text-slate-600 dark:text-slate-300">
+                  Manage the ordered list of systems the planner must route through.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
+                onClick={() => setShowWaypointsModal(false)}
+                aria-label="Close"
+              >
+                <Icon name="close" size={20} />
+              </button>
+            </div>
+
+            <div className="grid gap-3">
+              {routeStops.map((stop, index) => {
+                const isStart = index === 0;
+                const isDestination = index === routeStops.length - 1;
+                const stopLabel = isStart ? 'Start' : isDestination ? 'End' : `Via ${index}`;
+                const isDropTarget = dragState?.targetIndex === index && dragState.activeIndex !== index;
+                const isDraggedRow = dragState?.activeIndex === index;
+                const rowTransform = getRouteStopRowTransform(index);
+                return (
+                  <div
+                    key={routeStopKeys[index] ?? `route-stop-${index}`}
+                    ref={(node) => {
+                      routeStopRowRefs.current[index] = node;
+                    }}
+                    className={
+                      "relative flex items-center gap-2 rounded-md border bg-white dark:bg-gray-900 px-2.5 py-2 transition-colors cursor-grab active:cursor-grabbing " +
+                      (isDropTarget
+                        ? "border-amber-400 bg-amber-50/80 dark:bg-amber-900/20"
+                        : "border-gray-200 dark:border-gray-700") +
+                      (isDraggedRow ? " z-20 shadow-md" : "")
+                    }
+                    style={{
+                      transform: rowTransform,
+                      transition: (isDraggedRow || isRouteStopDropping)
+                        ? 'none'
+                        : 'transform 180ms ease, background-color 180ms ease, border-color 180ms ease',
+                    }}
+                    onPointerDown={(event) => {
+                      if (event.button !== 0) return;
+                      const target = event.target as HTMLElement;
+                      if (target.closest('input, button, ul, li')) return;
+                      event.preventDefault();
+                      event.currentTarget.setPointerCapture(event.pointerId);
+                      startRouteStopDrag(index, event.clientY);
+                    }}
+                    onPointerMove={(event) => {
+                      if (dragState?.activeIndex !== index) return;
+                      updateRouteStopDrag(event.clientY);
+                    }}
+                    onPointerUp={(event) => {
+                      if (dragState?.activeIndex !== index) return;
+                      try { event.currentTarget.releasePointerCapture(event.pointerId); } catch {}
+                      finishRouteStopDrag();
+                    }}
+                    onPointerCancel={(event) => {
+                      if (dragState?.activeIndex !== index) return;
+                      try { event.currentTarget.releasePointerCapture(event.pointerId); } catch {}
+                      if (routeStopDropRafRef.current != null) {
+                        window.cancelAnimationFrame(routeStopDropRafRef.current);
+                        routeStopDropRafRef.current = null;
+                      }
+                      setIsRouteStopDropping(false);
+                      dragStateRef.current = null;
+                      setDragState(null);
+                    }}
+                  >
+                    <div className="shrink-0 w-8 h-8 rounded border border-gray-300 dark:border-gray-700 inline-flex items-center justify-center text-slate-500 dark:text-slate-400">
+                      <Icon name="line-3-horizontal" size={15} />
+                    </div>
+                    <div
+                      className={
+                        'shrink-0 w-14 rounded-md px-2 py-1 text-center text-[11px] font-semibold uppercase tracking-wide ' +
+                        (isStart
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+                          : isDestination
+                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+                            : 'bg-slate-200/70 text-slate-700 dark:bg-slate-800 dark:text-slate-300')
+                      }
+                    >
+                      {stopLabel}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <AutocompleteInput
+                        compact
+                        graph={graph}
+                        value={stop}
+                        onChange={(value) => updateRouteStop(index, value)}
+                        placeholder={isStart ? 'e.g. UALX-3' : isDestination ? 'e.g. C-J6MT' : 'Waypoint system'}
+                      />
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        className="w-8 h-8 rounded border border-red-300 text-red-700 dark:border-red-800 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 inline-flex items-center justify-center"
+                        onClick={() => removeWaypoint(index)}
+                        aria-label={isStart ? 'Remove start system' : isDestination ? 'Remove destination system' : `Remove waypoint ${index}`}
+                        title={isStart ? 'Remove start system' : isDestination ? 'Remove destination system' : `Remove waypoint ${index}`}
+                      >
+                        <Icon name="close" size={14} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                className="px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center gap-2"
+                onClick={addWaypoint}
+              >
+                <Icon name="plus" size={16} />
+                <span>Add waypoint</span>
+              </button>
+              <button
+                type="button"
+                className="px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
+                onClick={() => setShowWaypointsModal(false)}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showAnsiblexModal && (
         <SharedAnsiblexModal

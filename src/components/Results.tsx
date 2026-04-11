@@ -1,10 +1,11 @@
 import type { ObservatoryHit } from '../lib/graph';
+import { getCopyButtonClass, getCopyButtonIconColor, getCopyButtonIconName, getCopyButtonLabel, useCopyStatuses } from '../lib/copy';
 import { Icon } from './Icon';
 import { useMemo, useState } from 'react';
 
 export function Results({ results, namesById, lyRadius, graph }: { results: ObservatoryHit[]; namesById?: Record<string, string>; lyRadius: number; graph: any }) {
   const LY = 9.4607e15;
-  const [copyStatus, setCopyStatus] = useState<null | 'success' | 'error'>(null);
+  const { copyStatuses, copyText } = useCopyStatuses();
   const [copyOpen, setCopyOpen] = useState(false);
   const SEC_COLORS = ['#833862','#692623','#AC2822','#BD4E26','#CC722C','#F5FD93','#90E56A','#82D8A8','#73CBF3','#5698E5','#4173DB'];
   const secInfo = (s: number | undefined | null) => {
@@ -40,42 +41,17 @@ export function Results({ results, namesById, lyRadius, graph }: { results: Obse
 
   if (!results.length) return <p>No observatories found within the selected jump range.</p>;
 
-  async function copyText(text: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopyStatus('success');
-      setTimeout(() => setCopyStatus(null), 1200);
-    } catch {
-      try {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        document.body.appendChild(ta);
-        ta.select();
-        const ok = document.execCommand('copy');
-        document.body.removeChild(ta);
-        setCopyStatus(ok ? 'success' : 'error');
-        setTimeout(() => setCopyStatus(null), ok ? 1200 : 1800);
-      } catch {
-        setCopyStatus('error');
-        setTimeout(() => setCopyStatus(null), 1800);
-      }
-    }
-  }
-
-  const handleCopyNames = () => copyText(systemNames.join('\n'));
-  const handleCopyEveLinks = () => copyText(eveLinksMarkup);
+  const handleCopyNames = () => copyText(systemNames.join('\n'), 'observatories');
+  const handleCopyEveLinks = () => copyText(eveLinksMarkup, 'observatories');
 
   return (
     <section className="bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
       <div className="relative flex items-center justify-between mb-3">
         <h2 className="text-xl font-medium">Found {results.length} observatory system(s)</h2>
         <div className="relative">
-          {copyStatus && (
-            <div className={"pointer-events-none absolute -top-8 right-0 px-3 py-1.5 rounded shadow text-sm inline-flex items-center gap-2 " + (copyStatus === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white')} role="status" aria-live="polite">
-              <Icon name={copyStatus === 'success' ? 'copy' : 'warn'} size={14} color="white" />
-              {copyStatus === 'success' ? 'Copied!' : 'Copy failed'}
-            </div>
-          )}
+          {(() => {
+            const copyState = copyStatuses.observatories ?? null;
+            return (
           <div
             className="relative"
             onMouseLeave={() => setCopyOpen(false)}
@@ -83,10 +59,15 @@ export function Results({ results, namesById, lyRadius, graph }: { results: Obse
             <button
               type="button"
               aria-label="Copy"
-              className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
+              className={getCopyButtonClass(copyState, "px-2 py-1 text-xs rounded border inline-flex items-center gap-1 transition-colors")}
               onMouseEnter={() => setCopyOpen(true)}
             >
-              <Icon name="copy" size={18} />
+              <Icon
+                name={getCopyButtonIconName(copyState)}
+                size={14}
+                color={getCopyButtonIconColor(copyState)}
+              />
+              <span>{getCopyButtonLabel(copyState)}</span>
             </button>
             {copyOpen && (
               <div className="absolute right-0 top-full pt-1 z-10">
@@ -96,14 +77,20 @@ export function Results({ results, namesById, lyRadius, graph }: { results: Obse
                 >
                   <button
                     type="button"
-                    onClick={handleCopyNames}
+                    onClick={() => {
+                      setCopyOpen(false);
+                      handleCopyNames();
+                    }}
                     className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800"
                   >
                     Copy system names
                   </button>
                   <button
                     type="button"
-                    onClick={handleCopyEveLinks}
+                    onClick={() => {
+                      setCopyOpen(false);
+                      handleCopyEveLinks();
+                    }}
                     className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800"
                   >
                     Copy EVE in-game links
@@ -112,6 +99,8 @@ export function Results({ results, namesById, lyRadius, graph }: { results: Obse
               </div>
             )}
           </div>
+            );
+          })()}
         </div>
       </div>
       <ol className="pl-5 space-y-3">

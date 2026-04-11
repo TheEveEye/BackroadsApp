@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import type { GraphData } from '../lib/data';
+import { getCopyButtonClass, getCopyButtonIconColor, getCopyButtonIconName, getCopyButtonLabel, useCopyStatuses } from '../lib/copy';
 import { resolveQueryToId, findPathTo } from '../lib/graph';
 import { AutocompleteInput } from '../components/AutocompleteInput';
 import { Icon } from '../components/Icon';
@@ -93,7 +94,7 @@ export function Scanner() {
   const [showAnsiblexModal, setShowAnsiblexModal] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [wormholes, setWormholes] = useState<Wormhole[]>([]);
-  const [copyStatus, setCopyStatus] = useState<null | 'success' | 'error'>(null);
+  const { copyStatuses, copyText } = useCopyStatuses();
   const [publicShare, setPublicShare] = useState(false);
   const location = useLocation();
 
@@ -443,38 +444,15 @@ export function Scanner() {
     } catch {}
 
     const text = lines.join('\n');
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopyStatus('success');
-      setTimeout(() => setCopyStatus(null), 1500);
-    } catch (_) {
-      // fallback: create a temporary textarea
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      document.body.appendChild(ta);
-      ta.select();
-      let ok = false;
-      try {
-        ok = document.execCommand('copy');
-      } catch {
-        ok = false;
-      } finally {
-        document.body.removeChild(ta);
-      }
-      setCopyStatus(ok ? 'success' : 'error');
-      setTimeout(() => setCopyStatus(null), ok ? 1500 : 2000);
-    }
+    await copyText(text, 'discord', { success: 1500, error: 2000 });
   };
 
   const handleCopyLink = async () => {
     try {
       const url = buildShareUrl(publicShare);
-      await navigator.clipboard.writeText(url);
-      setCopyStatus('success');
-      setTimeout(() => setCopyStatus(null), 1500);
+      await copyText(url, 'link', { success: 1500, error: 2000 });
     } catch {
-      setCopyStatus('error');
-      setTimeout(() => setCopyStatus(null), 2000);
+      // URL generation failed before clipboard copy.
     }
   };
 
@@ -800,12 +778,6 @@ export function Scanner() {
       </ul>
 
       <div className="relative flex items-center">
-        {copyStatus && (
-          <div className={"pointer-events-none absolute -top-8 right-0 px-3 py-1.5 rounded shadow text-sm inline-flex items-center gap-2 " + (copyStatus === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white')} role="status" aria-live="polite">
-            <Icon name={copyStatus === 'success' ? 'export' : 'warn'} size={14} color="white" />
-            {copyStatus === 'success' ? 'Copied!' : 'Copy failed'}
-          </div>
-        )}
         {/* Left spacer to keep the center button truly centered (matches two 36px buttons + 8px gap => 80px = w-20) */}
         <div className="w-20 shrink-0" aria-hidden="true" />
         <div className="flex-1 flex justify-center">
@@ -821,11 +793,31 @@ export function Scanner() {
             <span>Public link</span>
           </label>
           <div className="flex gap-2">
-            <button type="button" onClick={handleCopyDiscord} className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800" aria-label="Discord">
-              <Icon name="discord" size={20} />
+            <button
+              type="button"
+              onClick={handleCopyDiscord}
+              className={getCopyButtonClass(copyStatuses.discord ?? null, "px-2 py-1 text-xs rounded border inline-flex items-center gap-1 transition-colors")}
+              aria-label="Copy Discord"
+            >
+              <Icon
+                name={getCopyButtonIconName(copyStatuses.discord ?? null, 'discord')}
+                size={14}
+                color={getCopyButtonIconColor(copyStatuses.discord ?? null)}
+              />
+              <span>{getCopyButtonLabel(copyStatuses.discord ?? null, 'Copy Discord')}</span>
             </button>
-            <button type="button" onClick={handleCopyLink} className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800" aria-label="Link">
-              <Icon name="link" size={20} />
+            <button
+              type="button"
+              onClick={handleCopyLink}
+              className={getCopyButtonClass(copyStatuses.link ?? null, "px-2 py-1 text-xs rounded border inline-flex items-center gap-1 transition-colors")}
+              aria-label="Copy Link"
+            >
+              <Icon
+                name={getCopyButtonIconName(copyStatuses.link ?? null, 'link')}
+                size={14}
+                color={getCopyButtonIconColor(copyStatuses.link ?? null)}
+              />
+              <span>{getCopyButtonLabel(copyStatuses.link ?? null, 'Copy Link')}</span>
             </button>
           </div>
         </div>

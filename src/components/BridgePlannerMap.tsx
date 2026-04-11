@@ -28,13 +28,14 @@ type BridgePlannerMapProps = {
   namesById?: Record<string, string>;
   stagingId: number | null;
   destinationId: number | null;
-  parkingId: number | null;
-  bridgeEndpointId: number | null;
-  parking2Id: number | null;
-  bridgeEndpoint2Id: number | null;
-  travelPath: number[] | null;
-  midTravelPath: number[] | null;
-  postBridgePath: number[] | null;
+  bridgeLegs: Array<{
+    parkingId: number;
+    endpointId: number;
+    approachPath: number[];
+    approachJumps: number;
+    bridgeLy: number;
+  }> | null;
+  postBridgePaths: number[][] | null;
   fitNodeIds?: number[] | null;
   bridgeRange: number;
   settings: {
@@ -58,13 +59,8 @@ export function BridgePlannerMap({
   namesById,
   stagingId,
   destinationId,
-  parkingId,
-  bridgeEndpointId,
-  parking2Id,
-  bridgeEndpoint2Id,
-  travelPath,
-  midTravelPath,
-  postBridgePath,
+  bridgeLegs,
+  postBridgePaths,
   fitNodeIds,
   bridgeRange,
   settings,
@@ -93,30 +89,33 @@ export function BridgePlannerMap({
   } | null>(null);
   const suppressClickRef = useRef(false);
   const hasBase = !!graph && stagingId != null && destinationId != null;
-  const hasRoute = hasBase && !!travelPath && travelPath.length > 0 && parkingId != null && bridgeEndpointId != null;
+  const hasRoute = hasBase && Array.isArray(bridgeLegs) && bridgeLegs.length > 0;
 
   const w = 800;
   const h = 600;
   const pad = 70;
+  const approachPaths = useMemo(
+    () => (bridgeLegs ?? []).map((leg) => leg.approachPath).filter((path) => path.length > 1),
+    [bridgeLegs],
+  );
 
   const nodeIds = useMemo(() => {
-    if (!hasRoute || !travelPath) return [] as number[];
+    if (!hasRoute || !bridgeLegs) return [] as number[];
     const ids = new Set<number>();
-    for (const id of travelPath) ids.add(id);
     if (stagingId != null) ids.add(stagingId);
     if (destinationId != null) ids.add(destinationId);
-    if (parkingId != null) ids.add(parkingId);
-    if (bridgeEndpointId != null) ids.add(bridgeEndpointId);
-    if (midTravelPath) {
-      for (const id of midTravelPath) ids.add(id);
+    for (const leg of bridgeLegs) {
+      for (const id of leg.approachPath) ids.add(id);
+      ids.add(leg.parkingId);
+      ids.add(leg.endpointId);
     }
-    if (postBridgePath) {
-      for (const id of postBridgePath) ids.add(id);
+    if (postBridgePaths) {
+      for (const path of postBridgePaths) {
+        for (const id of path) ids.add(id);
+      }
     }
-    if (parking2Id != null) ids.add(parking2Id);
-    if (bridgeEndpoint2Id != null) ids.add(bridgeEndpoint2Id);
     return Array.from(ids.values());
-  }, [hasRoute, travelPath, stagingId, destinationId, parkingId, bridgeEndpointId, midTravelPath, postBridgePath, parking2Id, bridgeEndpoint2Id]);
+  }, [bridgeLegs, destinationId, hasRoute, postBridgePaths, stagingId]);
 
   const projected = useMemo(() => {
     if (!hasRoute || !graph) return [] as Array<{ id: number; px: number; py: number }>;
@@ -281,10 +280,9 @@ export function BridgePlannerMap({
   );
 
   const routeSegments = useMemo(() => {
-    const paths = [travelPath, midTravelPath].filter((p): p is number[] => Array.isArray(p) && p.length > 1);
-    if (paths.length === 0) return [] as Array<{ from: number; to: number; type: 'gate' | 'ansi' }>;
+    if (approachPaths.length === 0) return [] as Array<{ from: number; to: number; type: 'gate' | 'ansi' }>;
     const segs: Array<{ from: number; to: number; type: 'gate' | 'ansi' }> = [];
-    for (const path of paths) {
+    for (const path of approachPaths) {
       for (let i = 0; i < path.length - 1; i++) {
         const from = path[i];
         const to = path[i + 1];
@@ -293,19 +291,22 @@ export function BridgePlannerMap({
       }
     }
     return segs;
-  }, [travelPath, midTravelPath, ansiSet]);
+  }, [ansiSet, approachPaths]);
 
   const postBridgeSegments = useMemo(() => {
-    if (!postBridgePath || postBridgePath.length < 2) return [] as Array<{ from: number; to: number; type: 'gate' | 'ansi' }>;
+    if (!postBridgePaths || postBridgePaths.length === 0) return [] as Array<{ from: number; to: number; type: 'gate' | 'ansi' }>;
     const segs: Array<{ from: number; to: number; type: 'gate' | 'ansi' }> = [];
-    for (let i = 0; i < postBridgePath.length - 1; i++) {
-      const from = postBridgePath[i];
-      const to = postBridgePath[i + 1];
-      const type = ansiSet.has(`${from}->${to}`) ? 'ansi' : 'gate';
-      segs.push({ from, to, type });
+    for (const path of postBridgePaths) {
+      if (path.length < 2) continue;
+      for (let i = 0; i < path.length - 1; i++) {
+        const from = path[i];
+        const to = path[i + 1];
+        const type = ansiSet.has(`${from}->${to}`) ? 'ansi' : 'gate';
+        segs.push({ from, to, type });
+      }
     }
     return segs;
-  }, [postBridgePath, ansiSet]);
+  }, [postBridgePaths, ansiSet]);
 
   const nameFor = (id: number) => namesById?.[String(id)] ?? String(id);
   const getScreenPt = useCallback((id: number) => {
@@ -378,18 +379,26 @@ export function BridgePlannerMap({
 
   const labelIds = useMemo(() => {
     if (!hasRoute) return [] as number[];
-    const ids = new Set<number>([stagingId, parkingId, destinationId, bridgeEndpointId, parking2Id, bridgeEndpoint2Id].filter((v): v is number => v != null));
+    const ids = new Set<number>();
+    if (stagingId != null) ids.add(stagingId);
+    if (destinationId != null) ids.add(destinationId);
+    for (const leg of bridgeLegs ?? []) {
+      ids.add(leg.parkingId);
+      ids.add(leg.endpointId);
+    }
     return Array.from(ids.values());
-  }, [hasRoute, stagingId, parkingId, destinationId, bridgeEndpointId, parking2Id, bridgeEndpoint2Id]);
+  }, [bridgeLegs, destinationId, hasRoute, stagingId]);
 
-  const focusNodeColors = useMemo(() => new Map<number, string>([
-    ...(stagingId != null ? [[stagingId, '#2563eb'] as const] : []),
-    ...(destinationId != null ? [[destinationId, '#ef4444'] as const] : []),
-    ...(parkingId != null ? [[parkingId, '#f59e0b'] as const] : []),
-    ...(bridgeEndpointId != null ? [[bridgeEndpointId, '#a855f7'] as const] : []),
-    ...(parking2Id != null ? [[parking2Id, '#fbbf24'] as const] : []),
-    ...(bridgeEndpoint2Id != null ? [[bridgeEndpoint2Id, '#c084fc'] as const] : []),
-  ]), [stagingId, destinationId, parkingId, bridgeEndpointId, parking2Id, bridgeEndpoint2Id]);
+  const focusNodeColors = useMemo(() => {
+    const colors = new Map<number, string>();
+    for (const leg of bridgeLegs ?? []) {
+      colors.set(leg.parkingId, '#f59e0b');
+      colors.set(leg.endpointId, '#a855f7');
+    }
+    if (stagingId != null) colors.set(stagingId, '#2563eb');
+    if (destinationId != null) colors.set(destinationId, '#ef4444');
+    return colors;
+  }, [bridgeLegs, destinationId, stagingId]);
 
   const startPos = useMemo(() => {
     if (!graph || stagingId == null) return null;
@@ -636,40 +645,25 @@ export function BridgePlannerMap({
           </g>
 
           {/* Titan bridge segment */}
-          {parkingId != null && bridgeEndpointId != null && parkingId !== bridgeEndpointId && (() => {
-            const A = getPt(parkingId);
-            const B = getPt(bridgeEndpointId);
+          {(bridgeLegs ?? []).map((leg, idx) => {
+            if (leg.parkingId === leg.endpointId) return null;
+            const A = getPt(leg.parkingId);
+            const B = getPt(leg.endpointId);
             if (!A || !B) return null;
             const d = buildArcPath(A, B, 0.18, 30, 160);
             return (
               <path
+                key={`bridge-leg-${idx}`}
                 d={d}
                 stroke="#9333ea"
                 strokeWidth={3}
                 fill="none"
                 strokeDasharray="6 5"
-                opacity={0.95}
+                opacity={idx === 0 ? 0.95 : 0.8}
                 markerEnd="url(#titanArrow)"
               />
             );
-          })()}
-          {parking2Id != null && bridgeEndpoint2Id != null && parking2Id !== bridgeEndpoint2Id && (() => {
-            const A = getPt(parking2Id);
-            const B = getPt(bridgeEndpoint2Id);
-            if (!A || !B) return null;
-            const d = buildArcPath(A, B, 0.18, 30, 160);
-            return (
-              <path
-                d={d}
-                stroke="#9333ea"
-                strokeWidth={3}
-                fill="none"
-                strokeDasharray="6 5"
-                opacity={0.8}
-                markerEnd="url(#titanArrow)"
-              />
-            );
-          })()}
+          })}
 
           {/* Highlighted nodes */}
           <g>
@@ -752,15 +746,9 @@ export function BridgePlannerMap({
 
       <div className="text-sm text-gray-600 dark:text-gray-400 mt-2 flex flex-wrap gap-4">
         <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{ background: '#2563eb' }}></span>Staging</span>
-        <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{ background: '#f59e0b' }}></span>Parking</span>
-        {parking2Id != null && (
-          <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{ background: '#fbbf24' }}></span>Parking 2</span>
-        )}
+        <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{ background: '#f59e0b' }}></span>Parking systems</span>
         <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{ background: '#ef4444' }}></span>Destination</span>
-        <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{ background: '#a855f7' }}></span>Bridge endpoint</span>
-        {bridgeEndpoint2Id != null && (
-          <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{ background: '#c084fc' }}></span>Bridge endpoint 2</span>
-        )}
+        <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{ background: '#a855f7' }}></span>Bridge endpoints</span>
         <span className="inline-flex items-center gap-1"><span className="inline-block w-4 h-px" style={{ background: '#facc15' }}></span>Gates</span>
         <span className="inline-flex items-center gap-1"><span className="inline-block w-4 h-px" style={{ background: '#22c55e' }}></span>Ansiblex</span>
         <span className="inline-flex items-center gap-1"><img src={`${base}eve/cynosuralBeacon.png`} alt="" className="w-4 h-4 opacity-90" style={{ filter: isDarkMode ? undefined : 'invert(1)' }} />Cyno beacon</span>
