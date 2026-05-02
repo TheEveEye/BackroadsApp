@@ -19,6 +19,8 @@ type PlannerState = {
   routesToShow: number;
   presetShipClass: string;
   presetJdc: number;
+  presetJfc: number;
+  presetJf: number;
 };
 
 type TravelMode = 'bridge-gate' | 'bridge-only';
@@ -51,18 +53,37 @@ type RouteOption = {
 };
 
 const RANGE_PRESETS = [
-  { label: 'Black Ops', base: 4.0 }, // 8.0 at JDC 5
-  { label: 'Carrier Jump', base: 3.5 }, // 7.0 at JDC 5
-  { label: 'Carrier Conduit', base: 3.5 }, // 7.0 at JDC 5
-  { label: 'Dreadnought', base: 3.5 }, // 7.0 at JDC 5
-  { label: 'Force Auxiliary', base: 3.5 }, // 7.0 at JDC 5
-  { label: 'Jump Freighter', base: 5.0 }, // 10.0 at JDC 5
-  { label: 'Lancer Dreadnought', base: 4.0 }, // 8.0 at JDC 5
-  { label: 'Rorqual', base: 5.0 }, // 10.0 at JDC 5
-  { label: 'Supercarrier Jump', base: 3.0 }, // 6.0 at JDC 5
-  { label: 'Titan Bridge', base: 3.0 }, // 6.0 at JDC 5
-  { label: 'Titan Jump', base: 3.0 }, // 6.0 at JDC 5
+  { label: 'Black Ops', base: 4.0, fuelPerLy: 700 }, // 8.0 at JDC 5
+  { label: 'Carrier Jump', base: 3.5, fuelPerLy: 3000 }, // 7.0 at JDC 5
+  { label: 'Carrier Conduit', base: 3.5, fuelPerLy: 3000 }, // 7.0 at JDC 5
+  { label: 'Dreadnought', base: 3.5, fuelPerLy: 3000 }, // 7.0 at JDC 5
+  { label: 'Force Auxiliary', base: 3.5, fuelPerLy: 3000 }, // 7.0 at JDC 5
+  { label: 'Jump Freighter', base: 5.0, fuelPerLy: 10000 }, // 10.0 at JDC 5
+  { label: 'Lancer Dreadnought', base: 4.0, fuelPerLy: 20000 }, // 8.0 at JDC 5
+  { label: 'Rorqual', base: 5.0, fuelPerLy: 4000 }, // 10.0 at JDC 5
+  { label: 'Supercarrier Jump', base: 3.0, fuelPerLy: 3000 }, // 6.0 at JDC 5
+  { label: 'Titan Bridge', base: 3.0, fuelPerLy: 3000 }, // 6.0 at JDC 5
+  { label: 'Titan Jump', base: 3.0, fuelPerLy: 3000 }, // 6.0 at JDC 5
 ] as const;
+
+const isotopeFormatter = new Intl.NumberFormat('en-US');
+
+function getPresetFuelPerLy(shipClass: string) {
+  return RANGE_PRESETS.find((preset) => preset.label === shipClass)?.fuelPerLy ?? null;
+}
+
+function calculateRouteIsotopes(route: RouteOption, fuelPerLy: number | null, jfcLevel: number, shipClass: string, jfLevel: number) {
+  if (fuelPerLy == null) return null;
+  const skillModifier = 1 - 0.1 * Math.max(0, Math.min(5, jfcLevel));
+  const jumpFreighterModifier = shipClass === 'Jump Freighter'
+    ? 1 - 0.1 * Math.max(0, Math.min(5, jfLevel))
+    : 1;
+  return route.bridgeLegs.reduce((sum, leg) => sum + Math.ceil(leg.bridgeLy * fuelPerLy * skillModifier * jumpFreighterModifier), 0);
+}
+
+function formatIsotopes(value: number) {
+  return isotopeFormatter.format(value);
+}
 
 function pushUnique(ids: number[], id: number) {
   if (ids[ids.length - 1] !== id) ids.push(id);
@@ -198,6 +219,8 @@ export function BridgePlanner() {
       routesToShow: 5,
       presetShipClass: 'Titan Bridge',
       presetJdc: 5,
+      presetJfc: 5,
+      presetJf: 5,
     };
     try {
       const raw = localStorage.getItem(UI_KEY);
@@ -216,6 +239,8 @@ export function BridgePlanner() {
             routesToShow: Number.isFinite(parsed.routesToShow) ? Math.max(1, Math.min(25, Number(parsed.routesToShow))) : defaults.routesToShow,
             presetShipClass: typeof parsed.presetShipClass === 'string' ? parsed.presetShipClass : defaults.presetShipClass,
             presetJdc: Number.isFinite(parsed.presetJdc) ? Math.max(0, Math.min(5, Number(parsed.presetJdc))) : defaults.presetJdc,
+            presetJfc: Number.isFinite(parsed.presetJfc) ? Math.max(0, Math.min(5, Number(parsed.presetJfc))) : defaults.presetJfc,
+            presetJf: Number.isFinite(parsed.presetJf) ? Math.max(0, Math.min(5, Number(parsed.presetJf))) : defaults.presetJf,
           };
         }
       }
@@ -600,6 +625,7 @@ export function BridgePlanner() {
     if (routeResult.routes.length === 0) return null;
     return routeResult.routes.find(r => r.key === selectedRouteKey) ?? routeResult.routes[0];
   }, [routeResult.routes, selectedRouteKey]);
+  const selectedFuelPerLy = useMemo(() => getPresetFuelPerLy(planner.presetShipClass), [planner.presetShipClass]);
 
   const summary = useMemo(() => {
     if (!graph || !selectedRoute) return null;
@@ -623,8 +649,14 @@ export function BridgePlanner() {
     }
     parts.push(`total ${selectedRoute.totalJumps}j`);
     parts.push(`${selectedRoute.totalBridges} bridge${selectedRoute.totalBridges === 1 ? '' : 's'}`);
+    const isotopes = isBridgeOnlyMode
+      ? calculateRouteIsotopes(selectedRoute, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf)
+      : null;
+    if (isotopes != null) {
+      parts.push(`${formatIsotopes(isotopes)} isotopes`);
+    }
     return parts.join(' | ');
-  }, [graph, selectedRoute, stagingId]);
+  }, [graph, selectedRoute, stagingId, isBridgeOnlyMode, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf]);
 
   const nameFor = (id: number | null) => {
     if (id == null) return '—';
@@ -658,11 +690,15 @@ export function BridgePlanner() {
       const chain = getBridgeSequence(route)
         .map((id) => `<a href="showinfo:5//${id}">${namesById[String(id)] ?? String(id)}</a>`)
         .join(' - ');
-      return `${chain} (${route.totalJumps}j, ${route.totalBridges}b)`;
+      const isotopes = isBridgeOnlyMode
+        ? calculateRouteIsotopes(route, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf)
+        : null;
+      const fuelText = isotopes != null ? `, ${formatIsotopes(isotopes)} isotopes` : '';
+      return `${chain} (${route.totalJumps}j, ${route.totalBridges}b${fuelText})`;
     });
     const body = lines.join('<br>');
     return `<font size="13" color="#bfffffff"></font><font size="13" color="#ffffffff"><loc>${body}</loc></font>`;
-  }, [graph, routesForCopy]);
+  }, [graph, routesForCopy, isBridgeOnlyMode, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf]);
   const plainTextRoutes = useMemo(() => {
     if (!graph || routesForCopy.length === 0) return '';
     const namesById = graph.namesById || {};
@@ -670,10 +706,14 @@ export function BridgePlanner() {
       const chain = getBridgeSequence(route)
         .map((id) => namesById[String(id)] ?? String(id))
         .join(' - ');
-      return `${chain} (${route.totalJumps}j, ${route.totalBridges}b)`;
+      const isotopes = isBridgeOnlyMode
+        ? calculateRouteIsotopes(route, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf)
+        : null;
+      const fuelText = isotopes != null ? `, ${formatIsotopes(isotopes)} isotopes` : '';
+      return `${chain} (${route.totalJumps}j, ${route.totalBridges}b${fuelText})`;
     });
     return lines.join('\n');
-  }, [graph, routesForCopy]);
+  }, [graph, routesForCopy, isBridgeOnlyMode, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf]);
   const buildRouteCopyPayload = useMemo(() => {
     if (!graph) return () => ({ eve: '', plain: '' });
     const namesById = graph.namesById || {};
@@ -681,12 +721,16 @@ export function BridgePlanner() {
       const ids = getBridgeSequence(route);
       let eveLine = ids.map((id) => `<a href="showinfo:5//${id}">${namesById[String(id)] ?? String(id)}</a>`).join(' - ');
       let plainLine = ids.map((id) => namesById[String(id)] ?? String(id)).join(' - ');
-      eveLine += ` (${route.totalJumps}j, ${route.totalBridges}b)`;
-      plainLine += ` (${route.totalJumps}j, ${route.totalBridges}b)`;
+      const isotopes = isBridgeOnlyMode
+        ? calculateRouteIsotopes(route, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf)
+        : null;
+      const fuelText = isotopes != null ? `, ${formatIsotopes(isotopes)} isotopes` : '';
+      eveLine += ` (${route.totalJumps}j, ${route.totalBridges}b${fuelText})`;
+      plainLine += ` (${route.totalJumps}j, ${route.totalBridges}b${fuelText})`;
       const eve = `<font size="13" color="#bfffffff"></font><font size="13" color="#ffffffff"><loc>${eveLine}</loc></font>`;
       return { eve, plain: plainLine };
     };
-  }, [graph]);
+  }, [graph, isBridgeOnlyMode, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf]);
 
   const fitNodeIds = useMemo(() => {
     if (routeResult.routes.length === 0) return [] as number[];
@@ -847,6 +891,38 @@ export function BridgePlanner() {
                             const baseRange = RANGE_PRESETS.find((p) => p.label === planner.presetShipClass)?.base ?? planner.bridgeRange;
                             const range = Number((baseRange * (1 + 0.2 * jdc)).toFixed(1));
                             setPlanner((prev) => ({ ...prev, presetJdc: jdc, bridgeRange: range }));
+                          }}
+                          height={28}
+                          radius={6}
+                          labelClassName="text-xs leading-5"
+                          getColorForValue={() => 'bg-amber-500'}
+                          disableInitialAnimation
+                        />
+                      </div>
+                      <div className="grid gap-1 text-xs text-slate-600 dark:text-slate-300 mt-2">
+                        <span>Jump Fuel Conservation</span>
+                        <SegmentedSlider
+                          options={[0, 1, 2, 3, 4, 5].map((lvl) => ({ label: String(lvl), value: String(lvl) }))}
+                          value={String(planner.presetJfc)}
+                          onChange={(value) => {
+                            const jfc = Math.max(0, Math.min(5, Number(value)));
+                            setPlanner((prev) => ({ ...prev, presetJfc: jfc }));
+                          }}
+                          height={28}
+                          radius={6}
+                          labelClassName="text-xs leading-5"
+                          getColorForValue={() => 'bg-amber-500'}
+                          disableInitialAnimation
+                        />
+                      </div>
+                      <div className="grid gap-1 text-xs text-slate-600 dark:text-slate-300 mt-2">
+                        <span>Jump Freighter</span>
+                        <SegmentedSlider
+                          options={[0, 1, 2, 3, 4, 5].map((lvl) => ({ label: String(lvl), value: String(lvl) }))}
+                          value={String(planner.presetJf)}
+                          onChange={(value) => {
+                            const jf = Math.max(0, Math.min(5, Number(value)));
+                            setPlanner((prev) => ({ ...prev, presetJf: jf }));
                           }}
                           height={28}
                           radius={6}
@@ -1111,6 +1187,9 @@ export function BridgePlanner() {
                     .filter((value): value is string => value != null);
                   if (route.postBridgeJumps > 0) gateDetails.push(`${route.postBridgeJumps}j after`);
                   const bridgeDetails = route.bridgeLegs.map((leg) => `${leg.bridgeLy.toFixed(2)} ly bridge`);
+                  const routeIsotopes = isBridgeOnlyMode
+                    ? calculateRouteIsotopes(route, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf)
+                    : null;
                   const routeCopyState = copyStatuses[route.key] ?? null;
                   return (
                     <div
@@ -1136,99 +1215,102 @@ export function BridgePlanner() {
                         }
                       }}
                     >
-                      <div className="w-full text-left pointer-events-none">
-                        <div className="text-sm font-medium text-slate-900 dark:text-slate-100 flex flex-wrap items-center gap-x-1 gap-y-0.5">
-                          {displayChainIds.map((id, chainIdx) => (
-                            <span key={`${route.key}-${id}-${chainIdx}`} className="inline-flex items-center gap-x-1 gap-y-0.5 flex-wrap">
-                              {chainIdx > 0 && <span aria-hidden="true">→</span>}
-                              {renderSystemName(id)}
-                            </span>
-                          ))}
-                          {destinationId != null && displayChainIds[displayChainIds.length - 1] !== destinationId && (
-                            <span className="inline-flex items-center gap-x-1 gap-y-0.5 flex-wrap">
-                              <span aria-hidden="true">→</span>
-                              {renderSystemName(destinationId)}
-                            </span>
-                          )}
-                        </div>
-                        {route.waypointIds && route.waypointIds.length > 0 && (
-                          <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 flex flex-wrap items-center gap-x-1 gap-y-0.5">
-                            <span>Stops:</span>
-                            {stopChainIds.map((id, chainIdx) => (
-                              <span key={`${route.key}-stop-${id}-${chainIdx}`} className="inline-flex items-center gap-x-1 gap-y-0.5 flex-wrap">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0 flex-1 text-left pointer-events-none">
+                          <div className="text-sm font-medium text-slate-900 dark:text-slate-100 flex flex-wrap items-center gap-x-1 gap-y-0.5">
+                            {displayChainIds.map((id, chainIdx) => (
+                              <span key={`${route.key}-${id}-${chainIdx}`} className="inline-flex items-center gap-x-1 gap-y-0.5 flex-wrap">
                                 {chainIdx > 0 && <span aria-hidden="true">→</span>}
                                 {renderSystemName(id)}
                               </span>
                             ))}
-                          </div>
-                        )}
-                        <div className="mt-1 flex items-center justify-between text-xs text-slate-600 dark:text-slate-300">
-                          <span>
-                            {route.totalBridges} bridge{route.totalBridges === 1 ? '' : 's'} • {bridgeDetails.join(' • ')}
-                            {gateDetails.length > 0 ? ` • ${gateDetails.join(' • ')}` : ''}
-                          </span>
-                          <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{route.totalJumps}j</span>
-                        </div>
-                      </div>
-                      <div className="absolute top-2 right-2 flex items-center gap-2">
-                        {idx === 0 && (
-                          <span className="text-[10px] uppercase tracking-wide rounded-full bg-amber-200 text-amber-900 px-2 py-0.5">
-                            Best
-                          </span>
-                        )}
-                        <div className="relative pointer-events-auto" onClick={(event) => event.stopPropagation()}>
-                          <div
-                            className="relative"
-                            onMouseLeave={() => setRouteCopyOpenKey(null)}
-                          >
-                            <button
-                              type="button"
-                              className={getCopyButtonClass(routeCopyState, "px-2 py-1 text-xs rounded border inline-flex items-center gap-1 transition-colors")}
-                              aria-label="Copy"
-                              onMouseEnter={() => setRouteCopyOpenKey(route.key)}
-                              onClick={(event) => event.stopPropagation()}
-                            >
-                              <Icon
-                                name={getCopyButtonIconName(routeCopyState)}
-                                size={14}
-                                color={getCopyButtonIconColor(routeCopyState)}
-                              />
-                              <span>{getCopyButtonLabel(routeCopyState)}</span>
-                            </button>
-                            {routeCopyOpenKey === route.key && (
-                              <div className="absolute right-0 top-full pt-1 z-10">
-                                <div
-                                  className="min-w-[180px] rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg overflow-hidden"
-                                  onMouseEnter={() => setRouteCopyOpenKey(route.key)}
-                                  onClick={(event) => event.stopPropagation()}
-                                >
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const payload = buildRouteCopyPayload(route);
-                                      setRouteCopyOpenKey(null);
-                                      if (payload.eve) copyText(payload.eve, route.key);
-                                    }}
-                                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800"
-                                  >
-                                    Copy EVE in-game links
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const payload = buildRouteCopyPayload(route);
-                                      setRouteCopyOpenKey(null);
-                                      if (payload.plain) copyText(payload.plain, route.key);
-                                    }}
-                                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800"
-                                  >
-                                    Copy plain text
-                                  </button>
-                                </div>
-                              </div>
+                            {destinationId != null && displayChainIds[displayChainIds.length - 1] !== destinationId && (
+                              <span className="inline-flex items-center gap-x-1 gap-y-0.5 flex-wrap">
+                                <span aria-hidden="true">→</span>
+                                {renderSystemName(destinationId)}
+                              </span>
                             )}
                           </div>
+                          {route.waypointIds && route.waypointIds.length > 0 && (
+                            <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 flex flex-wrap items-center gap-x-1 gap-y-0.5">
+                              <span>Stops:</span>
+                              {stopChainIds.map((id, chainIdx) => (
+                                <span key={`${route.key}-stop-${id}-${chainIdx}`} className="inline-flex items-center gap-x-1 gap-y-0.5 flex-wrap">
+                                  {chainIdx > 0 && <span aria-hidden="true">→</span>}
+                                  {renderSystemName(id)}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
+                        <div className="shrink-0 flex items-center gap-2 self-start" onClick={(event) => event.stopPropagation()}>
+                          {idx === 0 && (
+                            <span className="text-[10px] uppercase tracking-wide rounded-full bg-amber-200 text-amber-900 px-2 py-0.5">
+                              Best
+                            </span>
+                          )}
+                          <div className="relative pointer-events-auto">
+                            <div
+                              className="relative"
+                              onMouseLeave={() => setRouteCopyOpenKey(null)}
+                            >
+                              <button
+                                type="button"
+                                className={getCopyButtonClass(routeCopyState, "px-2 py-1 text-xs rounded border inline-flex items-center gap-1 transition-colors")}
+                                aria-label="Copy"
+                                onMouseEnter={() => setRouteCopyOpenKey(route.key)}
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <Icon
+                                  name={getCopyButtonIconName(routeCopyState)}
+                                  size={14}
+                                  color={getCopyButtonIconColor(routeCopyState)}
+                                />
+                                <span>{getCopyButtonLabel(routeCopyState)}</span>
+                              </button>
+                              {routeCopyOpenKey === route.key && (
+                                <div className="absolute right-0 top-full pt-1 z-10">
+                                  <div
+                                    className="min-w-[180px] rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg overflow-hidden"
+                                    onMouseEnter={() => setRouteCopyOpenKey(route.key)}
+                                    onClick={(event) => event.stopPropagation()}
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const payload = buildRouteCopyPayload(route);
+                                        setRouteCopyOpenKey(null);
+                                        if (payload.eve) copyText(payload.eve, route.key);
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800"
+                                    >
+                                      Copy EVE in-game links
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const payload = buildRouteCopyPayload(route);
+                                        setRouteCopyOpenKey(null);
+                                        if (payload.plain) copyText(payload.plain, route.key);
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800"
+                                    >
+                                      Copy plain text
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="mt-1 flex items-center justify-between gap-3 text-xs text-slate-600 dark:text-slate-300 pointer-events-none">
+                        <span className="min-w-0">
+                          {route.totalBridges} bridge{route.totalBridges === 1 ? '' : 's'} • {bridgeDetails.join(' • ')}
+                          {gateDetails.length > 0 ? ` • ${gateDetails.join(' • ')}` : ''}
+                          {routeIsotopes != null ? ` • ${formatIsotopes(routeIsotopes)} isotopes` : ''}
+                        </span>
+                        <span className="shrink-0 text-sm font-semibold text-slate-900 dark:text-slate-100">{route.totalJumps}j</span>
                       </div>
                     </div>
                   );
