@@ -10,6 +10,7 @@ import { BridgePlannerMap } from '../components/BridgePlannerMap';
 import { SegmentedSlider } from '../components/SegmentedSlider';
 import { ModalShell } from '../components/ModalShell';
 import { getCopyButtonClass, getCopyButtonIconColor, getCopyButtonIconName, getCopyButtonLabel, useCopyStatuses } from '../lib/copy';
+import { calculateJumpTimerStops, getRouteTravelMinutes, clampFatigueReduction, type JumpTimerStop, type TimerMode } from '../lib/jumpTimers';
 
 //const LY = 9.4607e15;
 
@@ -21,10 +22,13 @@ type PlannerState = {
   presetJdc: number;
   presetJfc: number;
   presetJf: number;
+  presetFatigueReduction: number;
+  startingFatigueMinutes: number;
+  startingActivationMinutes: number;
+  timerMode: TimerMode;
 };
 
 type TravelMode = 'bridge-gate' | 'bridge-only';
-
 type RouteStopDragState = {
   activeIndex: number;
   targetIndex: number;
@@ -53,23 +57,28 @@ type RouteOption = {
 };
 
 const RANGE_PRESETS = [
-  { label: 'Black Ops', base: 4.0, fuelPerLy: 700 }, // 8.0 at JDC 5
-  { label: 'Carrier Jump', base: 3.5, fuelPerLy: 3000 }, // 7.0 at JDC 5
-  { label: 'Carrier Conduit', base: 3.5, fuelPerLy: 3000 }, // 7.0 at JDC 5
-  { label: 'Dreadnought', base: 3.5, fuelPerLy: 3000 }, // 7.0 at JDC 5
-  { label: 'Force Auxiliary', base: 3.5, fuelPerLy: 3000 }, // 7.0 at JDC 5
-  { label: 'Jump Freighter', base: 5.0, fuelPerLy: 10000 }, // 10.0 at JDC 5
-  { label: 'Lancer Dreadnought', base: 4.0, fuelPerLy: 20000 }, // 8.0 at JDC 5
-  { label: 'Rorqual', base: 5.0, fuelPerLy: 4000 }, // 10.0 at JDC 5
-  { label: 'Supercarrier Jump', base: 3.0, fuelPerLy: 3000 }, // 6.0 at JDC 5
-  { label: 'Titan Bridge', base: 3.0, fuelPerLy: 3000 }, // 6.0 at JDC 5
-  { label: 'Titan Jump', base: 3.0, fuelPerLy: 3000 }, // 6.0 at JDC 5
+  { label: 'Black Ops', base: 4.0, fuelPerLy: 700, fatigueReduction: 75 }, // 8.0 at JDC 5
+  { label: 'Carrier Jump', base: 3.5, fuelPerLy: 3000, fatigueReduction: 0 }, // 7.0 at JDC 5
+  { label: 'Carrier Conduit', base: 3.5, fuelPerLy: 3000, fatigueReduction: 0 }, // 7.0 at JDC 5
+  { label: 'Dreadnought', base: 3.5, fuelPerLy: 3000, fatigueReduction: 0 }, // 7.0 at JDC 5
+  { label: 'Force Auxiliary', base: 3.5, fuelPerLy: 3000, fatigueReduction: 0 }, // 7.0 at JDC 5
+  { label: 'Jump Freighter', base: 5.0, fuelPerLy: 10000, fatigueReduction: 90 }, // 10.0 at JDC 5
+  { label: 'Lancer Dreadnought', base: 4.0, fuelPerLy: 20000, fatigueReduction: 0 }, // 8.0 at JDC 5
+  { label: 'Rorqual', base: 5.0, fuelPerLy: 4000, fatigueReduction: 90 }, // 10.0 at JDC 5
+  { label: 'Supercarrier Jump', base: 3.0, fuelPerLy: 3000, fatigueReduction: 0 }, // 6.0 at JDC 5
+  { label: 'Titan Bridge', base: 3.0, fuelPerLy: 3000, fatigueReduction: 0 }, // 6.0 at JDC 5
+  { label: 'Titan Jump', base: 3.0, fuelPerLy: 3000, fatigueReduction: 0 }, // 6.0 at JDC 5
 ] as const;
 
 const isotopeFormatter = new Intl.NumberFormat('en-US');
+const FATIGUE_REDUCTION_OPTIONS = [0, 75, 90] as const;
 
 function getPresetFuelPerLy(shipClass: string) {
   return RANGE_PRESETS.find((preset) => preset.label === shipClass)?.fuelPerLy ?? null;
+}
+
+function getPresetFatigueReduction(shipClass: string) {
+  return RANGE_PRESETS.find((preset) => preset.label === shipClass)?.fatigueReduction ?? 0;
 }
 
 function calculateRouteIsotopes(route: RouteOption, fuelPerLy: number | null, jfcLevel: number, shipClass: string, jfLevel: number) {
@@ -83,6 +92,29 @@ function calculateRouteIsotopes(route: RouteOption, fuelPerLy: number | null, jf
 
 function formatIsotopes(value: number) {
   return isotopeFormatter.format(value);
+}
+
+function formatTimerMinutes(minutes: number) {
+  const safeMinutes = Math.max(0, minutes);
+  if (safeMinutes > 0 && safeMinutes < 1) return '<1m';
+  const rounded = Math.round(safeMinutes);
+  const hours = Math.floor(rounded / 60);
+  const mins = rounded % 60;
+  if (hours > 0 && mins > 0) return `${hours}h ${mins}m`;
+  if (hours > 0) return `${hours}h`;
+  return `${mins}m`;
+}
+
+function formatRelativeTimer(minutes: number) {
+  const rounded = Math.max(0, Math.round(minutes));
+  const hours = Math.floor(rounded / 60);
+  const mins = rounded % 60;
+  const paddedMinutes = String(mins).padStart(2, '0');
+  return `T+${hours}:${paddedMinutes}`;
+}
+
+function getRouteBridgeLy(route: RouteOption) {
+  return route.bridgeLegs.reduce((sum, leg) => sum + leg.bridgeLy, 0);
 }
 
 function pushUnique(ids: number[], id: number) {
@@ -221,6 +253,10 @@ export function BridgePlanner() {
       presetJdc: 5,
       presetJfc: 5,
       presetJf: 5,
+      presetFatigueReduction: getPresetFatigueReduction('Titan Bridge'),
+      startingFatigueMinutes: 0,
+      startingActivationMinutes: 0,
+      timerMode: 'jump-asap',
     };
     try {
       const raw = localStorage.getItem(UI_KEY);
@@ -241,6 +277,18 @@ export function BridgePlanner() {
             presetJdc: Number.isFinite(parsed.presetJdc) ? Math.max(0, Math.min(5, Number(parsed.presetJdc))) : defaults.presetJdc,
             presetJfc: Number.isFinite(parsed.presetJfc) ? Math.max(0, Math.min(5, Number(parsed.presetJfc))) : defaults.presetJfc,
             presetJf: Number.isFinite(parsed.presetJf) ? Math.max(0, Math.min(5, Number(parsed.presetJf))) : defaults.presetJf,
+            presetFatigueReduction: Number.isFinite(parsed.presetFatigueReduction)
+              ? clampFatigueReduction(Number(parsed.presetFatigueReduction))
+              : defaults.presetFatigueReduction,
+            startingFatigueMinutes: Number.isFinite(parsed.startingFatigueMinutes)
+              ? Math.max(0, Math.min(300, Number(parsed.startingFatigueMinutes)))
+              : defaults.startingFatigueMinutes,
+            startingActivationMinutes: Number.isFinite(parsed.startingActivationMinutes)
+              ? Math.max(0, Math.min(30, Number(parsed.startingActivationMinutes)))
+              : defaults.startingActivationMinutes,
+            timerMode: parsed.timerMode === 'jump-asap' || parsed.timerMode === 'fastest-arrival'
+              ? parsed.timerMode
+              : defaults.timerMode,
           };
         }
       }
@@ -338,6 +386,7 @@ export function BridgePlanner() {
   const stagingQuery = routeStops[0] ?? '';
   const targetQuery = routeStops[routeStops.length - 1] ?? '';
   const waypointQueries = routeStops.slice(1, -1);
+  const presetControlWidth = jdcSliderWidth ?? 186;
   const makeRouteStopKey = () => `route-stop-${routeStopKeyRef.current++}`;
   const setRouteStops = (updater: string[] | ((prev: string[]) => string[])) => {
     setPlanner((prev) => {
@@ -509,6 +558,20 @@ export function BridgePlanner() {
   const [routeCopyOpenKey, setRouteCopyOpenKey] = useState<string | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
+  const jumpTimersWorkersRef = useRef<Worker[]>([]);
+  const jumpTimersRequestIdRef = useRef(0);
+  const jumpTimersDoneCountRef = useRef(0);
+  const [jumpTimersResult, setJumpTimersResult] = useState<{
+    routeTravelMinutesByKey: Record<string, number>;
+    selectedRouteKey: string | null;
+    selectedTimerStops: JumpTimerStop[];
+    loading: boolean;
+  }>({
+    routeTravelMinutesByKey: {},
+    selectedRouteKey: null,
+    selectedTimerStops: [],
+    loading: false,
+  });
   const [userSelectedRoute, setUserSelectedRoute] = useState(false);
 
   useEffect(() => {
@@ -537,6 +600,53 @@ export function BridgePlanner() {
     return () => {
       workerRef.current?.terminate();
       workerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (jumpTimersWorkersRef.current.length === 0) {
+      const workerCount = Math.min(4, Math.max(2, Math.floor((window.navigator.hardwareConcurrency || 4) / 2)));
+      const handleTimerMessage = (event: MessageEvent<
+        | {
+            type: 'route';
+            requestId: number;
+            routeKey: string;
+            travelMinutes: number;
+            timerStops?: JumpTimerStop[];
+          }
+        | {
+            type: 'done';
+            requestId: number;
+          }
+      >) => {
+        const data = event.data;
+        if (data.requestId !== jumpTimersRequestIdRef.current) return;
+        if (data.type === 'done') {
+          jumpTimersDoneCountRef.current += 1;
+          if (jumpTimersDoneCountRef.current >= jumpTimersWorkersRef.current.length) {
+            setJumpTimersResult((prev) => ({ ...prev, loading: false }));
+          }
+          return;
+        }
+        setJumpTimersResult((prev) => ({
+          routeTravelMinutesByKey: {
+            ...prev.routeTravelMinutesByKey,
+            [data.routeKey]: data.travelMinutes,
+          },
+          selectedRouteKey: data.timerStops ? data.routeKey : prev.selectedRouteKey,
+          selectedTimerStops: data.timerStops ?? prev.selectedTimerStops,
+          loading: true,
+        }));
+      };
+      jumpTimersWorkersRef.current = Array.from({ length: workerCount }, () => {
+        const worker = new Worker(new URL('../workers/jumpTimersWorker.ts', import.meta.url), { type: 'module' });
+        worker.onmessage = handleTimerMessage;
+        return worker;
+      });
+    }
+    return () => {
+      for (const worker of jumpTimersWorkersRef.current) worker.terminate();
+      jumpTimersWorkersRef.current = [];
     };
   }, []);
 
@@ -626,37 +736,13 @@ export function BridgePlanner() {
     return routeResult.routes.find(r => r.key === selectedRouteKey) ?? routeResult.routes[0];
   }, [routeResult.routes, selectedRouteKey]);
   const selectedFuelPerLy = useMemo(() => getPresetFuelPerLy(planner.presetShipClass), [planner.presetShipClass]);
-
-  const summary = useMemo(() => {
-    if (!graph || !selectedRoute) return null;
-    const parts: string[] = [];
-    selectedRoute.bridgeLegs.forEach((leg, idx) => {
-      const parkingName = graph.namesById?.[String(leg.parkingId)] ?? String(leg.parkingId);
-      const endpointName = graph.namesById?.[String(leg.endpointId)] ?? String(leg.endpointId);
-      if (leg.approachJumps > 0) {
-        parts.push(`${leg.approachJumps}j to ${parkingName}`);
-      } else if (idx === 0 && stagingId === leg.parkingId) {
-        parts.push(`start at ${parkingName}`);
-      }
-      parts.push(`bridge to ${endpointName} (${leg.bridgeLy.toFixed(2)} ly)`);
-    });
-    if (selectedRoute.postBridgeJumps > 0) {
-      parts.push(
-        selectedRoute.waypointIds?.length
-          ? `${selectedRoute.postBridgeJumps}j after bridges across waypoints`
-          : `${selectedRoute.postBridgeJumps}j to destination`
-      );
-    }
-    parts.push(`total ${selectedRoute.totalJumps}j`);
-    parts.push(`${selectedRoute.totalBridges} bridge${selectedRoute.totalBridges === 1 ? '' : 's'}`);
-    const isotopes = isBridgeOnlyMode
-      ? calculateRouteIsotopes(selectedRoute, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf)
-      : null;
-    if (isotopes != null) {
-      parts.push(`${formatIsotopes(isotopes)} isotopes`);
-    }
-    return parts.join(' | ');
-  }, [graph, selectedRoute, stagingId, isBridgeOnlyMode, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf]);
+  const selectedRouteIsotopes = useMemo(() => {
+    if (!selectedRoute || !isBridgeOnlyMode) return null;
+    return calculateRouteIsotopes(selectedRoute, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf);
+  }, [selectedRoute, isBridgeOnlyMode, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf]);
+  const selectedTimerStops = selectedRouteKey === jumpTimersResult.selectedRouteKey
+    ? jumpTimersResult.selectedTimerStops
+    : [];
 
   const nameFor = (id: number | null) => {
     if (id == null) return '—';
@@ -753,6 +839,77 @@ export function BridgePlanner() {
       placeholder: routeResult.routes[idx] == null,
     }));
   }, [routeResult.loading, routeResult.routes, planner.routesToShow]);
+
+  useEffect(() => {
+    if (!isBridgeOnlyMode || routeResult.routes.length === 0) {
+      jumpTimersRequestIdRef.current += 1;
+      setJumpTimersResult({ routeTravelMinutesByKey: {}, selectedRouteKey: null, selectedTimerStops: [], loading: false });
+      return;
+    }
+    jumpTimersRequestIdRef.current += 1;
+    const requestId = jumpTimersRequestIdRef.current;
+
+    if (planner.timerMode === 'jump-asap') {
+      const routeTravelMinutesByKey: Record<string, number> = {};
+      let selectedTimerStops: JumpTimerStop[] = [];
+      for (const route of routeResult.routes) {
+        const timerStops = calculateJumpTimerStops(
+          route,
+          planner.presetFatigueReduction,
+          planner.startingFatigueMinutes,
+          planner.startingActivationMinutes,
+          'jump-asap'
+        );
+        routeTravelMinutesByKey[route.key] = getRouteTravelMinutes(timerStops);
+        if (route.key === selectedRouteKey) selectedTimerStops = timerStops;
+      }
+      setJumpTimersResult({
+        routeTravelMinutesByKey,
+        selectedRouteKey,
+        selectedTimerStops,
+        loading: false,
+      });
+      return;
+    }
+
+    const workers = jumpTimersWorkersRef.current;
+    if (workers.length === 0) {
+      setJumpTimersResult({ routeTravelMinutesByKey: {}, selectedRouteKey: null, selectedTimerStops: [], loading: false });
+      return;
+    }
+
+    setJumpTimersResult({ routeTravelMinutesByKey: {}, selectedRouteKey: null, selectedTimerStops: [], loading: true });
+    jumpTimersDoneCountRef.current = 0;
+    const selectedRouteForTimers = selectedRouteKey
+      ? routeResult.routes.find((route) => route.key === selectedRouteKey) ?? null
+      : null;
+    const remainingRoutes = selectedRouteForTimers
+      ? routeResult.routes.filter((route) => route.key !== selectedRouteForTimers.key)
+      : routeResult.routes;
+    const routeBatches = workers.map((_, workerIndex) => remainingRoutes.filter((_, routeIndex) => routeIndex % workers.length === workerIndex));
+    if (selectedRouteForTimers) routeBatches[0] = [selectedRouteForTimers, ...(routeBatches[0] ?? [])];
+
+    workers.forEach((worker, workerIndex) => {
+      worker.postMessage({
+        type: 'compute',
+        requestId,
+        routes: routeBatches[workerIndex] ?? [],
+        selectedRouteKey,
+        fatigueReduction: planner.presetFatigueReduction,
+        startingFatigueMinutes: planner.startingFatigueMinutes,
+        startingActivationMinutes: planner.startingActivationMinutes,
+        timerMode: planner.timerMode,
+      });
+    });
+  }, [
+    isBridgeOnlyMode,
+    routeResult.routes,
+    selectedRouteKey,
+    planner.presetFatigueReduction,
+    planner.startingFatigueMinutes,
+    planner.startingActivationMinutes,
+    planner.timerMode,
+  ]);
 
   return (
     <section className="grid gap-6">
@@ -863,7 +1020,12 @@ export function BridgePlanner() {
                                 type="button"
                                 onClick={() => {
                                   const range = Number((preset.base * (1 + 0.2 * planner.presetJdc)).toFixed(1));
-                                  setPlanner((prev) => ({ ...prev, presetShipClass: preset.label, bridgeRange: range }));
+                                  setPlanner((prev) => ({
+                                    ...prev,
+                                    presetShipClass: preset.label,
+                                    bridgeRange: range,
+                                    presetFatigueReduction: preset.fatigueReduction,
+                                  }));
                                 }}
                                 className={
                                   "w-full text-left px-2 py-1 rounded border text-xs transition flex items-center gap-2 " +
@@ -924,6 +1086,25 @@ export function BridgePlanner() {
                             const jf = Math.max(0, Math.min(5, Number(value)));
                             setPlanner((prev) => ({ ...prev, presetJf: jf }));
                           }}
+                          height={28}
+                          radius={6}
+                          labelClassName="text-xs leading-5"
+                          getColorForValue={() => 'bg-amber-500'}
+                          disableInitialAnimation
+                        />
+                      </div>
+                      <div className="grid gap-1 text-xs text-slate-600 dark:text-slate-300 mt-2">
+                        <span>Jump fatigue reduction</span>
+                        <SegmentedSlider
+                          options={FATIGUE_REDUCTION_OPTIONS.map((pct) => ({ label: `${pct}%`, value: String(pct) }))}
+                          value={String(planner.presetFatigueReduction)}
+                          onChange={(value) => {
+                            setPlanner((prev) => ({
+                              ...prev,
+                              presetFatigueReduction: clampFatigueReduction(Number(value)),
+                            }));
+                          }}
+                          targetWidth={presetControlWidth}
                           height={28}
                           radius={6}
                           labelClassName="text-xs leading-5"
@@ -1013,9 +1194,45 @@ export function BridgePlanner() {
                   </label>
                 )}
                 {isBridgeOnlyMode && (
-                  <span className="text-xs text-slate-600 dark:text-slate-300">
-                    Uses only titan bridges. Gate travel and Ansiblex options are hidden in this mode.
-                  </span>
+                  <>
+                    <span className="text-xs text-slate-600 dark:text-slate-300">
+                      Uses only titan bridges. Gate travel and Ansiblex options are hidden in this mode.
+                    </span>
+                    <label className="inline-flex items-center gap-2">
+                      <span>Starting fatigue</span>
+                      <input
+                        type="number"
+                        className="w-20 rounded border border-gray-300 dark:border-gray-700 bg-white/80 dark:bg-gray-900 px-2 py-1 text-xs"
+                        min={0}
+                        max={300}
+                        step={1}
+                        value={planner.startingFatigueMinutes}
+                        onChange={(e) => {
+                          const value = Math.max(0, Math.min(300, Number(e.target.value) || 0));
+                          setPlanner((prev) => ({ ...prev, startingFatigueMinutes: value }));
+                        }}
+                        aria-label="Starting jump fatigue in minutes"
+                      />
+                      <span className="text-xs text-slate-500 dark:text-slate-400">min</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2">
+                      <span>Starting activation</span>
+                      <input
+                        type="number"
+                        className="w-20 rounded border border-gray-300 dark:border-gray-700 bg-white/80 dark:bg-gray-900 px-2 py-1 text-xs"
+                        min={0}
+                        max={30}
+                        step={1}
+                        value={planner.startingActivationMinutes}
+                        onChange={(e) => {
+                          const value = Math.max(0, Math.min(30, Number(e.target.value) || 0));
+                          setPlanner((prev) => ({ ...prev, startingActivationMinutes: value }));
+                        }}
+                        aria-label="Starting jump activation cooldown in minutes"
+                      />
+                      <span className="text-xs text-slate-500 dark:text-slate-400">min</span>
+                    </label>
+                  </>
                 )}
                 {!isBridgeOnlyMode && (
                   <>
@@ -1175,6 +1392,7 @@ export function BridgePlanner() {
                   }
 
                   const isSelected = selectedRoute?.key === route.key;
+                  const routeTravelMinutes = isBridgeOnlyMode ? jumpTimersResult.routeTravelMinutesByKey[route.key] ?? null : null;
                   const chainIds = getBridgeSequence(route);
                   const displayChainIds = stagingId != null && chainIds[0] !== stagingId ? [stagingId, ...chainIds] : chainIds;
                   const stopChainIds = [
@@ -1186,7 +1404,7 @@ export function BridgePlanner() {
                     .map((leg, legIdx) => leg.approachJumps > 0 ? `${leg.approachJumps}j to park${route.bridgeLegs.length > 1 ? ` ${legIdx + 1}` : ''}` : null)
                     .filter((value): value is string => value != null);
                   if (route.postBridgeJumps > 0) gateDetails.push(`${route.postBridgeJumps}j after`);
-                  const bridgeDetails = route.bridgeLegs.map((leg) => `${leg.bridgeLy.toFixed(2)} ly bridge`);
+                  const routeBridgeLy = getRouteBridgeLy(route);
                   const routeIsotopes = isBridgeOnlyMode
                     ? calculateRouteIsotopes(route, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf)
                     : null;
@@ -1306,11 +1524,15 @@ export function BridgePlanner() {
                       </div>
                       <div className="mt-1 flex items-center justify-between gap-3 text-xs text-slate-600 dark:text-slate-300 pointer-events-none">
                         <span className="min-w-0">
-                          {route.totalBridges} bridge{route.totalBridges === 1 ? '' : 's'} • {bridgeDetails.join(' • ')}
+                          {routeBridgeLy.toFixed(2)} ly
+                          {routeTravelMinutes != null ? ` • ${formatTimerMinutes(routeTravelMinutes)}` : ''}
+                          {isBridgeOnlyMode && routeTravelMinutes == null && jumpTimersResult.loading ? ' • calculating…' : ''}
                           {gateDetails.length > 0 ? ` • ${gateDetails.join(' • ')}` : ''}
                           {routeIsotopes != null ? ` • ${formatIsotopes(routeIsotopes)} isotopes` : ''}
                         </span>
-                        <span className="shrink-0 text-sm font-semibold text-slate-900 dark:text-slate-100">{route.totalJumps}j</span>
+                        <span className="shrink-0 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                          {route.totalJumps} jump{route.totalJumps === 1 ? '' : 's'}
+                        </span>
                       </div>
                     </div>
                   );
@@ -1321,30 +1543,109 @@ export function BridgePlanner() {
         </div>
 
         <div className="lg:sticky lg:top-20 lg:self-start">
-          <BridgePlannerMap
-            graph={graph}
-            namesById={graph?.namesById || {}}
-            stagingId={stagingId}
-            destinationId={destinationId}
-            bridgeLegs={selectedRoute?.bridgeLegs ?? null}
-            postBridgePaths={selectedRoute?.postBridgePaths ?? null}
-            fitNodeIds={fitNodeIds}
-            bridgeRange={planner.bridgeRange}
-            settings={{
-              excludeZarzakh: settings.excludeZarzakh,
-              sameRegionOnly: settings.sameRegionOnly,
-              allowAnsiblex: settings.allowAnsiblex,
-              ansiblexes: settings.ansiblexes,
-              cynoBeacons: settings.cynoBeacons,
-            }}
-            statusMessage={routeResult.message}
-            summary={summary}
-            baselineJumps={routeResult.baselineJumps}
-            onSystemDoubleClick={(id) => {
-              const name = graph?.namesById?.[String(id)] ?? String(id);
-              updateRouteStop(routeStops.length - 1, name);
-            }}
-          />
+          <div className="grid gap-4">
+            <BridgePlannerMap
+              graph={graph}
+              namesById={graph?.namesById || {}}
+              stagingId={stagingId}
+              destinationId={destinationId}
+              bridgeLegs={selectedRoute?.bridgeLegs ?? null}
+              postBridgePaths={selectedRoute?.postBridgePaths ?? null}
+              fitNodeIds={fitNodeIds}
+              bridgeRange={planner.bridgeRange}
+              settings={{
+                excludeZarzakh: settings.excludeZarzakh,
+                sameRegionOnly: settings.sameRegionOnly,
+                allowAnsiblex: settings.allowAnsiblex,
+                ansiblexes: settings.ansiblexes,
+                cynoBeacons: settings.cynoBeacons,
+              }}
+              statusMessage={routeResult.message}
+              baselineJumps={routeResult.baselineJumps}
+              onSystemDoubleClick={(id) => {
+                const name = graph?.namesById?.[String(id)] ?? String(id);
+                updateRouteStop(routeStops.length - 1, name);
+              }}
+            />
+            {isBridgeOnlyMode && (
+              <section className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white/50 dark:bg-black/20 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <h2 className="text-lg font-semibold">Jump timers</h2>
+                    <label className="inline-flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                      <span>Mode</span>
+                      <select
+                        className="rounded border border-gray-300 dark:border-gray-700 bg-white/80 dark:bg-gray-900 px-2 py-1 text-xs"
+                        value={planner.timerMode}
+                        onChange={(event) => {
+                          const timerMode = event.target.value === 'jump-asap' ? 'jump-asap' : 'fastest-arrival';
+                          setPlanner((prev) => ({ ...prev, timerMode }));
+                        }}
+                      >
+                        <option value="fastest-arrival">Fastest arrival</option>
+                        <option value="jump-asap">Jump ASAP</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div className="text-xs text-slate-600 dark:text-slate-300 text-right">
+                    <span>Fatigue reduction {planner.presetFatigueReduction}%</span>
+                    {selectedRouteIsotopes != null && (
+                      <span> • {formatIsotopes(selectedRouteIsotopes)} isotopes</span>
+                    )}
+                  </div>
+                </div>
+                {(planner.startingFatigueMinutes > 0 || planner.startingActivationMinutes > 0) && (
+                  <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                    Starts with {formatTimerMinutes(planner.startingFatigueMinutes)} fatigue and {formatTimerMinutes(planner.startingActivationMinutes)} activation.
+                  </p>
+                )}
+                {!selectedRoute ? (
+                  <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">Select a route to see timer details.</p>
+                ) : jumpTimersResult.loading && selectedTimerStops.length === 0 ? (
+                  <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">Calculating jump timers…</p>
+                ) : selectedTimerStops.length === 0 ? (
+                  <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">No bridge legs available for timer calculation.</p>
+                ) : (
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="min-w-full text-left text-xs">
+                      <thead className="text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                        <tr className="border-b border-gray-200 dark:border-gray-700">
+                          <th className="py-2 pr-3 font-medium whitespace-nowrap w-16">Stop</th>
+                          <th className="py-2 pr-3 font-medium w-[28%]">Leg</th>
+                          <th className="py-2 pr-3 font-medium whitespace-nowrap w-24">Distance</th>
+                          <th className="py-2 pr-3 font-medium whitespace-nowrap w-24">Activation</th>
+                          <th className="py-2 pr-3 font-medium whitespace-nowrap w-24">Fatigue</th>
+                          <th className="py-2 font-medium whitespace-nowrap w-20">Arrival</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 dark:divide-gray-800 text-slate-600 dark:text-slate-300">
+                        {selectedTimerStops.map((stop) => (
+                          <tr key={`${stop.fromId}-${stop.toId}-${stop.index}`}>
+                            <td className="py-2 pr-3 whitespace-nowrap">
+                              <span className="font-medium text-slate-900 dark:text-slate-100">{stop.index}</span>
+                              <span className="ml-1 text-slate-500 dark:text-slate-400">{nameFor(stop.toId)}</span>
+                            </td>
+                            <td className="py-2 pr-3 min-w-[140px]">
+                              {nameFor(stop.fromId)} → {nameFor(stop.toId)}
+                            </td>
+                            <td className="py-2 pr-3 whitespace-nowrap w-24">
+                              {stop.bridgeLy.toFixed(2)} ly
+                            </td>
+                            <td className="py-2 pr-3 whitespace-nowrap w-24">{formatTimerMinutes(stop.activationMinutes)}</td>
+                            <td className="py-2 pr-3 whitespace-nowrap w-24">{formatTimerMinutes(stop.fatigueAfterJumpMinutes)}</td>
+                            <td className="py-2 whitespace-nowrap w-20">{formatRelativeTimer(stop.arrivalMinutes)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+                  Usually, jumping ASAP is fastest, so both modes often match.
+                </p>
+              </section>
+            )}
+          </div>
         </div>
       </div>
 

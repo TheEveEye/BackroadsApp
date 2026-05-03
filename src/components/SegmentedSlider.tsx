@@ -11,6 +11,7 @@ export type SegmentedSliderProps = {
   style?: React.CSSProperties;
   labelClassName?: string;
   containerRef?: React.Ref<HTMLDivElement>;
+  targetWidth?: number;
   height?: number; // px
   radius?: number; // px
   disabled?: boolean;
@@ -34,6 +35,7 @@ export function SegmentedSlider({
   style,
   labelClassName,
   containerRef,
+  targetWidth,
   height = 42,
   radius = 6,
   disabled = false,
@@ -51,11 +53,27 @@ export function SegmentedSlider({
   const [measuredSegW, setMeasuredSegW] = useState<number>(0);
   const [measuredPadX, setMeasuredPadX] = useState<number>(0);
   const fallbackSegW = 56; // sensible default
-  const segmentWidth = measuredSegW > 0 ? measuredSegW : fallbackSegW;
   const padX = measuredPadX > 0 ? measuredPadX : 12; // px-3 ≈ 12px default
-  const overlap = padX / 2; // overlap by half of one padding
+  const usesTargetWidth = Number.isFinite(targetWidth) && Number(targetWidth) > 0;
+  const overlap = usesTargetWidth ? 0 : padX / 2; // overlap by half of one padding
+  const segmentWidth = usesTargetWidth
+    ? Math.max(1, Math.round(Number(targetWidth) / count))
+    : (measuredSegW > 0 ? measuredSegW : fallbackSegW);
   const stepWidth = Math.max(1, segmentWidth - overlap); // distance between segment centers with half-padding overlap
-  const containerWidth = segmentWidth + Math.max(0, count - 1) * stepWidth;
+  const containerWidth = usesTargetWidth ? Math.round(Number(targetWidth)) : segmentWidth + Math.max(0, count - 1) * stepWidth;
+  const segmentBounds = useMemo(() => {
+    if (!usesTargetWidth) {
+      return Array.from({ length: count }, (_, index) => ({
+        left: index * stepWidth,
+        width: segmentWidth,
+      }));
+    }
+    return Array.from({ length: count }, (_, index) => {
+      const left = Math.round((containerWidth * index) / count);
+      const right = Math.round((containerWidth * (index + 1)) / count);
+      return { left, width: Math.max(1, right - left) };
+    });
+  }, [containerWidth, count, segmentWidth, stepWidth, usesTargetWidth]);
 
   const selectedIndexRaw = options.findIndex(o => o.value === selectedValue);
   const hasSelection = selectedIndexRaw >= 0;
@@ -123,7 +141,7 @@ export function SegmentedSlider({
   }, [measuredPadX, optionsKey]);
 
   // Compute pill left position in px for the current selection (non-dragging)
-  const selectedLeft = useMemo(() => selectedIndex * stepWidth, [selectedIndex, stepWidth]);
+  const selectedLeft = useMemo(() => segmentBounds[selectedIndex]?.left ?? selectedIndex * stepWidth, [selectedIndex, segmentBounds, stepWidth]);
 
   // Helper to clamp x to container bounds
   const clampX = useCallback((x: number) => {
@@ -136,9 +154,23 @@ export function SegmentedSlider({
 
   // Convert x offset to nearest index
   const xToIndex = useCallback((x: number) => {
+    if (usesTargetWidth) {
+      const pillCenter = x + segmentWidth / 2;
+      let closestIndex = 0;
+      let closestDistance = Number.POSITIVE_INFINITY;
+      segmentBounds.forEach((bounds, index) => {
+        const segmentCenter = bounds.left + bounds.width / 2;
+        const distance = Math.abs(segmentCenter - pillCenter);
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          closestIndex = index;
+        }
+      });
+      return closestIndex;
+    }
     const idx = Math.round(x / Math.max(1, stepWidth));
     return Math.min(count - 1, Math.max(0, idx));
-  }, [count, stepWidth]);
+  }, [count, segmentBounds, segmentWidth, stepWidth, usesTargetWidth]);
 
   // Start dragging on pointer down
   const onPointerDown = useCallback((e: React.PointerEvent) => {
@@ -147,11 +179,13 @@ export function SegmentedSlider({
     const rect = el.getBoundingClientRect();
     const relX = e.clientX - rect.left;
     // Prefer hit-testing against current pill bounds when selected
-    const pillL = selectedIndex * stepWidth;
-    const onPill = hasSelection && relX >= pillL && relX <= (pillL + segmentWidth);
+    const selectedBounds = segmentBounds[selectedIndex] ?? { left: selectedIndex * stepWidth, width: segmentWidth };
+    const onPill = hasSelection && relX >= selectedBounds.left && relX <= (selectedBounds.left + selectedBounds.width);
     // Determine which segment was pressed (for fallback quick-select behavior)
-    const pressedIdx = Math.min(count - 1, Math.max(0, Math.floor(relX / Math.max(1, stepWidth))));
-    if (onPill || (hasSelection && pressedIdx === selectedIndex)) {
+    const pressedIdx = usesTargetWidth
+      ? segmentBounds.findIndex((bounds) => relX >= bounds.left && relX < bounds.left + bounds.width)
+      : Math.min(count - 1, Math.max(0, Math.floor(relX / Math.max(1, stepWidth))));
+    if (onPill || (hasSelection && Math.max(0, pressedIdx) === selectedIndex)) {
       // Start drag only if pressing within the current pill
       try { el.setPointerCapture(e.pointerId); } catch {}
       const x = clampX(relX - segmentWidth / 2);
@@ -160,7 +194,7 @@ export function SegmentedSlider({
     } else {
       // Do not initiate drag here; clicks on buttons will handle selection + animation
     }
-  }, [clampX, count, hasSelection, segmentWidth, selectedIndex, stepWidth, disabled]);
+  }, [clampX, count, hasSelection, segmentBounds, segmentWidth, selectedIndex, stepWidth, disabled, usesTargetWidth, xToIndex]);
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     if (!dragging) return;
@@ -198,6 +232,7 @@ export function SegmentedSlider({
   // Determine pill visual styles
   const pillLeft = dragging ? clampX(dragX ?? 0) : selectedLeft;
   const visualIndex = dragging ? xToIndex(pillLeft) : selectedIndex;
+  const visualBounds = segmentBounds[visualIndex] ?? { left: pillLeft, width: segmentWidth };
   const visualValue = options[visualIndex]?.value;
   const colorToken = getColorForValue ? (visualValue != null ? getColorForValue(visualValue) : undefined) : undefined;
   const isRawColor = !!colorToken && (/^#/.test(colorToken) || /^(rgb|hsl)a?\(/.test(colorToken));
@@ -241,7 +276,7 @@ export function SegmentedSlider({
           !isRawColor ? (colorToken || 'bg-blue-600') : '',
         ].join(' ')}
         style={{
-          width: `${segmentWidth}px`,
+          width: `${visualBounds.width}px`,
           transform: `translateX(${pillLeft}px)`,
           // Inner radius should be concentric with container inner curve (minus 1px border)
           borderRadius: Math.max(0, radius - 1),
@@ -257,6 +292,7 @@ export function SegmentedSlider({
       <div className="relative z-10 flex items-stretch h-full">
         {options.map((opt, idx) => {
           const isActive = idx === (dragging ? visualIndex : selectedIndex);
+          const bounds = segmentBounds[idx] ?? { width: segmentWidth };
           return (
             <button
               key={opt.value}
@@ -269,7 +305,7 @@ export function SegmentedSlider({
                 (hasSelection && isActive) ? 'text-white' : 'text-slate-700 dark:text-slate-300',
               ].join(' ')}
               onClick={() => onClickOption(idx)}
-              style={{ width: `${segmentWidth}px`, marginLeft: idx === 0 ? undefined : `-${overlap}px` }}
+              style={{ width: `${bounds.width}px`, marginLeft: idx === 0 ? undefined : `-${overlap}px` }}
             >
               <span className="pointer-events-none">{opt.label}</span>
             </button>

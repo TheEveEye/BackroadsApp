@@ -46,7 +46,6 @@ type BridgePlannerMapProps = {
     cynoBeacons?: Array<{ id: number; enabled?: boolean }>;
   };
   statusMessage?: string | null;
-  summary?: string | null;
   baselineJumps?: number | null;
   onSystemDoubleClick?: (id: number) => void;
 };
@@ -65,7 +64,6 @@ export function BridgePlannerMap({
   bridgeRange,
   settings,
   statusMessage,
-  summary,
   baselineJumps,
   onSystemDoubleClick,
 }: BridgePlannerMapProps) {
@@ -539,14 +537,7 @@ export function BridgePlannerMap({
   return (
     <section className="bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
       <div className="mb-2">
-        <div>
-          <h2 className="text-xl font-medium">Map</h2>
-          <div className="text-sm text-slate-600 dark:text-slate-300">Bridge range: {bridgeRange.toFixed(1)} ly</div>
-          <div className="text-sm text-slate-600 dark:text-slate-300">
-            Direct route: {baselineJumps == null ? 'unreachable' : `${baselineJumps}j`} without bridge
-          </div>
-          {summary && <div className="text-sm text-slate-600 dark:text-slate-300">{summary}</div>}
-        </div>
+        <h2 className="text-xl font-medium">Map</h2>
       </div>
 
       <div className="relative w-full h-[480px]">
