@@ -31,6 +31,12 @@ type TravelSettings = {
 type ComputeRequest = {
   type: 'compute';
   requestId: number;
+  mode?: 'full' | 'pair-shard' | 'waypoint-segment';
+  shardIndex?: number;
+  shardCount?: number;
+  segmentIndex?: number;
+  segmentCount?: number;
+  totalBridgeBudget?: number;
   destinationId: number;
   stagingId: number;
   waypointIds?: number[];
@@ -87,9 +93,54 @@ type TwoBridgeCandidate = {
 const LY = 9.4607e15;
 const MAX_TRAVEL_JUMPS = 200;
 const POCHVEN_REGION_ID = 10000070;
+const DEV = !!(import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV;
 
 let graph: GraphData | null = null;
 let systemsList: Array<{ id: number; x: number; y: number; z: number; regionId: number; security: number | null; adjacentSystems: number[] }> = [];
+let travelTreeCache = new Map<string, { dist: Map<number, number>; prev: Map<number, number> }>();
+
+type RouteProfile = {
+  requestId: number;
+  mode: string;
+  phaseMs: Record<string, number>;
+};
+
+function createRouteProfile(payload: ComputeRequest): RouteProfile | null {
+  if (!DEV) return null;
+  const shard = payload.mode === 'pair-shard'
+    ? ` shard ${payload.shardIndex ?? 0}/${payload.shardCount ?? 1}`
+    : '';
+  const segment = payload.mode === 'waypoint-segment'
+    ? ` segment ${payload.segmentIndex ?? 0}/${payload.segmentCount ?? 1}`
+    : '';
+  return {
+    requestId: payload.requestId,
+    mode: `${payload.mode ?? 'full'}${shard}${segment}`,
+    phaseMs: {},
+  };
+}
+
+function nowMs() {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+
+function measureProfile<T>(profile: RouteProfile | null | undefined, phase: string, fn: () => T): T {
+  if (!profile) return fn();
+  const start = nowMs();
+  try {
+    return fn();
+  } finally {
+    profile.phaseMs[phase] = (profile.phaseMs[phase] || 0) + nowMs() - start;
+  }
+}
+
+function logProfile(profile: RouteProfile | null | undefined) {
+  if (!profile) return;
+  const rounded = Object.fromEntries(
+    Object.entries(profile.phaseMs).map(([phase, ms]) => [phase, Number(ms.toFixed(1))])
+  );
+  console.debug('[BridgePlannerWorker]', `request ${profile.requestId}`, profile.mode, rounded);
+}
 
 function isForbiddenSystem(node: { regionId: number; security?: number | null }) {
   const sec = typeof node.security === 'number' ? node.security : null;
@@ -145,6 +196,38 @@ function buildBlacklistSet(settings: TravelSettings) {
   return set;
 }
 
+function stableNumericList(values: number[]) {
+  return values
+    .filter((value) => Number.isFinite(value))
+    .sort((a, b) => a - b);
+}
+
+function buildTravelSettingsHash(settings: TravelSettings) {
+  const ansiblexes = settings.allowAnsiblex
+    ? (settings.ansiblexes || [])
+      .filter((bridge) => bridge && bridge.enabled !== false && Number.isFinite(Number(bridge.from)) && Number.isFinite(Number(bridge.to)))
+      .map((bridge) => ({
+        from: Number(bridge.from),
+        to: Number(bridge.to),
+        bidirectional: bridge.bidirectional !== false,
+      }))
+      .sort((a, b) => a.from - b.from || a.to - b.to || Number(a.bidirectional) - Number(b.bidirectional))
+    : [];
+  const blacklist = settings.blacklistEnabled
+    ? stableNumericList((settings.blacklist || [])
+      .filter((entry) => entry && entry.enabled !== false)
+      .map((entry) => Number(entry.id)))
+    : [];
+  return JSON.stringify({
+    excludeZarzakh: !!settings.excludeZarzakh,
+    sameRegionOnly: !!settings.sameRegionOnly,
+    allowAnsiblex: !!settings.allowAnsiblex,
+    ansiblexes,
+    blacklistEnabled: !!settings.blacklistEnabled,
+    blacklist,
+  });
+}
+
 function buildCynoBeaconSet(settings: TravelSettings) {
   const set = new Set<number>();
   if (!settings.cynoBeacons?.length) return set;
@@ -157,7 +240,7 @@ function buildCynoBeaconSet(settings: TravelSettings) {
   return set;
 }
 
-function computeTravelTree(startId: number, settings: TravelSettings, maxJumps: number) {
+function computeTravelTreeUncached(startId: number, settings: TravelSettings, maxJumps: number) {
   const dist = new Map<number, number>();
   const prev = new Map<number, number>();
   if (!graph) return { dist, prev };
@@ -215,6 +298,15 @@ function computeTravelTree(startId: number, settings: TravelSettings, maxJumps: 
   }
 
   return { dist, prev };
+}
+
+function computeTravelTree(startId: number, settings: TravelSettings, maxJumps: number) {
+  const cacheKey = `${startId}:${maxJumps}:${buildTravelSettingsHash(settings)}`;
+  const cached = travelTreeCache.get(cacheKey);
+  if (cached) return cached;
+  const result = computeTravelTreeUncached(startId, settings, maxJumps);
+  travelTreeCache.set(cacheKey, result);
+  return result;
 }
 
 function buildPath(prev: Map<number, number>, startId: number, endId: number): number[] | null {
@@ -563,7 +655,8 @@ function findBridgeOnlyRoutesAtDepth(
   limit: number,
   getOutboundNeighbors: (sourceId: number) => Array<{ id: number; bridgeMeters: number }>,
   hopDistToDestination: Map<number, number>,
-  maxExpansions: number
+  maxExpansions: number,
+  allowedFirstHopIds?: Set<number>
 ) {
   const best: BridgeOnlyPathCandidate[] = [];
   const path = [stagingId];
@@ -584,7 +677,11 @@ function findBridgeOnlyRoutesAtDepth(
     if (remainingDepth <= 0 || expansions >= maxExpansions) return;
 
     expansions += 1;
-    const neighbors = getOutboundNeighbors(currentId)
+    let neighbors = getOutboundNeighbors(currentId);
+    if (path.length === 1 && allowedFirstHopIds) {
+      neighbors = neighbors.filter((neighbor) => allowedFirstHopIds.has(neighbor.id));
+    }
+    neighbors = neighbors
       .filter((neighbor) => !visited.has(neighbor.id))
       .filter((neighbor) => {
         const nextMinRemainingDepth = hopDistToDestination.get(neighbor.id);
@@ -697,12 +794,41 @@ function computeBestOneBridgeCosts(
   return { dist, prev, sourceParking, sourceEndpoint };
 }
 
+function getShardInfo(payload: ComputeRequest) {
+  const shardCount = Math.max(1, Math.floor(payload.shardCount || 1));
+  const shardIndex = Math.max(0, Math.min(shardCount - 1, Math.floor(payload.shardIndex || 0)));
+  return { shardIndex, shardCount };
+}
+
+function shardByIndex<T>(items: T[], payload: ComputeRequest) {
+  const { shardIndex, shardCount } = getShardInfo(payload);
+  if (payload.mode !== 'pair-shard' || shardCount <= 1) return items;
+  return items.filter((_, index) => index % shardCount === shardIndex);
+}
+
+function getEligibleParkingSystems(
+  payload: ComputeRequest,
+  blacklist: Set<number>,
+  stagingDist?: Map<number, number>
+) {
+  return systemsList.filter((parking) => {
+    if (payload.settings.bridgeFromStaging && parking.id !== payload.stagingId) return false;
+    if (payload.settings.excludeZarzakh && parking.id === 30100000) return false;
+    if (payload.settings.blacklistEnabled && blacklist.has(parking.id)) return false;
+    if (isForbiddenSystem(parking)) return false;
+    if (stagingDist && !stagingDist.has(parking.id)) return false;
+    return true;
+  });
+}
+
 function computeBridgeOnlyRoutes(
   payload: ComputeRequest,
   blacklist: Set<number>,
   activeCynoBeacons: Set<number>,
   limitToCynoBeacons: boolean,
-  baselineJumps: number | null
+  baselineJumps: number | null,
+  onPartial?: (routes: RouteOption[], baselineJumps: number | null) => void,
+  profile?: RouteProfile | null
 ) {
   const stagingNode = graph?.systems[String(payload.stagingId)];
   const destinationNode = graph?.systems[String(payload.destinationId)];
@@ -722,9 +848,9 @@ function computeBridgeOnlyRoutes(
     return { routes: [], message: 'Destination cannot be reached by bridge-only routing.', baselineJumps };
   }
 
-  const landingSystems = systemsList.filter((system) =>
+  const landingSystems = measureProfile(profile, 'endpoint/landing filtering', () => systemsList.filter((system) =>
     isValidBridgeLandingSystem(system, payload.settings, blacklist, activeCynoBeacons, limitToCynoBeacons)
-  );
+  ));
   if (landingSystems.length === 0) {
     return { routes: [], message: 'No bridge destinations available for bridge-only routing.', baselineJumps };
   }
@@ -740,8 +866,16 @@ function computeBridgeOnlyRoutes(
     },
     ...landingSystems.filter((system) => system.id !== payload.stagingId),
   ];
-  const { getOutboundNeighbors, getPredecessors } = buildBridgeOnlyNeighborHelpers(sourceSystems, landingSystems, maxMetersSq);
-  const hopDistToDestination = computeBridgeOnlyHopDistances(payload.stagingId, payload.destinationId, getPredecessors);
+  const { getOutboundNeighbors, getPredecessors } = measureProfile(
+    profile,
+    'bridge-only neighbor',
+    () => buildBridgeOnlyNeighborHelpers(sourceSystems, landingSystems, maxMetersSq)
+  );
+  const hopDistToDestination = measureProfile(
+    profile,
+    'bridge-only hop-distance',
+    () => computeBridgeOnlyHopDistances(payload.stagingId, payload.destinationId, getPredecessors)
+  );
   const bestHopCount = hopDistToDestination.get(payload.stagingId);
   if (bestHopCount == null) {
     return { routes: [], message: 'No bridge-only chain found from starting system to destination.', baselineJumps };
@@ -750,22 +884,34 @@ function computeBridgeOnlyRoutes(
   const routes: RouteOption[] = [];
   const routeKeys = new Set<string>();
   const maxSearchDepth = Math.max(bestHopCount, bestHopCount + 12);
+  const firstHopIds = payload.mode === 'pair-shard'
+    ? new Set(shardByIndex(getOutboundNeighbors(payload.stagingId), payload).map((neighbor) => neighbor.id))
+    : undefined;
+  if (payload.mode === 'pair-shard' && firstHopIds?.size === 0) {
+    return { routes: [], message: 'No bridge-only route found.', baselineJumps };
+  }
 
   for (let depth = bestHopCount; depth <= maxSearchDepth && routes.length < limit; depth++) {
-    const candidates = findBridgeOnlyRoutesAtDepth(
-      payload.stagingId,
-      payload.destinationId,
-      depth,
-      limit,
-      getOutboundNeighbors,
-      hopDistToDestination,
-      Math.max(20000, limit * 15000)
+    const candidates = measureProfile(
+      profile,
+      'bridge-only search',
+      () => findBridgeOnlyRoutesAtDepth(
+        payload.stagingId,
+        payload.destinationId,
+        depth,
+        limit,
+        getOutboundNeighbors,
+        hopDistToDestination,
+        Math.max(20000, limit * 15000),
+        firstHopIds
+      )
     );
     for (const candidate of candidates) {
       const route = buildBridgeOnlyRoute(candidate.path);
       if (!route || routeKeys.has(route.key)) continue;
       routeKeys.add(route.key);
       routes.push(route);
+      onPartial?.(routes, baselineJumps);
       if (routes.length >= limit) break;
     }
   }
@@ -779,7 +925,8 @@ function computeBridgeOnlyRoutes(
 
 function computePairRoutes(
   payload: ComputeRequest,
-  onPartial?: (routes: RouteOption[], baselineJumps: number | null) => void
+  onPartial?: (routes: RouteOption[], baselineJumps: number | null) => void,
+  profile?: RouteProfile | null
 ): { routes: RouteOption[]; message: string | null; baselineJumps: number | null } {
   if (!graph) return { routes: [], message: 'Graph not loaded.', baselineJumps: null };
   const systems = graph.systems;
@@ -806,39 +953,54 @@ function computePairRoutes(
   const maxMeters = payload.bridgeRange * LY;
   const maxMetersSq = maxMeters * maxMeters;
 
-  const { dist: stagingDist, prev: stagingPrev } = computeTravelTree(payload.stagingId, payload.settings, MAX_TRAVEL_JUMPS);
-  const { dist: destinationDist, prev: destinationPrev } = computeTravelTree(payload.destinationId, payload.settings, MAX_TRAVEL_JUMPS);
+  const { dist: stagingDist, prev: stagingPrev } = measureProfile(
+    profile,
+    'travel-tree BFS',
+    () => computeTravelTree(payload.stagingId, payload.settings, MAX_TRAVEL_JUMPS)
+  );
+  const { dist: destinationDist, prev: destinationPrev } = measureProfile(
+    profile,
+    'travel-tree BFS',
+    () => computeTravelTree(payload.destinationId, payload.settings, MAX_TRAVEL_JUMPS)
+  );
 
   const baselineJumps = stagingDist.get(payload.destinationId) ?? null;
 
   if (payload.settings.bridgeOnlyChain) {
-    return computeBridgeOnlyRoutes(payload, blacklist, activeCynoBeacons, limitToCynoBeacons, baselineJumps);
+    return computeBridgeOnlyRoutes(payload, blacklist, activeCynoBeacons, limitToCynoBeacons, baselineJumps, onPartial, profile);
   }
 
-  const endpointList: Array<{ id: number; x: number; y: number; z: number; jumps: number }> = [];
-  if (payload.settings.bridgeIntoDestination) {
-    if (isForbiddenSystem(destinationNode)) {
-      return { routes: [], message: 'Cannot bridge directly into a destination in highsec or Pochven.', baselineJumps };
+  const endpointList = measureProfile(profile, 'endpoint/landing filtering', () => {
+    const endpoints: Array<{ id: number; x: number; y: number; z: number; jumps: number }> = [];
+    if (payload.settings.bridgeIntoDestination) {
+      if (isForbiddenSystem(destinationNode)) {
+        return endpoints;
+      }
+      const destJumps = destinationDist.get(payload.destinationId);
+      if (destJumps != null && (!limitToCynoBeacons || activeCynoBeacons.has(payload.destinationId))) {
+        endpoints.push({
+          id: payload.destinationId,
+          x: destinationNode.position.x,
+          y: destinationNode.position.y,
+          z: destinationNode.position.z,
+          jumps: destJumps,
+        });
+      }
+    } else {
+      for (const sys of systemsList) {
+        if (payload.settings.blacklistEnabled && blacklist.has(sys.id)) continue;
+        if (isForbiddenSystem(sys)) continue;
+        if (limitToCynoBeacons && !activeCynoBeacons.has(sys.id)) continue;
+        const jumps = destinationDist.get(sys.id);
+        if (jumps == null) continue;
+        endpoints.push({ id: sys.id, x: sys.x, y: sys.y, z: sys.z, jumps });
+      }
     }
-    const destJumps = destinationDist.get(payload.destinationId);
-    if (destJumps != null && (!limitToCynoBeacons || activeCynoBeacons.has(payload.destinationId))) {
-      endpointList.push({
-        id: payload.destinationId,
-        x: destinationNode.position.x,
-        y: destinationNode.position.y,
-        z: destinationNode.position.z,
-        jumps: destJumps,
-      });
-    }
-  } else {
-    for (const sys of systemsList) {
-      if (payload.settings.blacklistEnabled && blacklist.has(sys.id)) continue;
-      if (isForbiddenSystem(sys)) continue;
-      if (limitToCynoBeacons && !activeCynoBeacons.has(sys.id)) continue;
-      const jumps = destinationDist.get(sys.id);
-      if (jumps == null) continue;
-      endpointList.push({ id: sys.id, x: sys.x, y: sys.y, z: sys.z, jumps });
-    }
+    return endpoints;
+  });
+
+  if (payload.settings.bridgeIntoDestination && endpointList.length === 0 && isForbiddenSystem(destinationNode)) {
+    return { routes: [], message: 'Cannot bridge directly into a destination in highsec or Pochven.', baselineJumps };
   }
 
   if (endpointList.length === 0) {
@@ -853,6 +1015,7 @@ function computePairRoutes(
 
   const limit = Math.max(1, Math.min(25, payload.routesToShow || 5));
   const bridgeCount = Math.max(1, Math.min(2, payload.settings.bridgeCount ?? 1));
+  const parkingSystems = shardByIndex(getEligibleParkingSystems(payload, blacklist, stagingDist), payload);
 
   if (bridgeCount === 1) {
     const best: Candidate[] = [];
@@ -866,27 +1029,23 @@ function computePairRoutes(
       onPartial(routes, baselineJumps);
     };
 
-    for (const parking of systemsList) {
-      if (payload.settings.bridgeFromStaging && parking.id !== payload.stagingId) continue;
-      if (payload.settings.excludeZarzakh && parking.id === 30100000) continue;
-      if (payload.settings.blacklistEnabled && blacklist.has(parking.id)) continue;
-      if (isForbiddenSystem(parking)) continue;
+    measureProfile(profile, 'one-bridge scan', () => {
+    for (const parking of parkingSystems) {
       const stagingJumps = stagingDist.get(parking.id);
       if (stagingJumps == null) continue;
-      let bestEndpoint: { id: number; jumps: number; bridgeMeters: number } | null = null;
+      let bestEndpoint: { id: number; jumps: number; bridgeMetersSq: number } | null = null;
       for (const endpoint of endpointList) {
         const dx = parking.x - endpoint.x;
         const dy = parking.y - endpoint.y;
         const dz = parking.z - endpoint.z;
         const d2 = dx * dx + dy * dy + dz * dz;
         if (d2 > maxMetersSq) continue;
-        const bridgeMeters = Math.sqrt(d2);
         if (
           !bestEndpoint ||
           endpoint.jumps < bestEndpoint.jumps ||
-          (endpoint.jumps === bestEndpoint.jumps && bridgeMeters < bestEndpoint.bridgeMeters)
+          (endpoint.jumps === bestEndpoint.jumps && d2 < bestEndpoint.bridgeMetersSq)
         ) {
-          bestEndpoint = { id: endpoint.id, jumps: endpoint.jumps, bridgeMeters };
+          bestEndpoint = { id: endpoint.id, jumps: endpoint.jumps, bridgeMetersSq: d2 };
         }
       }
       if (!bestEndpoint) continue;
@@ -896,7 +1055,7 @@ function computePairRoutes(
         endpointId: bestEndpoint.id,
         stagingJumps,
         destinationJumps: bestEndpoint.jumps,
-        bridgeMeters: bestEndpoint.bridgeMeters,
+        bridgeMeters: Math.sqrt(bestEndpoint.bridgeMetersSq),
         totalJumps,
       };
       const changed = insertCandidate(best, cand, limit, compareOneBridgeCandidates);
@@ -904,6 +1063,7 @@ function computePairRoutes(
         emit(best.length === 1);
       }
     }
+    });
 
     if (best.length === 0) {
       if (limitToCynoBeacons) {
@@ -922,30 +1082,31 @@ function computePairRoutes(
 
   const bridgeInfoByParking = new Map<number, { endpointId: number; destinationJumps: number; bridgeMeters: number }>();
   const bridgeSources: Array<{ parkingId: number; endpointId: number; baseCost: number }> = [];
-  for (const parking of systemsList) {
-    if (payload.settings.excludeZarzakh && parking.id === 30100000) continue;
-    if (payload.settings.blacklistEnabled && blacklist.has(parking.id)) continue;
-    if (isForbiddenSystem(parking)) continue;
-    let bestEndpoint: { id: number; jumps: number; bridgeMeters: number } | null = null;
-    for (const endpoint of endpointList) {
-      const dx = parking.x - endpoint.x;
-      const dy = parking.y - endpoint.y;
-      const dz = parking.z - endpoint.z;
-      const d2 = dx * dx + dy * dy + dz * dz;
-      if (d2 > maxMetersSq) continue;
-      const bridgeMeters = Math.sqrt(d2);
-      if (
-        !bestEndpoint ||
-        endpoint.jumps < bestEndpoint.jumps ||
-        (endpoint.jumps === bestEndpoint.jumps && bridgeMeters < bestEndpoint.bridgeMeters)
-      ) {
-        bestEndpoint = { id: endpoint.id, jumps: endpoint.jumps, bridgeMeters };
+  measureProfile(profile, 'two-bridge setup', () => {
+    for (const parking of systemsList) {
+      if (payload.settings.excludeZarzakh && parking.id === 30100000) continue;
+      if (payload.settings.blacklistEnabled && blacklist.has(parking.id)) continue;
+      if (isForbiddenSystem(parking)) continue;
+      let bestEndpoint: { id: number; jumps: number; bridgeMetersSq: number } | null = null;
+      for (const endpoint of endpointList) {
+        const dx = parking.x - endpoint.x;
+        const dy = parking.y - endpoint.y;
+        const dz = parking.z - endpoint.z;
+        const d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 > maxMetersSq) continue;
+        if (
+          !bestEndpoint ||
+          endpoint.jumps < bestEndpoint.jumps ||
+          (endpoint.jumps === bestEndpoint.jumps && d2 < bestEndpoint.bridgeMetersSq)
+        ) {
+          bestEndpoint = { id: endpoint.id, jumps: endpoint.jumps, bridgeMetersSq: d2 };
+        }
       }
+      if (!bestEndpoint) continue;
+      bridgeInfoByParking.set(parking.id, { endpointId: bestEndpoint.id, destinationJumps: bestEndpoint.jumps, bridgeMeters: Math.sqrt(bestEndpoint.bridgeMetersSq) });
+      bridgeSources.push({ parkingId: parking.id, endpointId: bestEndpoint.id, baseCost: bestEndpoint.jumps });
     }
-    if (!bestEndpoint) continue;
-    bridgeInfoByParking.set(parking.id, { endpointId: bestEndpoint.id, destinationJumps: bestEndpoint.jumps, bridgeMeters: bestEndpoint.bridgeMeters });
-    bridgeSources.push({ parkingId: parking.id, endpointId: bestEndpoint.id, baseCost: bestEndpoint.jumps });
-  }
+  });
 
   if (bridgeSources.length === 0) {
     if (limitToCynoBeacons) {
@@ -954,7 +1115,11 @@ function computePairRoutes(
     return { routes: [], message: 'No reachable second-bridge parking systems found.', baselineJumps };
   }
 
-  const { dist: oneBridgeDist, prev: oneBridgePrev, sourceParking, sourceEndpoint } = computeBestOneBridgeCosts(bridgeSources, payload.settings);
+  const { dist: oneBridgeDist, prev: oneBridgePrev, sourceParking, sourceEndpoint } = measureProfile(
+    profile,
+    'two-bridge setup',
+    () => computeBestOneBridgeCosts(bridgeSources, payload.settings)
+  );
   const endpoint1List: Array<{ id: number; x: number; y: number; z: number; cost: number }> = [];
   for (const sys of systemsList) {
     const cost = oneBridgeDist.get(sys.id);
@@ -992,28 +1157,24 @@ function computePairRoutes(
     onPartial(routes, baselineJumps);
   };
 
-  for (const parking of systemsList) {
-    if (payload.settings.bridgeFromStaging && parking.id !== payload.stagingId) continue;
-    if (payload.settings.excludeZarzakh && parking.id === 30100000) continue;
-    if (payload.settings.blacklistEnabled && blacklist.has(parking.id)) continue;
-    if (isForbiddenSystem(parking)) continue;
+  measureProfile(profile, 'two-bridge scan', () => {
+  for (const parking of parkingSystems) {
     const stagingJumps = stagingDist.get(parking.id);
     if (stagingJumps == null) continue;
-    let bestEndpoint: { id: number; cost: number; bridgeMeters: number } | null = null;
+    let bestEndpoint: { id: number; cost: number; bridgeMetersSq: number } | null = null;
     for (const endpoint of endpoint1List) {
       const dx = parking.x - endpoint.x;
       const dy = parking.y - endpoint.y;
       const dz = parking.z - endpoint.z;
       const d2 = dx * dx + dy * dy + dz * dz;
       if (d2 > maxMetersSq) continue;
-      const bridgeMeters = Math.sqrt(d2);
       const totalCost = stagingJumps + endpoint.cost;
       if (
         !bestEndpoint ||
         totalCost < stagingJumps + bestEndpoint.cost ||
-        (totalCost === stagingJumps + bestEndpoint.cost && bridgeMeters < bestEndpoint.bridgeMeters)
+        (totalCost === stagingJumps + bestEndpoint.cost && d2 < bestEndpoint.bridgeMetersSq)
       ) {
-        bestEndpoint = { id: endpoint.id, cost: endpoint.cost, bridgeMeters };
+        bestEndpoint = { id: endpoint.id, cost: endpoint.cost, bridgeMetersSq: d2 };
       }
     }
     if (!bestEndpoint) continue;
@@ -1032,7 +1193,7 @@ function computePairRoutes(
       stagingJumps,
       midTravelJumps,
       destinationJumps: bridgeInfo.destinationJumps,
-      bridgeMeters: bestEndpoint.bridgeMeters,
+      bridgeMeters: Math.sqrt(bestEndpoint.bridgeMetersSq),
       bridge2Meters: bridgeInfo.bridgeMeters,
       totalJumps,
     };
@@ -1041,6 +1202,7 @@ function computePairRoutes(
       emitTwo(bestTwo.length === 1);
     }
   }
+  });
 
   if (bestTwo.length === 0) {
     if (limitToCynoBeacons) {
@@ -1211,11 +1373,16 @@ function buildWaypointSegmentRouteOptions(
   toId: number,
   segmentIndex: number,
   segmentCount: number,
-  totalBridgeBudget: number
+  totalBridgeBudget: number,
+  profile?: RouteProfile | null
 ) {
   const routes: RouteOption[] = [];
   const gateTravelSettings = buildWaypointSegmentSettings(payload.settings, segmentIndex, segmentCount, 0);
-  const { dist: gateDist, prev: gatePrev } = computeTravelTree(fromId, gateTravelSettings, MAX_TRAVEL_JUMPS);
+  const { dist: gateDist, prev: gatePrev } = measureProfile(
+    profile,
+    'travel-tree BFS',
+    () => computeTravelTree(fromId, gateTravelSettings, MAX_TRAVEL_JUMPS)
+  );
   const baselineJumps = gateDist.get(toId) ?? null;
   const gatePath = baselineJumps == null ? null : buildPath(gatePrev, fromId, toId);
   const gateRoute = gatePath ? buildGateOnlyRoute(gatePath, `gate-${segmentIndex}-${fromId}-${toId}`) : null;
@@ -1229,7 +1396,7 @@ function buildWaypointSegmentRouteOptions(
       destinationId: toId,
       waypointIds: [],
       settings: buildWaypointSegmentSettings(payload.settings, segmentIndex, segmentCount, bridgeCount),
-    });
+    }, undefined, profile);
     if (segmentResult.routes.length === 0) continue;
     routes.push(...segmentResult.routes);
   }
@@ -1241,15 +1408,50 @@ function buildWaypointSegmentRouteOptions(
   };
 }
 
+function computeWaypointSegment(payload: ComputeRequest, profile?: RouteProfile | null) {
+  const segmentIndex = Math.max(0, payload.segmentIndex ?? 0);
+  const segmentCount = Math.max(1, payload.segmentCount ?? 1);
+
+  if (payload.stagingId === payload.destinationId) {
+    return {
+      routes: [buildTrivialRoute(payload.stagingId, `same-${segmentIndex}-${payload.stagingId}`)],
+      message: null,
+      baselineJumps: 0,
+    };
+  }
+
+  if (payload.settings.bridgeOnlyChain) {
+    return computePairRoutes({
+      ...payload,
+      waypointIds: [],
+    }, undefined, profile);
+  }
+
+  return buildWaypointSegmentRouteOptions(
+    payload,
+    payload.stagingId,
+    payload.destinationId,
+    segmentIndex,
+    segmentCount,
+    Math.max(1, Math.min(2, payload.totalBridgeBudget ?? payload.settings.bridgeCount ?? 1)),
+    profile
+  );
+}
+
 function computeRoutes(
   payload: ComputeRequest,
-  onPartial?: (routes: RouteOption[], baselineJumps: number | null) => void
+  onPartial?: (routes: RouteOption[], baselineJumps: number | null) => void,
+  profile?: RouteProfile | null
 ): { routes: RouteOption[]; message: string | null; baselineJumps: number | null } {
+  if (payload.mode === 'waypoint-segment') {
+    return measureProfile(profile, 'waypoint segment calculation', () => computeWaypointSegment(payload, profile));
+  }
+
   const waypointIds = Array.isArray(payload.waypointIds)
     ? payload.waypointIds.filter((id): id is number => Number.isFinite(id))
     : [];
   if (waypointIds.length === 0) {
-    return computePairRoutes(payload, onPartial);
+    return computePairRoutes(payload, onPartial, profile);
   }
 
   if (payload.settings.bridgeOnlyChain) {
@@ -1272,7 +1474,7 @@ function computeRoutes(
         stagingId: fromId,
         destinationId: toId,
         waypointIds: [],
-      });
+      }, undefined, profile);
 
       if (combinedBaselineJumps != null) {
         combinedBaselineJumps = segmentResult.baselineJumps == null
@@ -1321,7 +1523,8 @@ function computeRoutes(
       toId,
       segmentIndex,
       segmentCount,
-      totalBridgeBudget
+      totalBridgeBudget,
+      profile
     );
 
     if (combinedBaselineJumps != null) {
@@ -1359,13 +1562,16 @@ self.onmessage = (event: MessageEvent<InitRequest | ComputeRequest>) => {
   if (data.type === 'init') {
     graph = data.graph;
     buildSystemsList(data.graph);
+    travelTreeCache = new Map();
     return;
   }
   if (data.type === 'compute') {
+    const profile = createRouteProfile(data);
     const result = computeRoutes(data, (routes, baselineJumps) => {
-      (self as any).postMessage({ type: 'partial', requestId: data.requestId, routes, message: null, baselineJumps });
-    });
-    (self as any).postMessage({ type: 'result', requestId: data.requestId, ...result });
+      self.postMessage({ type: 'partial', requestId: data.requestId, segmentIndex: data.segmentIndex, routes, message: null, baselineJumps });
+    }, profile);
+    logProfile(profile);
+    self.postMessage({ type: 'result', requestId: data.requestId, segmentIndex: data.segmentIndex, ...result });
   }
 };
 

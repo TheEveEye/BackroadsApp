@@ -56,6 +56,31 @@ type RouteOption = {
   waypointIds?: number[];
 };
 
+type RouteWorkerMessage = {
+  type: 'partial' | 'result';
+  requestId: number;
+  routes: RouteOption[];
+  message: string | null;
+  baselineJumps: number | null;
+  segmentIndex?: number;
+};
+
+type RouteRequestState = {
+  requestId: number;
+  mode: 'pair' | 'waypoint';
+  limit: number;
+  totalJobs: number;
+  completedJobs: number;
+  routeBatches: RouteOption[][];
+  messages: Array<string | null>;
+  baselineJumps: number | null;
+  segmentRoutes?: RouteOption[][];
+  segmentBaselines?: Array<number | null>;
+  waypointIds?: number[];
+  bridgeOnlyChain?: boolean;
+  totalBridgeBudget?: number;
+};
+
 const RANGE_PRESETS = [
   { label: 'Black Ops', base: 4.0, fuelPerLy: 700, fatigueReduction: 75 }, // 8.0 at JDC 5
   { label: 'Carrier Jump', base: 3.5, fuelPerLy: 3000, fatigueReduction: 0 }, // 7.0 at JDC 5
@@ -150,6 +175,117 @@ function normalizeRouteStops(stops: string[] | undefined | null) {
   if (list.length >= 2) return list;
   if (list.length === 1) return [list[0], ''];
   return ['', ''];
+}
+
+function compareRouteOptions(a: RouteOption, b: RouteOption) {
+  if (a.totalJumps !== b.totalJumps) return a.totalJumps - b.totalJumps;
+  if (a.totalBridges !== b.totalBridges) return a.totalBridges - b.totalBridges;
+  if (a.postBridgeJumps !== b.postBridgeJumps) return a.postBridgeJumps - b.postBridgeJumps;
+  const aBridgeLy = getRouteBridgeLy(a);
+  const bBridgeLy = getRouteBridgeLy(b);
+  if (aBridgeLy !== bBridgeLy) return aBridgeLy - bBridgeLy;
+  return a.key.localeCompare(b.key);
+}
+
+function mergeTopRoutes(routeBatches: RouteOption[][], limit: number) {
+  const byKey = new Map<string, RouteOption>();
+  for (const routes of routeBatches) {
+    for (const route of routes) {
+      const existing = byKey.get(route.key);
+      if (!existing || compareRouteOptions(route, existing) < 0) {
+        byKey.set(route.key, route);
+      }
+    }
+  }
+  return Array.from(byKey.values()).sort(compareRouteOptions).slice(0, limit);
+}
+
+function buildTrivialRoute(id: number, key: string): RouteOption {
+  return {
+    key,
+    bridgeLegs: [],
+    postBridgePaths: [[id]],
+    postBridgeJumps: 0,
+    totalJumps: 0,
+    totalBridges: 0,
+  };
+}
+
+function mergeWaypointRoute(prefix: RouteOption, route: RouteOption, waypointIds: number[]) {
+  const key = prefix.key === 'root' ? route.key : `${prefix.key}__${route.key}`;
+  return {
+    key,
+    bridgeLegs: [...prefix.bridgeLegs, ...route.bridgeLegs],
+    postBridgePaths: [...prefix.postBridgePaths, ...route.postBridgePaths].filter((path) => path.length > 0 && path[0] !== -1),
+    postBridgeJumps: prefix.postBridgeJumps + route.postBridgeJumps,
+    totalJumps: prefix.totalJumps + route.totalJumps,
+    totalBridges: prefix.totalBridges + route.totalBridges,
+    waypointIds,
+  };
+}
+
+function reduceWaypointRoutes(routes: RouteOption[], limit: number) {
+  return mergeTopRoutes([routes], limit);
+}
+
+function combineWaypointRoutes(segmentRoutes: RouteOption[][], waypointIds: number[], limit: number) {
+  let combined: RouteOption[] = [buildTrivialRoute(-1, 'root')];
+
+  for (const routes of segmentRoutes) {
+    const next: RouteOption[] = [];
+    const seen = new Set<string>();
+    for (const prefix of combined) {
+      for (const route of routes) {
+        const merged = mergeWaypointRoute(prefix, route, waypointIds);
+        if (seen.has(merged.key)) continue;
+        seen.add(merged.key);
+        next.push(merged);
+      }
+    }
+    combined = next.sort(compareRouteOptions).slice(0, limit);
+    if (combined.length === 0) break;
+  }
+
+  return combined;
+}
+
+function combineWaypointRoutesWithBridgeBudget(segmentRoutes: RouteOption[][], waypointIds: number[], limit: number, totalBridgeBudget: number) {
+  let combinedByBridges = new Map<number, RouteOption[]>([[0, [buildTrivialRoute(-1, 'root')]]]);
+
+  for (const routes of segmentRoutes) {
+    const nextByBridges = new Map<number, RouteOption[]>();
+    for (const [usedBridges, prefixes] of combinedByBridges.entries()) {
+      for (const prefix of prefixes) {
+        for (const route of routes) {
+          const nextUsedBridges = usedBridges + route.totalBridges;
+          if (nextUsedBridges > totalBridgeBudget) continue;
+          const bucket = nextByBridges.get(nextUsedBridges) || [];
+          bucket.push(mergeWaypointRoute(prefix, route, waypointIds));
+          nextByBridges.set(nextUsedBridges, bucket);
+        }
+      }
+    }
+    combinedByBridges = new Map(
+      Array.from(nextByBridges.entries()).map(([usedBridges, routes]) => [
+        usedBridges,
+        reduceWaypointRoutes(routes, limit),
+      ])
+    );
+    if (combinedByBridges.size === 0) break;
+  }
+
+  return combinedByBridges.get(totalBridgeBudget) || [];
+}
+
+function getWaypointSegmentLabel(segmentIndex: number, totalSegments: number) {
+  if (totalSegments <= 1) return 'route';
+  if (segmentIndex === 0) return 'the first leg';
+  if (segmentIndex === totalSegments - 1) return 'the final leg';
+  return `waypoint leg ${segmentIndex}`;
+}
+
+function getRouteWorkerCount() {
+  return Math.min(4, Math.max(2, Math.floor((window.navigator.hardwareConcurrency || 4) / 2)));
 }
 
 export function BridgePlanner() {
@@ -556,7 +692,8 @@ export function BridgePlanner() {
   const { copyStatuses, copyText } = useCopyStatuses();
   const [headerCopyOpen, setHeaderCopyOpen] = useState(false);
   const [routeCopyOpenKey, setRouteCopyOpenKey] = useState<string | null>(null);
-  const workerRef = useRef<Worker | null>(null);
+  const routeWorkersRef = useRef<Worker[]>([]);
+  const routeRequestStateRef = useRef<RouteRequestState | null>(null);
   const requestIdRef = useRef(0);
   const jumpTimersWorkersRef = useRef<Worker[]>([]);
   const jumpTimersRequestIdRef = useRef(0);
@@ -576,30 +713,91 @@ export function BridgePlanner() {
 
   useEffect(() => {
     if (!graph) return;
-    if (!workerRef.current) {
-      workerRef.current = new Worker(new URL('../workers/bridgePlannerWorker.ts', import.meta.url), { type: 'module' });
-      workerRef.current.onmessage = (event: MessageEvent<{ type: 'partial' | 'result'; requestId: number; routes: RouteOption[]; message: string | null; baselineJumps: number | null }>) => {
-        const data = event.data;
-        if (data.requestId !== requestIdRef.current) return;
-        if (data.type === 'partial') {
-          setRouteResult((prev) => ({
-            routes: data.routes,
-            message: data.message ?? prev.message,
-            loading: true,
-            baselineJumps: data.baselineJumps ?? prev.baselineJumps,
-          }));
+    const handleRouteMessage = (event: MessageEvent<RouteWorkerMessage>) => {
+      const data = event.data;
+      if (data.requestId !== requestIdRef.current) return;
+      const state = routeRequestStateRef.current;
+      if (!state || state.requestId !== data.requestId) return;
+
+      if (state.mode === 'waypoint') {
+        if (data.type !== 'result' || data.segmentIndex == null || !state.segmentRoutes || !state.segmentBaselines) return;
+        state.completedJobs += 1;
+        state.segmentRoutes[data.segmentIndex] = data.routes;
+        state.segmentBaselines[data.segmentIndex] = data.baselineJumps;
+        state.messages[data.segmentIndex] = data.message;
+
+        if (state.completedJobs < state.totalJobs) return;
+
+        let combinedBaselineJumps: number | null = 0;
+        for (const segmentBaseline of state.segmentBaselines) {
+          if (combinedBaselineJumps == null || segmentBaseline == null) {
+            combinedBaselineJumps = null;
+          } else {
+            combinedBaselineJumps += segmentBaseline;
+          }
+        }
+
+        const failedIndex = state.segmentRoutes.findIndex((routes) => routes.length === 0);
+        if (failedIndex >= 0) {
+          const message = `Could not route ${getWaypointSegmentLabel(failedIndex, state.totalJobs)}. ${state.messages[failedIndex] ?? 'No route found.'}`;
+          setRouteResult({ routes: [], message, loading: false, baselineJumps: combinedBaselineJumps });
           return;
         }
-        setRouteResult({ routes: data.routes, message: data.message, loading: false, baselineJumps: data.baselineJumps ?? null });
-      };
+
+        const routes = state.bridgeOnlyChain
+          ? combineWaypointRoutes(state.segmentRoutes, state.waypointIds || [], state.limit)
+          : combineWaypointRoutesWithBridgeBudget(state.segmentRoutes, state.waypointIds || [], state.limit, state.totalBridgeBudget || 1);
+        const message = routes.length === 0
+          ? state.bridgeOnlyChain
+            ? 'No routes found through the selected waypoints.'
+            : `No routes found through the selected waypoints using ${state.totalBridgeBudget || 1} total bridge${state.totalBridgeBudget === 1 ? '' : 's'}.`
+          : null;
+        setRouteResult({ routes, message, loading: false, baselineJumps: combinedBaselineJumps });
+        return;
+      }
+
+      const batchIndex = data.segmentIndex ?? 0;
+      state.routeBatches[batchIndex] = data.routes;
+      if (data.baselineJumps != null) state.baselineJumps = data.baselineJumps;
+      if (data.type === 'result') {
+        state.completedJobs += 1;
+        state.messages[batchIndex] = data.message;
+      }
+
+      const routes = mergeTopRoutes(state.routeBatches, state.limit);
+      const isDone = state.completedJobs >= state.totalJobs;
+      const message = routes.length > 0
+        ? null
+        : isDone
+          ? state.messages.find((value): value is string => !!value) ?? 'No routes found.'
+          : 'Computing routes…';
+      setRouteResult({
+        routes,
+        message,
+        loading: !isDone,
+        baselineJumps: state.baselineJumps,
+      });
+    };
+
+    if (routeWorkersRef.current.length === 0) {
+      routeWorkersRef.current = Array.from({ length: getRouteWorkerCount() }, () => {
+        const worker = new Worker(new URL('../workers/bridgePlannerWorker.ts', import.meta.url), { type: 'module' });
+        worker.onmessage = handleRouteMessage;
+        return worker;
+      });
+    } else {
+      for (const worker of routeWorkersRef.current) worker.onmessage = handleRouteMessage;
     }
-    workerRef.current.postMessage({ type: 'init', graph: { systems: graph.systems } });
+    for (const worker of routeWorkersRef.current) {
+      worker.postMessage({ type: 'init', graph: { systems: graph.systems } });
+    }
   }, [graph]);
 
   useEffect(() => {
     return () => {
-      workerRef.current?.terminate();
-      workerRef.current = null;
+      for (const worker of routeWorkersRef.current) worker.terminate();
+      routeWorkersRef.current = [];
+      routeRequestStateRef.current = null;
     };
   }, []);
 
@@ -652,42 +850,101 @@ export function BridgePlanner() {
 
   useEffect(() => {
     if (!graph || destinationId == null || stagingId == null) {
+      requestIdRef.current += 1;
+      routeRequestStateRef.current = null;
       setRouteResult({ routes: [], message: 'Enter a destination and staging system to calculate a route.', loading: false, baselineJumps: null });
       return;
     }
     if (hasBlankWaypoint || hasInvalidWaypoint) {
+      requestIdRef.current += 1;
+      routeRequestStateRef.current = null;
       setRouteResult({ routes: [], message: 'Enter valid systems for all waypoints to calculate a route.', loading: false, baselineJumps: null });
       return;
     }
-    if (!workerRef.current) return;
+    const workers = routeWorkersRef.current;
+    if (workers.length === 0) return;
     requestIdRef.current += 1;
     const requestId = requestIdRef.current;
-    setUserSelectedRoute(false);
-    setSelectedRouteKey(null);
-    setRouteResult({ routes: [], message: 'Computing routes…', loading: true, baselineJumps: null });
-    workerRef.current.postMessage({
-      type: 'compute',
+    const limit = Math.max(1, Math.min(25, planner.routesToShow || 5));
+    const routeSettings = {
+      excludeZarzakh: settings.excludeZarzakh,
+      sameRegionOnly: settings.sameRegionOnly,
+      bridgeIntoDestination: settings.bridgeIntoDestination,
+      bridgeFromStaging: settings.bridgeFromStaging,
+      bridgeCount: settings.bridgeCount,
+      bridgeContinuous: settings.bridgeContinuous,
+      bridgeOnlyChain: settings.bridgeOnlyChain,
+      allowAnsiblex: settings.allowAnsiblex,
+      ansiblexes: settings.ansiblexes,
+      limitToCynoBeacons: settings.limitToCynoBeacons,
+      cynoBeacons: settings.cynoBeacons,
+      blacklistEnabled: settings.blacklistEnabled,
+      blacklist: settings.blacklist,
+    };
+    const basePayload = {
+      type: 'compute' as const,
       requestId,
       destinationId,
       stagingId,
       waypointIds,
       bridgeRange: planner.bridgeRange,
       routesToShow: planner.routesToShow,
-      settings: {
-        excludeZarzakh: settings.excludeZarzakh,
-        sameRegionOnly: settings.sameRegionOnly,
-        bridgeIntoDestination: settings.bridgeIntoDestination,
-        bridgeFromStaging: settings.bridgeFromStaging,
-        bridgeCount: settings.bridgeCount,
-        bridgeContinuous: settings.bridgeContinuous,
-        bridgeOnlyChain: settings.bridgeOnlyChain,
-        allowAnsiblex: settings.allowAnsiblex,
-        ansiblexes: settings.ansiblexes,
-        limitToCynoBeacons: settings.limitToCynoBeacons,
-        cynoBeacons: settings.cynoBeacons,
-        blacklistEnabled: settings.blacklistEnabled,
-        blacklist: settings.blacklist,
-      },
+      settings: routeSettings,
+    };
+    setUserSelectedRoute(false);
+    setSelectedRouteKey(null);
+    setRouteResult({ routes: [], message: 'Computing routes…', loading: true, baselineJumps: null });
+
+    if (waypointIds.length > 0) {
+      const stopIds = [stagingId, ...waypointIds, destinationId];
+      const segmentCount = stopIds.length - 1;
+      routeRequestStateRef.current = {
+        requestId,
+        mode: 'waypoint',
+        limit,
+        totalJobs: segmentCount,
+        completedJobs: 0,
+        routeBatches: [],
+        messages: Array(segmentCount).fill(null),
+        baselineJumps: null,
+        segmentRoutes: Array.from({ length: segmentCount }, () => []),
+        segmentBaselines: Array(segmentCount).fill(null),
+        waypointIds,
+        bridgeOnlyChain: !!settings.bridgeOnlyChain,
+        totalBridgeBudget: Math.max(1, Math.min(2, settings.bridgeCount ?? 1)),
+      };
+      for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
+        workers[segmentIndex % workers.length]?.postMessage({
+          ...basePayload,
+          mode: 'waypoint-segment',
+          segmentIndex,
+          segmentCount,
+          totalBridgeBudget: Math.max(1, Math.min(2, settings.bridgeCount ?? 1)),
+          stagingId: stopIds[segmentIndex],
+          destinationId: stopIds[segmentIndex + 1],
+        });
+      }
+      return;
+    }
+
+    routeRequestStateRef.current = {
+      requestId,
+      mode: 'pair',
+      limit,
+      totalJobs: workers.length,
+      completedJobs: 0,
+      routeBatches: Array.from({ length: workers.length }, () => []),
+      messages: Array(workers.length).fill(null),
+      baselineJumps: null,
+    };
+    workers.forEach((worker, workerIndex) => {
+      worker.postMessage({
+        ...basePayload,
+        mode: 'pair-shard',
+        shardIndex: workerIndex,
+        shardCount: workers.length,
+        segmentIndex: workerIndex,
+      });
     });
   }, [
     graph,
