@@ -1,8 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { GraphData } from '../lib/data';
 import { findPathTo } from '../lib/graph';
 import { Icon } from './Icon';
-import { LY_IN_METERS, boundsFromIds, buildAnsiblexSet, buildArcPath, buildProjectedSystemMap, centerFromBounds, fitBoundsScale, project2D, segmentIntersectsRect } from './map/shared';
+import {
+  LY_IN_METERS,
+  boundsFromIds,
+  buildAnsiblexSet,
+  buildProjectedSystemMap,
+  centerFromBounds,
+  fitBoundsScale,
+  project2D,
+  segmentIntersectsRect,
+} from './map/shared';
 
 function getIsDarkMode() {
   if (typeof window === 'undefined' || typeof document === 'undefined') return false;
@@ -19,7 +28,9 @@ function getIsDarkMode() {
         return luminance < 0.45;
       }
     }
-  } catch {}
+  } catch {
+    // Fall back to the media query below if computed styles are unavailable.
+  }
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
 }
 
@@ -50,8 +61,77 @@ type BridgePlannerMapProps = {
   onSystemDoubleClick?: (id: number) => void;
 };
 
-type BackgroundNode = { id: number; x: number; y: number };
-type BackgroundEdge = { x1: number; y1: number; x2: number; y2: number; interRegion: boolean };
+type Viewport = { zoom: number; pan: { x: number; y: number } };
+type ProjectedSystem = { id: number; px: number; py: number; regionId?: number; security?: number };
+type GateEdge = { x1: number; y1: number; x2: number; y2: number; interRegion: boolean };
+type RouteSegment = { from: number; to: number; type: 'gate' | 'ansi' };
+type CynoBeaconMarker = { id: number; px: number; py: number; enabled: boolean };
+
+const secColors = ['#833862','#692623','#AC2822','#BD4E26','#CC722C','#F5FD93','#90E56A','#82D8A8','#73CBF3','#5698E5','#4173DB'];
+const fontFamily = 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif';
+
+function securityColor(value: number) {
+  const idx = value <= 0 ? 0 : Math.min(10, Math.ceil(value * 10));
+  return secColors[idx] || secColors[0];
+}
+
+function arcControlPoint(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  ampScale = 0.22,
+  minAmp = 28,
+  maxAmp = 140,
+) {
+  const mx = (from.x + to.x) / 2;
+  const my = (from.y + to.y) / 2;
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.hypot(dx, dy) || 1;
+  let nx = -dy / len;
+  let ny = dx / len;
+  if (Math.abs(ny) < 1e-6) {
+    nx = 0;
+    ny = -1;
+  } else if (ny > 0) {
+    nx = -nx;
+    ny = -ny;
+  }
+  const amp = Math.min(maxAmp, Math.max(minAmp, len * ampScale));
+  return { x: mx + nx * amp, y: my + ny * amp };
+}
+
+function drawQuadraticArc(
+  ctx: CanvasRenderingContext2D,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  ampScale: number,
+  minAmp: number,
+  maxAmp: number,
+  drawArrow = false,
+) {
+  const ctrl = arcControlPoint(from, to, ampScale, minAmp, maxAmp);
+  ctx.beginPath();
+  ctx.moveTo(from.x, from.y);
+  ctx.quadraticCurveTo(ctrl.x, ctrl.y, to.x, to.y);
+  ctx.stroke();
+
+  if (!drawArrow) return;
+  const angle = Math.atan2(to.y - ctrl.y, to.x - ctrl.x);
+  const size = 8;
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#9333ea';
+  ctx.translate(to.x, to.y);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(-size, -size * 0.5);
+  ctx.lineTo(-size, size * 0.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
 
 export function BridgePlannerMap({
   graph,
@@ -67,16 +147,28 @@ export function BridgePlannerMap({
   baselineJumps,
   onSystemDoubleClick,
 }: BridgePlannerMapProps) {
-  const base = (import.meta as any).env?.BASE_URL || '/';
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const base = import.meta.env?.BASE_URL || '/';
+  const [zoomControl, setZoomControl] = useState(1);
+  const [resetDisabled, setResetDisabled] = useState(true);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [hoveredId, setHoveredId] = useState<number | null>(null);
   const [isPanning, setIsPanning] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(getIsDarkMode);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const backgroundCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const selectedPopupRef = useRef<HTMLDivElement | null>(null);
+  const labelRefs = useRef<Map<number, HTMLSpanElement>>(new Map());
+  const hoverLabelRef = useRef<HTMLSpanElement | null>(null);
   const resetAnimationFrameRef = useRef<number | null>(null);
-  const viewportRef = useRef({ zoom: 1, pan: { x: 0, y: 0 } });
+  const drawAnimationFrameRef = useRef<number | null>(null);
+  const drawFrameRef = useRef<() => void>(() => {});
+  const viewportRef = useRef<Viewport>({ zoom: 1, pan: { x: 0, y: 0 } });
+  const zoomControlRef = useRef(1);
+  const resetDisabledRef = useRef(true);
+  const hoveredIdRef = useRef<number | null>(null);
+  const beaconImageRef = useRef<HTMLImageElement | null>(null);
+  const measureCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const dragStateRef = useRef<{
     pointerId: number;
     startClientX: number;
@@ -86,6 +178,7 @@ export function BridgePlannerMap({
     moved: boolean;
   } | null>(null);
   const suppressClickRef = useRef(false);
+  const viewportResetKeyRef = useRef<string | null>(null);
   const hasBase = !!graph && stagingId != null && destinationId != null;
   const hasRoute = hasBase && Array.isArray(bridgeLegs) && bridgeLegs.length > 0;
 
@@ -115,14 +208,13 @@ export function BridgePlannerMap({
     return Array.from(ids.values());
   }, [bridgeLegs, destinationId, hasRoute, postBridgePaths, stagingId]);
 
-  const projected = useMemo(() => {
-    if (!hasRoute || !graph) return [] as Array<{ id: number; px: number; py: number }>;
-    const out: Array<{ id: number; px: number; py: number }> = [];
+  const routeProjected = useMemo(() => {
+    if (!hasRoute || !graph) return new Map<number, { px: number; py: number }>();
+    const out = new Map<number, { px: number; py: number }>();
     for (const id of nodeIds) {
       const sys = graph.systems[String(id)];
       if (!sys) continue;
-      const { px, py } = project2D(sys.position.x, sys.position.y, sys.position.z);
-      out.push({ id, px, py });
+      out.set(id, project2D(sys.position.x, sys.position.y, sys.position.z));
     }
     return out;
   }, [nodeIds, graph, hasRoute]);
@@ -138,6 +230,15 @@ export function BridgePlannerMap({
 
   const bounds = fitBounds ?? selectedBounds;
 
+  const viewportResetKey = useMemo(() => {
+    const fitIds = (fitNodeIds ?? []).filter((id) => Number.isFinite(id)).slice().sort((a, b) => a - b);
+    return JSON.stringify({
+      stagingId,
+      destinationId,
+      fitIds,
+    });
+  }, [destinationId, fitNodeIds, stagingId]);
+
   const baseScale = useMemo(() => {
     return fitBoundsScale(bounds, w, h, pad);
   }, [bounds]);
@@ -146,131 +247,49 @@ export function BridgePlannerMap({
     return centerFromBounds(bounds);
   }, [bounds]);
 
-  const scale = baseScale * zoom;
-  const sx = useCallback((x: number) => (w / 2) + (x - center.cx) * scale + pan.x, [center.cx, pan.x, scale, w]);
-  const sy = useCallback((y: number) => (h / 2) + (y - center.cy) * scale + pan.y, [center.cy, h, pan.y, scale]);
+  const graphGeometry = useMemo(() => {
+    const projectedAll = buildProjectedSystemMap(graph);
+    const systems: ProjectedSystem[] = [];
+    const edges: GateEdge[] = [];
+    if (!graph) return { projectedAll, systems, edges };
 
-  const consumeSuppressedClick = useCallback(() => {
-    if (!suppressClickRef.current) return false;
-    suppressClickRef.current = false;
-    return true;
-  }, []);
-
-  const cancelViewportAnimation = useCallback(() => {
-    if (resetAnimationFrameRef.current == null) return;
-    window.cancelAnimationFrame(resetAnimationFrameRef.current);
-    resetAnimationFrameRef.current = null;
-  }, []);
-
-  const resetViewport = useCallback(() => {
-    const startZoom = viewportRef.current.zoom;
-    const startPan = viewportRef.current.pan;
-    if (startZoom === 1 && startPan.x === 0 && startPan.y === 0) return;
-    cancelViewportAnimation();
-    const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    const durationMs = 240;
-    const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
-
-    const tick = (now: number) => {
-      const elapsed = now - startedAt;
-      const t = Math.min(1, elapsed / durationMs);
-      const eased = easeOutCubic(t);
-      setZoom(startZoom + (1 - startZoom) * eased);
-      setPan({
-        x: startPan.x * (1 - eased),
-        y: startPan.y * (1 - eased),
+    for (const [idStr, system] of Object.entries(graph.systems)) {
+      const id = Number(idStr);
+      const projected = projectedAll.get(id);
+      if (!Number.isFinite(id) || !projected) continue;
+      systems.push({
+        id,
+        px: projected.px,
+        py: projected.py,
+        regionId: system.regionId,
+        security: system.security,
       });
-      if (t < 1) {
-        resetAnimationFrameRef.current = window.requestAnimationFrame(tick);
-      } else {
-        resetAnimationFrameRef.current = null;
-        setZoom(1);
-        setPan({ x: 0, y: 0 });
-      }
-    };
-
-    resetAnimationFrameRef.current = window.requestAnimationFrame(tick);
-  }, [cancelViewportAnimation]);
-
-  const handleZoomChange = useCallback((nextZoom: number) => {
-    cancelViewportAnimation();
-    const currentZoom = viewportRef.current.zoom;
-    const currentPan = viewportRef.current.pan;
-    if (currentZoom <= 0) {
-      setZoom(nextZoom);
-      return;
     }
-    const ratio = nextZoom / currentZoom;
-    setZoom(nextZoom);
-    setPan({
-      x: currentPan.x * ratio,
-      y: currentPan.y * ratio,
-    });
-  }, [cancelViewportAnimation]);
 
-  const handlePointerDown = useCallback((event: ReactPointerEvent<SVGSVGElement>) => {
-    if (event.button !== 0) return;
-    cancelViewportAnimation();
-    dragStateRef.current = {
-      pointerId: event.pointerId,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      startPanX: pan.x,
-      startPanY: pan.y,
-      moved: false,
-    };
-    suppressClickRef.current = false;
-  }, [cancelViewportAnimation, pan.x, pan.y]);
-
-  useEffect(() => {
-    viewportRef.current = { zoom, pan };
-  }, [zoom, pan]);
-
-  useEffect(() => {
-    const handlePointerMove = (event: PointerEvent) => {
-      const drag = dragStateRef.current;
-      if (!drag || drag.pointerId !== event.pointerId) return;
-      const dx = event.clientX - drag.startClientX;
-      const dy = event.clientY - drag.startClientY;
-      if (!drag.moved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
-        drag.moved = true;
-        suppressClickRef.current = true;
-        setIsPanning(true);
-        setHoveredId(null);
+    const seen = new Set<string>();
+    for (const [idStr, system] of Object.entries(graph.systems)) {
+      const id = Number(idStr);
+      const from = projectedAll.get(id);
+      if (!Number.isFinite(id) || !from) continue;
+      for (const next of system.adjacentSystems) {
+        const key = id < next ? `${id}-${next}` : `${next}-${id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const to = projectedAll.get(next);
+        if (!to) continue;
+        const nextRegionId = graph.systems[String(next)]?.regionId;
+        edges.push({
+          x1: from.px,
+          y1: from.py,
+          x2: to.px,
+          y2: to.py,
+          interRegion: system.regionId != null && nextRegionId != null && system.regionId !== nextRegionId,
+        });
       }
-      if (!drag.moved) return;
-      setPan({ x: drag.startPanX + dx, y: drag.startPanY + dy });
-    };
+    }
 
-    const finishPan = (event: PointerEvent) => {
-      const drag = dragStateRef.current;
-      if (!drag || drag.pointerId !== event.pointerId) return;
-      dragStateRef.current = null;
-      setIsPanning(false);
-    };
-
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', finishPan);
-    window.addEventListener('pointercancel', finishPan);
-    return () => {
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', finishPan);
-      window.removeEventListener('pointercancel', finishPan);
-    };
-  }, []);
-
-  useEffect(() => () => cancelViewportAnimation(), [cancelViewportAnimation]);
-
-  const pointsById = useMemo(() => {
-    const m = new Map<number, { px: number; py: number }>();
-    for (const p of projected) m.set(p.id, { px: p.px, py: p.py });
-    return m;
-  }, [projected]);
-
-  const projectedAll = useMemo(() => {
-    if (!hasRoute) return new Map<number, { px: number; py: number }>();
-    return buildProjectedSystemMap(graph);
-  }, [graph, hasRoute]);
+    return { projectedAll, systems, edges };
+  }, [graph]);
 
   const ansiSet = useMemo(
     () => buildAnsiblexSet(settings.allowAnsiblex, settings.ansiblexes, { defaultBidirectional: true }),
@@ -278,8 +297,8 @@ export function BridgePlannerMap({
   );
 
   const routeSegments = useMemo(() => {
-    if (approachPaths.length === 0) return [] as Array<{ from: number; to: number; type: 'gate' | 'ansi' }>;
-    const segs: Array<{ from: number; to: number; type: 'gate' | 'ansi' }> = [];
+    if (approachPaths.length === 0) return [] as RouteSegment[];
+    const segs: RouteSegment[] = [];
     for (const path of approachPaths) {
       for (let i = 0; i < path.length - 1; i++) {
         const from = path[i];
@@ -292,8 +311,8 @@ export function BridgePlannerMap({
   }, [ansiSet, approachPaths]);
 
   const postBridgeSegments = useMemo(() => {
-    if (!postBridgePaths || postBridgePaths.length === 0) return [] as Array<{ from: number; to: number; type: 'gate' | 'ansi' }>;
-    const segs: Array<{ from: number; to: number; type: 'gate' | 'ansi' }> = [];
+    if (!postBridgePaths || postBridgePaths.length === 0) return [] as RouteSegment[];
+    const segs: RouteSegment[] = [];
     for (const path of postBridgePaths) {
       if (path.length < 2) continue;
       for (let i = 0; i < path.length - 1; i++) {
@@ -305,75 +324,6 @@ export function BridgePlannerMap({
     }
     return segs;
   }, [postBridgePaths, ansiSet]);
-
-  const nameFor = (id: number) => namesById?.[String(id)] ?? String(id);
-  const getScreenPt = useCallback((id: number) => {
-    const p = projectedAll.get(id);
-    if (!p) return null;
-    return { x: sx(p.px), y: sy(p.py) };
-  }, [projectedAll, sx, sy]);
-
-  const cynoBeaconMarkers = useMemo(() => {
-    if (!graph || !settings.cynoBeacons?.length) return [] as Array<{ id: number; x: number; y: number; enabled: boolean }>;
-    const seen = new Set<number>();
-    const markers: Array<{ id: number; x: number; y: number; enabled: boolean }> = [];
-    for (const entry of settings.cynoBeacons) {
-      if (!entry) continue;
-      const id = Number(entry.id);
-      if (!Number.isFinite(id) || seen.has(id)) continue;
-      seen.add(id);
-      const pt = getScreenPt(id);
-      if (!pt) continue;
-      markers.push({ id, x: pt.x, y: pt.y, enabled: entry.enabled !== false });
-    }
-    return markers;
-  }, [getScreenPt, graph, settings.cynoBeacons]);
-
-  const backgroundNodes = useMemo(() => {
-    if (!graph || !hasRoute) return [] as BackgroundNode[];
-    const list: BackgroundNode[] = [];
-    const margin = 6;
-    for (const [id, p] of projectedAll.entries()) {
-      const x = sx(p.px);
-      const y = sy(p.py);
-      if (x < -margin || x > w + margin || y < -margin || y > h + margin) continue;
-      list.push({ id, x, y });
-    }
-    return list;
-  }, [graph, hasRoute, projectedAll, sx, sy, w, h]);
-
-  const backgroundEdges = useMemo(() => {
-    if (!graph || !hasRoute) return [] as BackgroundEdge[];
-    const edges: BackgroundEdge[] = [];
-    const seen = new Set<string>();
-    for (const [idStr, sys] of Object.entries(graph.systems)) {
-      const id = Number(idStr);
-      if (!Number.isFinite(id)) continue;
-      const from = projectedAll.get(id);
-      if (!from) continue;
-      for (const next of sys.adjacentSystems) {
-        const key = id < next ? `${id}-${next}` : `${next}-${id}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        const to = projectedAll.get(next);
-        if (!to) continue;
-        const x1 = sx(from.px);
-        const y1 = sy(from.py);
-        const x2 = sx(to.px);
-        const y2 = sy(to.py);
-        if (!segmentIntersectsRect(x1, y1, x2, y2, 0, 0, w, h)) continue;
-        const interRegion = sys.regionId != null && graph.systems[String(next)]?.regionId != null && sys.regionId !== graph.systems[String(next)]?.regionId;
-        edges.push({ x1, y1, x2, y2, interRegion });
-      }
-    }
-    return edges;
-  }, [graph, hasRoute, projectedAll, sx, sy, w, h]);
-
-  const getPt = (id: number) => {
-    const p = pointsById.get(id);
-    if (!p) return null;
-    return { x: sx(p.px), y: sy(p.py) };
-  };
 
   const labelIds = useMemo(() => {
     if (!hasRoute) return [] as number[];
@@ -398,6 +348,22 @@ export function BridgePlannerMap({
     return colors;
   }, [bridgeLegs, destinationId, stagingId]);
 
+  const cynoBeaconMarkers = useMemo(() => {
+    if (!graph || !settings.cynoBeacons?.length) return [] as CynoBeaconMarker[];
+    const seen = new Set<number>();
+    const markers: CynoBeaconMarker[] = [];
+    for (const entry of settings.cynoBeacons) {
+      if (!entry) continue;
+      const id = Number(entry.id);
+      if (!Number.isFinite(id) || seen.has(id)) continue;
+      seen.add(id);
+      const projected = graphGeometry.projectedAll.get(id);
+      if (!projected) continue;
+      markers.push({ id, px: projected.px, py: projected.py, enabled: entry.enabled !== false });
+    }
+    return markers;
+  }, [graph, graphGeometry.projectedAll, settings.cynoBeacons]);
+
   const startPos = useMemo(() => {
     if (!graph || stagingId == null) return null;
     const system = graph.systems[String(stagingId)];
@@ -405,10 +371,35 @@ export function BridgePlannerMap({
     return system.position;
   }, [graph, stagingId]);
 
+  const nameFor = useCallback((id: number) => namesById?.[String(id)] ?? String(id), [namesById]);
+
+  const setLabelRef = useCallback((id: number, node: HTMLSpanElement | null) => {
+    if (node) {
+      labelRefs.current.set(id, node);
+    } else {
+      labelRefs.current.delete(id);
+    }
+  }, []);
+
+  const measureText = useCallback((text: string) => {
+    let measured = text.length * 7;
+    if (typeof document === 'undefined') return measured;
+    if (!measureCtxRef.current) {
+      const canvas = document.createElement('canvas');
+      measureCtxRef.current = canvas.getContext('2d');
+    }
+    const ctx = measureCtxRef.current;
+    if (ctx) {
+      ctx.font = `12px ${fontFamily}`;
+      measured = ctx.measureText(text).width;
+    }
+    return measured;
+  }, []);
+
   const selected = useMemo(() => {
     if (!graph || stagingId == null || startPos == null || selectedId == null) return null;
     const system = graph.systems[String(selectedId)];
-    const projected = projectedAll.get(selectedId) || pointsById.get(selectedId);
+    const projected = graphGeometry.projectedAll.get(selectedId) || routeProjected.get(selectedId);
     if (!system || !projected) return null;
     const route = findPathTo({
       startId: stagingId,
@@ -429,32 +420,22 @@ export function BridgePlannerMap({
       system.position.y - startPos.y,
       system.position.z - startPos.z,
     ) / LY_IN_METERS;
-    const name = namesById?.[String(selectedId)] ?? String(selectedId);
-    const secColors = ['#833862','#692623','#AC2822','#BD4E26','#CC722C','#F5FD93','#90E56A','#82D8A8','#73CBF3','#5698E5','#4173DB'];
+    const name = nameFor(selectedId);
     const sVal = typeof system.security === 'number' ? system.security : 0;
-    const sIdx = sVal <= 0 ? 0 : Math.min(10, Math.ceil(sVal * 10));
-    const secColor = secColors[sIdx] || secColors[0];
+    const secColor = securityColor(sVal);
     const secLabel = sVal.toFixed(1);
     const regionName = graph.regionsById?.[String(system.regionId)] ?? String(system.regionId);
     const line = `${name} ${secLabel} • ${regionName} • ${jumps == null ? 'unreachable' : `${jumps}j`} • ${ly.toFixed(2)}ly`;
-    let measured = line.length * 7;
-    if (typeof document !== 'undefined') {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif';
-        measured = ctx.measureText(line).width;
-      }
-    }
-    const approxWidth = Math.max(40, Math.min(800, Math.ceil(measured + 16 + 2)));
+    const approxWidth = Math.max(40, Math.min(800, Math.ceil(measureText(line) + 18)));
     const approxHeight = 32;
     return { projected, name, regionName, jumps, ly, secColor, secLabel, approxWidth, approxHeight };
   }, [
     bridgeRange,
     graph,
-    namesById,
-    pointsById,
-    projectedAll,
+    graphGeometry.projectedAll,
+    measureText,
+    nameFor,
+    routeProjected,
     selectedId,
     settings.allowAnsiblex,
     settings.ansiblexes,
@@ -463,6 +444,486 @@ export function BridgePlannerMap({
     stagingId,
     startPos,
   ]);
+
+  const worldToScreen = useCallback((point: { px: number; py: number }, viewport = viewportRef.current) => {
+    const scale = baseScale * viewport.zoom;
+    return {
+      x: (w / 2) + (point.px - center.cx) * scale + viewport.pan.x,
+      y: (h / 2) + (point.py - center.cy) * scale + viewport.pan.y,
+    };
+  }, [baseScale, center.cx, center.cy]);
+
+  const logicalPointFromEvent = useCallback((event: Pick<PointerEvent | ReactPointerEvent<HTMLElement>, 'clientX' | 'clientY'>) => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+    return {
+      x: (event.clientX - rect.left) * (w / rect.width),
+      y: (event.clientY - rect.top) * (h / rect.height),
+      rect,
+    };
+  }, []);
+
+  const prepareCanvas = useCallback((canvas: HTMLCanvasElement | null) => {
+    if (!canvas) return null;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    const width = Math.max(1, Math.round(w * dpr));
+    const height = Math.max(1, Math.round(h * dpr));
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    return ctx;
+  }, []);
+
+  const findNearestSystem = useCallback((screenX: number, screenY: number) => {
+    if (!hasRoute) return null;
+    const viewport = viewportRef.current;
+    const scale = baseScale * viewport.zoom;
+    if (scale <= 0) return null;
+    const margin = 8;
+    let nearestId: number | null = null;
+    let nearestDistance = Infinity;
+    for (const system of graphGeometry.systems) {
+      const screen = worldToScreen(system, viewport);
+      if (screen.x < -margin || screen.x > w + margin || screen.y < -margin || screen.y > h + margin) continue;
+      const distance = Math.hypot(screen.x - screenX, screen.y - screenY);
+      if (distance <= 6 && distance < nearestDistance) {
+        nearestId = system.id;
+        nearestDistance = distance;
+      }
+    }
+    return nearestId;
+  }, [baseScale, graphGeometry.systems, hasRoute, worldToScreen]);
+
+  const scheduleDraw = useCallback(() => {
+    if (drawAnimationFrameRef.current != null || typeof window === 'undefined') return;
+    drawAnimationFrameRef.current = window.requestAnimationFrame(() => {
+      drawAnimationFrameRef.current = null;
+      drawFrameRef.current();
+    });
+  }, []);
+
+  const syncResetDisabled = useCallback((viewport: Viewport) => {
+    const disabled = viewport.zoom === 1 && viewport.pan.x === 0 && viewport.pan.y === 0;
+    if (disabled === resetDisabledRef.current) return;
+    resetDisabledRef.current = disabled;
+    setResetDisabled(disabled);
+  }, []);
+
+  const commitViewport = useCallback((viewport: Viewport, options?: { syncZoomControl?: boolean }) => {
+    viewportRef.current = viewport;
+    syncResetDisabled(viewport);
+    if (options?.syncZoomControl && Math.abs(zoomControlRef.current - viewport.zoom) > 0.0001) {
+      zoomControlRef.current = viewport.zoom;
+      setZoomControl(viewport.zoom);
+    }
+    scheduleDraw();
+  }, [scheduleDraw, syncResetDisabled]);
+
+  const consumeSuppressedClick = useCallback(() => {
+    if (!suppressClickRef.current) return false;
+    suppressClickRef.current = false;
+    return true;
+  }, []);
+
+  const cancelViewportAnimation = useCallback(() => {
+    if (resetAnimationFrameRef.current == null || typeof window === 'undefined') return;
+    window.cancelAnimationFrame(resetAnimationFrameRef.current);
+    resetAnimationFrameRef.current = null;
+  }, []);
+
+  const resetViewport = useCallback(() => {
+    const startZoom = viewportRef.current.zoom;
+    const startPan = viewportRef.current.pan;
+    if (startZoom === 1 && startPan.x === 0 && startPan.y === 0) return;
+    cancelViewportAnimation();
+    const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const durationMs = 240;
+    const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+
+    const tick = (now: number) => {
+      const elapsed = now - startedAt;
+      const t = Math.min(1, elapsed / durationMs);
+      const eased = easeOutCubic(t);
+      commitViewport({
+        zoom: startZoom + (1 - startZoom) * eased,
+        pan: {
+          x: startPan.x * (1 - eased),
+          y: startPan.y * (1 - eased),
+        },
+      }, { syncZoomControl: true });
+      if (t < 1) {
+        resetAnimationFrameRef.current = window.requestAnimationFrame(tick);
+      } else {
+        resetAnimationFrameRef.current = null;
+        commitViewport({ zoom: 1, pan: { x: 0, y: 0 } }, { syncZoomControl: true });
+      }
+    };
+
+    resetAnimationFrameRef.current = window.requestAnimationFrame(tick);
+  }, [cancelViewportAnimation, commitViewport]);
+
+  const handleZoomChange = useCallback((nextZoom: number) => {
+    cancelViewportAnimation();
+    const currentViewport = viewportRef.current;
+    if (currentViewport.zoom <= 0) {
+      commitViewport({ zoom: nextZoom, pan: currentViewport.pan }, { syncZoomControl: true });
+      return;
+    }
+    const ratio = nextZoom / currentViewport.zoom;
+    commitViewport({
+      zoom: nextZoom,
+      pan: {
+        x: currentViewport.pan.x * ratio,
+        y: currentViewport.pan.y * ratio,
+      },
+    }, { syncZoomControl: true });
+  }, [cancelViewportAnimation, commitViewport]);
+
+  useEffect(() => {
+    if (!hasBase) {
+      viewportResetKeyRef.current = null;
+      return;
+    }
+    if (viewportResetKeyRef.current == null) {
+      viewportResetKeyRef.current = viewportResetKey;
+      return;
+    }
+    if (viewportResetKeyRef.current === viewportResetKey) return;
+    viewportResetKeyRef.current = viewportResetKey;
+    resetViewport();
+  }, [hasBase, resetViewport, viewportResetKey]);
+
+  const handlePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    if ((event.target as HTMLElement).closest('[data-map-no-pan="true"]')) return;
+    cancelViewportAnimation();
+    const currentPan = viewportRef.current.pan;
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startPanX: currentPan.x,
+      startPanY: currentPan.y,
+      moved: false,
+    };
+    suppressClickRef.current = false;
+  }, [cancelViewportAnimation]);
+
+  const handlePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (dragStateRef.current?.moved) return;
+    if ((event.target as HTMLElement).closest('[data-map-no-pan="true"]')) return;
+    const point = logicalPointFromEvent(event);
+    if (!point) return;
+    const id = findNearestSystem(point.x, point.y);
+    if (id === hoveredIdRef.current) return;
+    hoveredIdRef.current = id;
+    setHoveredId(id);
+  }, [findNearestSystem, logicalPointFromEvent]);
+
+  const handlePointerLeave = useCallback(() => {
+    if (dragStateRef.current) return;
+    if (hoveredIdRef.current == null) return;
+    hoveredIdRef.current = null;
+    setHoveredId(null);
+  }, []);
+
+  const handleMapClick = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest('[data-map-no-pan="true"]')) return;
+    if (consumeSuppressedClick()) return;
+    const point = logicalPointFromEvent(event);
+    const id = point ? findNearestSystem(point.x, point.y) : null;
+    setSelectedId((prev) => (id == null ? null : (prev === id ? null : id)));
+  }, [consumeSuppressedClick, findNearestSystem, logicalPointFromEvent]);
+
+  const handleMapDoubleClick = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest('[data-map-no-pan="true"]')) return;
+    if (consumeSuppressedClick()) return;
+    const point = logicalPointFromEvent(event);
+    const id = point ? findNearestSystem(point.x, point.y) : null;
+    if (id != null) onSystemDoubleClick?.(id);
+  }, [consumeSuppressedClick, findNearestSystem, logicalPointFromEvent, onSystemDoubleClick]);
+
+  const renderMap = useCallback(() => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return;
+    const backgroundCtx = prepareCanvas(backgroundCanvasRef.current);
+    const overlayCtx = prepareCanvas(overlayCanvasRef.current);
+    if (!backgroundCtx || !overlayCtx || !hasRoute) return;
+
+    const viewport = viewportRef.current;
+    const scale = baseScale * viewport.zoom;
+    const marginWorld = scale > 0 ? 10 / scale : 10;
+    const xMin = center.cx + (-w / 2 - viewport.pan.x) / scale - marginWorld;
+    const xMax = center.cx + (w / 2 - viewport.pan.x) / scale + marginWorld;
+    const yMin = center.cy + (-h / 2 - viewport.pan.y) / scale - marginWorld;
+    const yMax = center.cy + (h / 2 - viewport.pan.y) / scale + marginWorld;
+
+    const drawLinePath = (ctx: CanvasRenderingContext2D, edges: GateEdge[], interRegion: boolean) => {
+      ctx.beginPath();
+      for (const edge of edges) {
+        if (edge.interRegion !== interRegion) continue;
+        if (!segmentIntersectsRect(edge.x1, edge.y1, edge.x2, edge.y2, xMin, yMin, xMax, yMax)) continue;
+        const a = worldToScreen({ px: edge.x1, py: edge.y1 }, viewport);
+        const b = worldToScreen({ px: edge.x2, py: edge.y2 }, viewport);
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+      }
+      ctx.stroke();
+    };
+
+    backgroundCtx.save();
+    backgroundCtx.lineWidth = 1;
+    backgroundCtx.lineCap = 'round';
+    backgroundCtx.strokeStyle = '#cbd5f5';
+    backgroundCtx.globalAlpha = 0.45;
+    backgroundCtx.setLineDash([]);
+    drawLinePath(backgroundCtx, graphGeometry.edges, false);
+    backgroundCtx.strokeStyle = '#94a3b8';
+    backgroundCtx.globalAlpha = 0.35;
+    backgroundCtx.setLineDash([6, 6]);
+    drawLinePath(backgroundCtx, graphGeometry.edges, true);
+    backgroundCtx.setLineDash([]);
+    backgroundCtx.globalAlpha = 1;
+    backgroundCtx.fillStyle = isDarkMode ? '#64748b' : '#cbd5e1';
+    for (const system of graphGeometry.systems) {
+      if (system.px < xMin || system.px > xMax || system.py < yMin || system.py > yMax) continue;
+      const pt = worldToScreen(system, viewport);
+      backgroundCtx.beginPath();
+      backgroundCtx.arc(pt.x, pt.y, 2.5, 0, Math.PI * 2);
+      backgroundCtx.fill();
+    }
+
+    const beaconImage = beaconImageRef.current;
+    if (beaconImage?.complete && beaconImage.naturalWidth > 0) {
+      backgroundCtx.globalAlpha = 1;
+      backgroundCtx.filter = isDarkMode ? 'none' : 'invert(1)';
+      for (const marker of cynoBeaconMarkers) {
+        if (marker.px < xMin || marker.px > xMax || marker.py < yMin || marker.py > yMax) continue;
+        const pt = worldToScreen(marker, viewport);
+        backgroundCtx.globalAlpha = marker.enabled ? 0.95 : 0.35;
+        backgroundCtx.drawImage(beaconImage, pt.x - 8, pt.y - 8, 16, 16);
+      }
+      backgroundCtx.filter = 'none';
+      backgroundCtx.globalAlpha = 1;
+    }
+    backgroundCtx.restore();
+
+    const projectedFor = (id: number) => routeProjected.get(id) || graphGeometry.projectedAll.get(id) || null;
+    const screenFor = (id: number) => {
+      const projected = projectedFor(id);
+      return projected ? worldToScreen(projected, viewport) : null;
+    };
+
+    overlayCtx.save();
+    overlayCtx.lineCap = 'round';
+    overlayCtx.lineJoin = 'round';
+
+    for (const seg of routeSegments) {
+      const a = screenFor(seg.from);
+      const b = screenFor(seg.to);
+      if (!a || !b) continue;
+      overlayCtx.setLineDash([]);
+      overlayCtx.strokeStyle = seg.type === 'ansi' ? '#22c55e' : '#facc15';
+      overlayCtx.lineWidth = 2.5;
+      overlayCtx.globalAlpha = seg.type === 'ansi' ? 0.9 : 0.95;
+      if (seg.type === 'ansi') {
+        drawQuadraticArc(overlayCtx, a, b, 0.25, 26, 140);
+      } else {
+        if (!segmentIntersectsRect(a.x, a.y, b.x, b.y, 0, 0, w, h)) continue;
+        overlayCtx.beginPath();
+        overlayCtx.moveTo(a.x, a.y);
+        overlayCtx.lineTo(b.x, b.y);
+        overlayCtx.stroke();
+      }
+    }
+
+    for (const seg of postBridgeSegments) {
+      const a = screenFor(seg.from);
+      const b = screenFor(seg.to);
+      if (!a || !b) continue;
+      overlayCtx.setLineDash([4, 4]);
+      overlayCtx.strokeStyle = seg.type === 'ansi' ? '#22c55e' : '#facc15';
+      overlayCtx.lineWidth = 2;
+      overlayCtx.globalAlpha = 0.6;
+      if (seg.type === 'ansi') {
+        drawQuadraticArc(overlayCtx, a, b, 0.22, 22, 130);
+      } else {
+        if (!segmentIntersectsRect(a.x, a.y, b.x, b.y, 0, 0, w, h)) continue;
+        overlayCtx.beginPath();
+        overlayCtx.moveTo(a.x, a.y);
+        overlayCtx.lineTo(b.x, b.y);
+        overlayCtx.stroke();
+      }
+    }
+
+    for (let idx = 0; idx < (bridgeLegs ?? []).length; idx++) {
+      const leg = bridgeLegs?.[idx];
+      if (!leg || leg.parkingId === leg.endpointId) continue;
+      const a = screenFor(leg.parkingId);
+      const b = screenFor(leg.endpointId);
+      if (!a || !b) continue;
+      overlayCtx.setLineDash([6, 5]);
+      overlayCtx.strokeStyle = '#9333ea';
+      overlayCtx.lineWidth = 3;
+      overlayCtx.globalAlpha = idx === 0 ? 0.95 : 0.8;
+      drawQuadraticArc(overlayCtx, a, b, 0.18, 30, 160, true);
+    }
+
+    overlayCtx.globalAlpha = 1;
+    overlayCtx.setLineDash([]);
+    for (const [id, fill] of focusNodeColors.entries()) {
+      const pt = screenFor(id);
+      if (!pt || pt.x < -8 || pt.x > w + 8 || pt.y < -8 || pt.y > h + 8) continue;
+      overlayCtx.fillStyle = fill;
+      overlayCtx.beginPath();
+      overlayCtx.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
+      overlayCtx.fill();
+    }
+
+    const positionTextElement = (element: HTMLElement, x: number, y: number) => {
+      const cssX = Math.round(x * rect.width / w);
+      const cssY = Math.round(y * rect.height / h);
+      element.style.left = `${cssX}px`;
+      element.style.top = `${cssY}px`;
+      element.style.display = 'block';
+    };
+
+    for (const id of labelIds) {
+      const element = labelRefs.current.get(id);
+      const pt = screenFor(id);
+      if (!element) continue;
+      if (!pt || pt.x < -80 || pt.x > w + 80 || pt.y < -24 || pt.y > h + 24) {
+        element.style.display = 'none';
+        continue;
+      }
+      positionTextElement(element, pt.x + 8, pt.y - 22);
+    }
+
+    const hoverLabel = hoverLabelRef.current;
+    if (hoveredId != null && hoveredId !== selectedId) {
+      const projected = graphGeometry.projectedAll.get(hoveredId);
+      if (hoverLabel && projected) {
+        const pt = worldToScreen(projected, viewport);
+        positionTextElement(hoverLabel, pt.x + 8, pt.y - 22);
+      }
+    } else if (hoverLabel) {
+      hoverLabel.style.display = 'none';
+    }
+    overlayCtx.restore();
+
+    const popup = selectedPopupRef.current;
+    if (popup && selected) {
+      const pt = worldToScreen(selected.projected, viewport);
+      const cssX = (pt.x + 10) * rect.width / w;
+      const cssY = Math.round(pt.y - 12) * rect.height / h;
+      popup.style.left = `${Math.round(cssX)}px`;
+      popup.style.top = `${Math.round(cssY)}px`;
+      popup.style.transform = 'none';
+    }
+  }, [
+    baseScale,
+    bridgeLegs,
+    center.cx,
+    center.cy,
+    cynoBeaconMarkers,
+    focusNodeColors,
+    graphGeometry.edges,
+    graphGeometry.projectedAll,
+    graphGeometry.systems,
+    h,
+    hasRoute,
+    hoveredId,
+    isDarkMode,
+    labelIds,
+    postBridgeSegments,
+    prepareCanvas,
+    routeProjected,
+    routeSegments,
+    selected,
+    selectedId,
+    w,
+    worldToScreen,
+  ]);
+
+  useLayoutEffect(() => {
+    drawFrameRef.current = renderMap;
+    scheduleDraw();
+  }, [renderMap, scheduleDraw]);
+
+  useEffect(() => {
+    return () => {
+      if (drawAnimationFrameRef.current != null) {
+        window.cancelAnimationFrame(drawAnimationFrameRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const image = new Image();
+    image.src = `${base}eve/cynosuralBeacon.png`;
+    image.onload = scheduleDraw;
+    beaconImageRef.current = image;
+    return () => {
+      image.onload = null;
+    };
+  }, [base, scheduleDraw]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => scheduleDraw());
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [scheduleDraw]);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const drag = dragStateRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const rect = containerRef.current?.getBoundingClientRect();
+      const logicalScaleX = rect && rect.width > 0 ? w / rect.width : 1;
+      const logicalScaleY = rect && rect.height > 0 ? h / rect.height : 1;
+      const dx = (event.clientX - drag.startClientX) * logicalScaleX;
+      const dy = (event.clientY - drag.startClientY) * logicalScaleY;
+      if (!drag.moved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+        drag.moved = true;
+        suppressClickRef.current = true;
+        setIsPanning(true);
+        if (hoveredIdRef.current != null) {
+          hoveredIdRef.current = null;
+          setHoveredId(null);
+        }
+      }
+      if (!drag.moved) return;
+      commitViewport({
+        ...viewportRef.current,
+        pan: { x: drag.startPanX + dx, y: drag.startPanY + dy },
+      });
+    };
+
+    const finishPan = (event: PointerEvent) => {
+      const drag = dragStateRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      dragStateRef.current = null;
+      setIsPanning(false);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', finishPan);
+    window.addEventListener('pointercancel', finishPan);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', finishPan);
+      window.removeEventListener('pointercancel', finishPan);
+    };
+  }, [commitViewport]);
+
+  useEffect(() => () => cancelViewportAnimation(), [cancelViewportAnimation]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
@@ -476,40 +937,6 @@ export function BridgePlannerMap({
     media.addListener(update);
     return () => media.removeListener(update);
   }, []);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, w, h);
-
-    ctx.lineWidth = 1;
-    ctx.lineCap = 'round';
-    for (const edge of backgroundEdges) {
-      ctx.strokeStyle = edge.interRegion ? '#94a3b8' : '#cbd5f5';
-      ctx.globalAlpha = edge.interRegion ? 0.35 : 0.45;
-      if (edge.interRegion) ctx.setLineDash([6, 6]);
-      else ctx.setLineDash([]);
-      ctx.beginPath();
-      ctx.moveTo(edge.x1, edge.y1);
-      ctx.lineTo(edge.x2, edge.y2);
-      ctx.stroke();
-    }
-    ctx.setLineDash([]);
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = isDarkMode ? '#64748b' : '#cbd5e1';
-    for (const node of backgroundNodes) {
-      ctx.beginPath();
-      ctx.arc(node.x, node.y, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }, [backgroundEdges, backgroundNodes, isDarkMode]);
 
   if (!hasBase) {
     return (
@@ -540,15 +967,24 @@ export function BridgePlannerMap({
         <h2 className="text-xl font-medium">Map</h2>
       </div>
 
-      <div className="relative w-full h-[480px]">
-        <div className="absolute top-3 right-3 z-10 flex flex-col items-center gap-2">
+      <div
+        ref={containerRef}
+        className={`relative w-full h-[480px] overflow-hidden ${isPanning ? 'cursor-grabbing' : hoveredId != null ? 'cursor-pointer' : 'cursor-grab'}`}
+        onClick={handleMapClick}
+        onDoubleClick={handleMapDoubleClick}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerLeave={handlePointerLeave}
+        style={{ touchAction: 'none' }}
+      >
+        <div data-map-no-pan="true" className="absolute top-3 right-3 z-20 flex flex-col items-center gap-2">
           <div className="flex h-32 w-10 items-center justify-center">
             <input
               type="range"
               min={60}
               max={220}
               step={5}
-              value={Math.round(zoom * 100)}
+              value={Math.round(zoomControl * 100)}
               onChange={(e) => handleZoomChange(Number(e.target.value) / 100)}
               aria-label="Zoom"
               title="Zoom"
@@ -559,180 +995,60 @@ export function BridgePlannerMap({
             type="button"
             className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800 disabled:opacity-50"
             onClick={resetViewport}
-            disabled={zoom === 1 && pan.x === 0 && pan.y === 0}
+            disabled={resetDisabled}
             aria-label="Reset view"
             title="Reset view"
           >
             <Icon name="scope" size={18} />
           </button>
         </div>
-        <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
-        <svg
-          viewBox={`0 0 ${w} ${h}`}
-          preserveAspectRatio="none"
-          className={`relative w-full h-full ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
-          onClick={() => {
-            if (consumeSuppressedClick()) return;
-            setSelectedId(null);
-          }}
-          onPointerDown={handlePointerDown}
-          style={{ touchAction: 'none' }}
-        >
-        <defs>
-          <marker id="titanArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="#9333ea" />
-          </marker>
-          <clipPath id="mapClip">
-            <rect x="0" y="0" width={w} height={h} />
-          </clipPath>
-        </defs>
-
-        <g clipPath="url(#mapClip)">
-          {/* Configured cyno beacons */}
-          <g>
-            {cynoBeaconMarkers.map((marker) => (
-              <image
-                key={`cyno-beacon-${marker.id}`}
-                href={`${base}eve/cynosuralBeacon.png`}
-                x={marker.x - 8}
-                y={marker.y - 8}
-                width={16}
-                height={16}
-                opacity={marker.enabled ? 0.95 : 0.35}
-                style={{ filter: isDarkMode ? undefined : 'invert(1)' }}
-                preserveAspectRatio="xMidYMid meet"
-              >
-                <title>{`${nameFor(marker.id)} cyno beacon${marker.enabled ? '' : ' (offline)'}`}</title>
-              </image>
-            ))}
-          </g>
-
-          {/* Travel path segments (pre-bridge) */}
-          <g strokeLinecap="round">
-            {routeSegments.map((seg, idx) => {
-              const A = getPt(seg.from);
-              const B = getPt(seg.to);
-              if (!A || !B) return null;
-              if (seg.type === 'ansi') {
-                const d = buildArcPath(A, B, 0.25, 26, 140);
-                return <path key={`seg-ansi-${idx}`} d={d} stroke="#22c55e" strokeWidth={2.5} fill="none" opacity={0.9} />;
-              }
-              return <line key={`seg-gate-${idx}`} x1={A.x} y1={A.y} x2={B.x} y2={B.y} stroke="#facc15" strokeWidth={2.5} opacity={0.95} />;
-            })}
-          </g>
-
-          {/* Post-bridge path segments */}
-          <g strokeLinecap="round">
-            {postBridgeSegments.map((seg, idx) => {
-              const A = getPt(seg.from);
-              const B = getPt(seg.to);
-              if (!A || !B) return null;
-              if (seg.type === 'ansi') {
-                const d = buildArcPath(A, B, 0.22, 22, 130);
-                return <path key={`seg-post-ansi-${idx}`} d={d} stroke="#22c55e" strokeWidth={2} fill="none" opacity={0.6} strokeDasharray="4 4" />;
-              }
-              return <line key={`seg-post-gate-${idx}`} x1={A.x} y1={A.y} x2={B.x} y2={B.y} stroke="#facc15" strokeWidth={2} opacity={0.6} strokeDasharray="4 4" />;
-            })}
-          </g>
-
-          {/* Titan bridge segment */}
-          {(bridgeLegs ?? []).map((leg, idx) => {
-            if (leg.parkingId === leg.endpointId) return null;
-            const A = getPt(leg.parkingId);
-            const B = getPt(leg.endpointId);
-            if (!A || !B) return null;
-            const d = buildArcPath(A, B, 0.18, 30, 160);
+        <canvas ref={backgroundCanvasRef} width={w} height={h} className="absolute inset-0 h-full w-full" aria-hidden="true" />
+        <canvas ref={overlayCanvasRef} width={w} height={h} className="absolute inset-0 h-full w-full" aria-hidden="true" />
+        <div className="pointer-events-none absolute inset-0 z-10 text-xs text-slate-900 dark:text-slate-100">
+          {labelIds.map((id) => (
+            <span
+              key={`label-${id}`}
+              ref={(node) => setLabelRef(id, node)}
+              className="absolute whitespace-nowrap leading-4"
+              style={{ left: 0, top: 0, fontFamily }}
+            >
+              {nameFor(id)}
+            </span>
+          ))}
+          {hoveredId != null && hoveredId !== selectedId && (() => {
+            const system = graph?.systems[String(hoveredId)];
+            const sVal = typeof system?.security === 'number' ? system.security : 0;
             return (
-              <path
-                key={`bridge-leg-${idx}`}
-                d={d}
-                stroke="#9333ea"
-                strokeWidth={3}
-                fill="none"
-                strokeDasharray="6 5"
-                opacity={idx === 0 ? 0.95 : 0.8}
-                markerEnd="url(#titanArrow)"
-              />
+              <span
+                ref={hoverLabelRef}
+                className="absolute whitespace-nowrap leading-4"
+                style={{ left: 0, top: 0, fontFamily }}
+              >
+                {nameFor(hoveredId)} <span style={{ color: securityColor(sVal), fontWeight: 700 }}>{sVal.toFixed(1)}</span>
+              </span>
             );
-          })}
-
-          {/* Highlighted nodes */}
-          <g>
-            {backgroundNodes.map((node) => {
-              const label = nameFor(node.id);
-              const fill = focusNodeColors.get(node.id);
-              return (
-                <g
-                  key={`node-${node.id}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (consumeSuppressedClick()) return;
-                    setSelectedId((prev) => (prev === node.id ? null : node.id));
-                  }}
-                  onDoubleClick={(event) => {
-                    event.stopPropagation();
-                    if (consumeSuppressedClick()) return;
-                    onSystemDoubleClick?.(node.id);
-                  }}
-                  onMouseEnter={() => { if (!isPanning) setHoveredId(node.id); }}
-                  onMouseLeave={() => setHoveredId((prev) => (prev === node.id ? null : prev))}
-                  style={{ cursor: 'pointer' }}
-                >
-                  <circle
-                    cx={node.x}
-                    cy={node.y}
-                    r={fill ? 5 : 6}
-                    fill={fill ?? 'transparent'}
-                    pointerEvents="all"
-                  />
-                  {node.id !== selectedId && hoveredId === node.id && (() => {
-                    const sys = graph.systems[String(node.id)];
-                    const sVal = typeof sys?.security === 'number' ? sys.security : 0;
-                    const idx = sVal <= 0 ? 0 : Math.min(10, Math.ceil(sVal * 10));
-                    const colors = ['#833862','#692623','#AC2822','#BD4E26','#CC722C','#F5FD93','#90E56A','#82D8A8','#73CBF3','#5698E5','#4173DB'];
-                    const color = colors[idx] || colors[0];
-                    return (
-                      <text x={node.x + 8} y={node.y - 8} className="text-xs fill-current pointer-events-none">
-                        {label} <tspan style={{ fill: color, fontWeight: 700 }}>{sVal.toFixed(1)}</tspan>
-                      </text>
-                    );
-                  })()}
-                </g>
-              );
-            })}
-          </g>
-        </g>
-
+          })()}
+        </div>
         {selected && (
-          <foreignObject
+          <div
+            ref={selectedPopupRef}
             data-map-no-pan="true"
             onClick={(event) => event.stopPropagation()}
-            x={sx(selected.projected.px) + 10}
-            y={Math.round(sy(selected.projected.py) - 12)}
-            width={selected.approxWidth}
-            height={selected.approxHeight}
+            className="pointer-events-auto absolute z-10 rounded-md border border-solid border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1 shadow text-xs leading-5 whitespace-nowrap"
+            style={{
+              left: 0,
+              top: 0,
+              width: selected.approxWidth,
+              minHeight: selected.approxHeight,
+              fontSize: 12,
+              fontFamily,
+            }}
           >
-            <div className="rounded-md border border-solid border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1 shadow text-xs whitespace-nowrap" style={{ fontSize: 12, fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif' }}>
-              <span>{selected.name} </span>
-              <span style={{ color: selected.secColor, fontWeight: 700 }}>{selected.secLabel}</span>
-              <span>{` • ${selected.regionName} • ${selected.jumps == null ? 'unreachable' : `${selected.jumps}j`} • ${selected.ly.toFixed(2)}ly`}</span>
-            </div>
-          </foreignObject>
+            <span>{selected.name} </span>
+            <span style={{ color: selected.secColor, fontWeight: 700 }}>{selected.secLabel}</span>
+            <span>{` • ${selected.regionName} • ${selected.jumps == null ? 'unreachable' : `${selected.jumps}j`} • ${selected.ly.toFixed(2)}ly`}</span>
+          </div>
         )}
-
-        {/* Labels */}
-        <g className="text-xs fill-current text-slate-900 dark:text-slate-100">
-          {labelIds.map((id) => {
-            const pt = projectedAll.get(id) || pointsById.get(id);
-            if (!pt) return null;
-            return (
-              <text key={`label-${id}`} x={sx(pt.px) + 8} y={sy(pt.py) - 8}>
-                {nameFor(id)}
-              </text>
-            );
-          })}
-        </g>
-      </svg>
       </div>
 
       <div className="text-sm text-gray-600 dark:text-gray-400 mt-2 flex flex-wrap gap-4">

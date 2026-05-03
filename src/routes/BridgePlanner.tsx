@@ -56,6 +56,12 @@ type RouteOption = {
   waypointIds?: number[];
 };
 
+type RouteDisplayContext = {
+  stagingId: number;
+  destinationId: number;
+  waypointIds: number[];
+};
+
 type RouteWorkerMessage = {
   type: 'partial' | 'result';
   requestId: number;
@@ -77,6 +83,7 @@ type RouteRequestState = {
   segmentRoutes?: RouteOption[][];
   segmentBaselines?: Array<number | null>;
   waypointIds?: number[];
+  displayContext: RouteDisplayContext;
   bridgeOnlyChain?: boolean;
   totalBridgeBudget?: number;
 };
@@ -534,6 +541,10 @@ export function BridgePlanner() {
   const updateRouteStop = (index: number, value: string) => {
     setRouteStops((prev) => prev.map((stop, stopIdx) => (stopIdx === index ? value : stop)));
   };
+  const reverseRouteStops = () => {
+    setRouteStops((prev) => [...prev].reverse());
+    setRouteStopKeys((prev) => [...prev].reverse());
+  };
   const addWaypoint = () => {
     const insertIndex = Math.max(1, routeStops.length - 1);
     setRouteStops((prev) => {
@@ -689,6 +700,7 @@ export function BridgePlanner() {
     loading: false,
     baselineJumps: null,
   });
+  const [routeDisplayContext, setRouteDisplayContext] = useState<RouteDisplayContext | null>(null);
   const { copyStatuses, copyText } = useCopyStatuses();
   const [headerCopyOpen, setHeaderCopyOpen] = useState(false);
   const [routeCopyOpenKey, setRouteCopyOpenKey] = useState<string | null>(null);
@@ -740,6 +752,7 @@ export function BridgePlanner() {
         const failedIndex = state.segmentRoutes.findIndex((routes) => routes.length === 0);
         if (failedIndex >= 0) {
           const message = `Could not route ${getWaypointSegmentLabel(failedIndex, state.totalJobs)}. ${state.messages[failedIndex] ?? 'No route found.'}`;
+          setRouteDisplayContext(state.displayContext);
           setRouteResult({ routes: [], message, loading: false, baselineJumps: combinedBaselineJumps });
           return;
         }
@@ -752,6 +765,7 @@ export function BridgePlanner() {
             ? 'No routes found through the selected waypoints.'
             : `No routes found through the selected waypoints using ${state.totalBridgeBudget || 1} total bridge${state.totalBridgeBudget === 1 ? '' : 's'}.`
           : null;
+        setRouteDisplayContext(state.displayContext);
         setRouteResult({ routes, message, loading: false, baselineJumps: combinedBaselineJumps });
         return;
       }
@@ -771,6 +785,9 @@ export function BridgePlanner() {
         : isDone
           ? state.messages.find((value): value is string => !!value) ?? 'No routes found.'
           : 'Computing routes…';
+      if (routes.length > 0 || isDone) {
+        setRouteDisplayContext(state.displayContext);
+      }
       setRouteResult({
         routes,
         message,
@@ -852,13 +869,23 @@ export function BridgePlanner() {
     if (!graph || destinationId == null || stagingId == null) {
       requestIdRef.current += 1;
       routeRequestStateRef.current = null;
-      setRouteResult({ routes: [], message: 'Enter a destination and staging system to calculate a route.', loading: false, baselineJumps: null });
+      setRouteResult((prev) => {
+        if (prev.routes.length > 0) {
+          return { ...prev, message: 'Enter a destination and staging system to calculate a route.', loading: false };
+        }
+        return { routes: [], message: 'Enter a destination and staging system to calculate a route.', loading: false, baselineJumps: null };
+      });
       return;
     }
     if (hasBlankWaypoint || hasInvalidWaypoint) {
       requestIdRef.current += 1;
       routeRequestStateRef.current = null;
-      setRouteResult({ routes: [], message: 'Enter valid systems for all waypoints to calculate a route.', loading: false, baselineJumps: null });
+      setRouteResult((prev) => {
+        if (prev.routes.length > 0) {
+          return { ...prev, message: 'Enter valid systems for all waypoints to calculate a route.', loading: false };
+        }
+        return { routes: [], message: 'Enter valid systems for all waypoints to calculate a route.', loading: false, baselineJumps: null };
+      });
       return;
     }
     const workers = routeWorkersRef.current;
@@ -866,6 +893,7 @@ export function BridgePlanner() {
     requestIdRef.current += 1;
     const requestId = requestIdRef.current;
     const limit = Math.max(1, Math.min(25, planner.routesToShow || 5));
+    const displayContext = { stagingId, destinationId, waypointIds };
     const routeSettings = {
       excludeZarzakh: settings.excludeZarzakh,
       sameRegionOnly: settings.sameRegionOnly,
@@ -893,7 +921,7 @@ export function BridgePlanner() {
     };
     setUserSelectedRoute(false);
     setSelectedRouteKey(null);
-    setRouteResult({ routes: [], message: 'Computing routes…', loading: true, baselineJumps: null });
+    setRouteResult((prev) => ({ ...prev, message: 'Computing routes…', loading: true }));
 
     if (waypointIds.length > 0) {
       const stopIds = [stagingId, ...waypointIds, destinationId];
@@ -910,6 +938,7 @@ export function BridgePlanner() {
         segmentRoutes: Array.from({ length: segmentCount }, () => []),
         segmentBaselines: Array(segmentCount).fill(null),
         waypointIds,
+        displayContext,
         bridgeOnlyChain: !!settings.bridgeOnlyChain,
         totalBridgeBudget: Math.max(1, Math.min(2, settings.bridgeCount ?? 1)),
       };
@@ -936,6 +965,7 @@ export function BridgePlanner() {
       routeBatches: Array.from({ length: workers.length }, () => []),
       messages: Array(workers.length).fill(null),
       baselineJumps: null,
+      displayContext,
     };
     workers.forEach((worker, workerIndex) => {
       worker.postMessage({
@@ -992,6 +1022,8 @@ export function BridgePlanner() {
     if (routeResult.routes.length === 0) return null;
     return routeResult.routes.find(r => r.key === selectedRouteKey) ?? routeResult.routes[0];
   }, [routeResult.routes, selectedRouteKey]);
+  const displayStagingId = routeDisplayContext?.stagingId ?? stagingId;
+  const displayDestinationId = routeDisplayContext?.destinationId ?? destinationId;
   const selectedFuelPerLy = useMemo(() => getPresetFuelPerLy(planner.presetShipClass), [planner.presetShipClass]);
   const selectedRouteIsotopes = useMemo(() => {
     if (!selectedRoute || !isBridgeOnlyMode) return null;
@@ -1081,10 +1113,10 @@ export function BridgePlanner() {
     for (const route of routeResult.routes) {
       for (const id of getAllRouteIds(route)) ids.add(id);
     }
-    if (stagingId != null) ids.add(stagingId);
-    if (destinationId != null) ids.add(destinationId);
+    if (displayStagingId != null) ids.add(displayStagingId);
+    if (displayDestinationId != null) ids.add(displayDestinationId);
     return Array.from(ids.values());
-  }, [routeResult.routes, stagingId, destinationId]);
+  }, [routeResult.routes, displayStagingId, displayDestinationId]);
 
   const displayRoutes = useMemo(() => {
     if (!routeResult.loading) {
@@ -1216,25 +1248,37 @@ export function BridgePlanner() {
               </div>
             </div>
 
-            <label className="grid gap-2">
-              Starting system
-              <AutocompleteInput
-                graph={graph}
-                value={stagingQuery}
-                onChange={(value) => updateRouteStop(0, value)}
-                placeholder="e.g. UALX-3"
-              />
-            </label>
+            <div className="md:col-span-2 grid grid-cols-[minmax(0,1fr)_2.75rem_minmax(0,1fr)] items-end gap-3">
+              <label className="grid min-w-0 gap-2">
+                <span>Starting system</span>
+                <AutocompleteInput
+                  graph={graph}
+                  value={stagingQuery}
+                  onChange={(value) => updateRouteStop(0, value)}
+                  placeholder="e.g. UALX-3"
+                />
+              </label>
 
-            <label className="grid gap-2">
-              Destination system
-              <AutocompleteInput
-                graph={graph}
-                value={targetQuery}
-                onChange={(value) => updateRouteStop(routeStops.length - 1, value)}
-                placeholder="e.g. C-J6MT"
-              />
-            </label>
+              <button
+                type="button"
+                className="mb-px h-10 w-11 rounded-md inline-flex items-center justify-center border border-gray-300 text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                onClick={reverseRouteStops}
+                aria-label="Reverse route"
+                title="Reverse route"
+              >
+                <Icon name="reverse-route" size={18} />
+              </button>
+
+              <label className="grid min-w-0 gap-2">
+                <span>Destination system</span>
+                <AutocompleteInput
+                  graph={graph}
+                  value={targetQuery}
+                  onChange={(value) => updateRouteStop(routeStops.length - 1, value)}
+                  placeholder="e.g. C-J6MT"
+                />
+              </label>
+            </div>
 
             <div className="md:col-span-2 flex items-center justify-between gap-3 rounded-md border border-gray-200 dark:border-gray-700 bg-white/60 dark:bg-gray-900/30 px-3 py-2">
               <div className="text-sm text-slate-700 dark:text-slate-300">
@@ -1651,11 +1695,11 @@ export function BridgePlanner() {
                   const isSelected = selectedRoute?.key === route.key;
                   const routeTravelMinutes = isBridgeOnlyMode ? jumpTimersResult.routeTravelMinutesByKey[route.key] ?? null : null;
                   const chainIds = getBridgeSequence(route);
-                  const displayChainIds = stagingId != null && chainIds[0] !== stagingId ? [stagingId, ...chainIds] : chainIds;
+                  const displayChainIds = displayStagingId != null && chainIds[0] !== displayStagingId ? [displayStagingId, ...chainIds] : chainIds;
                   const stopChainIds = [
-                    stagingId,
+                    displayStagingId,
                     ...(route.waypointIds ?? []),
-                    destinationId,
+                    displayDestinationId,
                   ].filter((id): id is number => id != null);
                   const gateDetails = route.bridgeLegs
                     .map((leg, legIdx) => leg.approachJumps > 0 ? `${leg.approachJumps}j to park${route.bridgeLegs.length > 1 ? ` ${legIdx + 1}` : ''}` : null)
@@ -1699,10 +1743,10 @@ export function BridgePlanner() {
                                 {renderSystemName(id)}
                               </span>
                             ))}
-                            {destinationId != null && displayChainIds[displayChainIds.length - 1] !== destinationId && (
+                            {displayDestinationId != null && displayChainIds[displayChainIds.length - 1] !== displayDestinationId && (
                               <span className="inline-flex items-center gap-x-1 gap-y-0.5 flex-wrap">
                                 <span aria-hidden="true">→</span>
-                                {renderSystemName(destinationId)}
+                                {renderSystemName(displayDestinationId)}
                               </span>
                             )}
                           </div>
@@ -1804,8 +1848,8 @@ export function BridgePlanner() {
             <BridgePlannerMap
               graph={graph}
               namesById={graph?.namesById || {}}
-              stagingId={stagingId}
-              destinationId={destinationId}
+              stagingId={displayStagingId}
+              destinationId={displayDestinationId}
               bridgeLegs={selectedRoute?.bridgeLegs ?? null}
               postBridgePaths={selectedRoute?.postBridgePaths ?? null}
               fitNodeIds={fitNodeIds}

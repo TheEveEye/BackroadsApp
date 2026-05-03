@@ -12,6 +12,7 @@ const NAME_TO_STEM: Record<string, string> = {
   close: 'xmark',
   'chevron-down': 'chevron.down',
   'line-3-horizontal': 'line.3.horizontal',
+  'reverse-route': 'arrow.left.arrow.right',
   scope: 'scope',
 };
 
