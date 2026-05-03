@@ -67,6 +67,12 @@ All data is loaded client-side from `public/data`:
 
 If `systems_index.json` is missing, the app will show an error on load.
 
+Regenerate these files from CCP's latest SDE JSONL export with:
+
+```bash
+npm run build:data
+```
+
 ## Assets
 
 - `public/icons` contains UI icon assets used by `src/components/Icon.tsx`

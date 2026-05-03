@@ -8,6 +8,7 @@
     "dev": "vite",
     "setup": "git pull --ff-only && cp .env.example .env.development && cp .env.example .env.production",
     "build": "tsc -b && vite build",
+    "build:data": "node scripts/build-sde-data.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "deploy": "npm run build && cp build/index.html build/404.html && gh-pages -d build --cname backroads.kiwiapps.dev"

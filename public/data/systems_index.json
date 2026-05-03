@@ -79515,7 +79515,7 @@
       "y": 919198305811307,
       "z": 95870917103334600
     },
-    "security": -0.9,
+    "security": -0.8,
     "adjacentSystems": [
       30004549
     ],
@@ -91060,7 +91060,8 @@
     "adjacentSystems": [
       30005203,
       30005206,
-      30005301
+      30005301,
+      30100032
     ],
     "hasObservatory": false,
     "isRegional": true
@@ -95037,5 +95038,993 @@
     ],
     "hasObservatory": false,
     "isRegional": true
+  },
+  "30100032": {
+    "systemId": 30100032,
+    "constellationId": 20010001,
+    "regionId": 10001004,
+    "position": {
+      "x": -183940979265000000,
+      "y": -651630537303000,
+      "z": 50885960199500000
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30005204,
+      30100034,
+      30100039,
+      30100041,
+      30100043
+    ],
+    "hasObservatory": false,
+    "isRegional": true
+  },
+  "30100033": {
+    "systemId": 30100033,
+    "constellationId": 20010002,
+    "regionId": 10001004,
+    "position": {
+      "x": -184122031520694000,
+      "y": -1300112946868730,
+      "z": 52351826487643500
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100034,
+      30100039,
+      30100041,
+      30100043,
+      30100045,
+      30100046,
+      30100047
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100034": {
+    "systemId": 30100034,
+    "constellationId": 20010002,
+    "regionId": 10001004,
+    "position": {
+      "x": -184066846347472000,
+      "y": 555399164412820,
+      "z": 52359540770664000
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100032,
+      30100033,
+      30100035,
+      30100036,
+      30100037,
+      30100038,
+      30100057
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100035": {
+    "systemId": 30100035,
+    "constellationId": 20010003,
+    "regionId": 10001004,
+    "position": {
+      "x": -180555169521137000,
+      "y": -1353448161578380,
+      "z": 50005132520567700
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100034,
+      30100039,
+      30100041,
+      30100043,
+      30100048,
+      30100049,
+      30100050
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100036": {
+    "systemId": 30100036,
+    "constellationId": 20010004,
+    "regionId": 10001004,
+    "position": {
+      "x": -183984473701515000,
+      "y": -949960207654580,
+      "z": 48800301045541600
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100034,
+      30100039,
+      30100041,
+      30100043,
+      30100051,
+      30100052,
+      30100053
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100037": {
+    "systemId": 30100037,
+    "constellationId": 20010005,
+    "regionId": 10001004,
+    "position": {
+      "x": -185661198564382000,
+      "y": -2756973681111300,
+      "z": 51679692920716900
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100034,
+      30100039,
+      30100041,
+      30100043,
+      30100054,
+      30100055,
+      30100056
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100038": {
+    "systemId": 30100038,
+    "constellationId": 20010002,
+    "regionId": 10001004,
+    "position": {
+      "x": -184398647807357000,
+      "y": 2006372028304420,
+      "z": 51933542293137900
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100034,
+      30100040,
+      30100044
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100039": {
+    "systemId": 30100039,
+    "constellationId": 20010003,
+    "regionId": 10001004,
+    "position": {
+      "x": -181778260879726000,
+      "y": -1094104364448830,
+      "z": 51830823788903500
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100032,
+      30100033,
+      30100035,
+      30100036,
+      30100037,
+      30100040,
+      30100064
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100040": {
+    "systemId": 30100040,
+    "constellationId": 20010003,
+    "regionId": 10001004,
+    "position": {
+      "x": -181321773854991000,
+      "y": 2127918857321410,
+      "z": 52215884415560900
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100038,
+      30100039,
+      30100042
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100041": {
+    "systemId": 30100041,
+    "constellationId": 20010004,
+    "regionId": 10001004,
+    "position": {
+      "x": -182319404392995000,
+      "y": -664568272030734,
+      "z": 50193556381355600
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100032,
+      30100033,
+      30100035,
+      30100036,
+      30100037,
+      30100042,
+      30100071
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100042": {
+    "systemId": 30100042,
+    "constellationId": 20010004,
+    "regionId": 10001004,
+    "position": {
+      "x": -182824918621842000,
+      "y": 1878564226938350,
+      "z": 50120913944058400
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100040,
+      30100041,
+      30100044
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100043": {
+    "systemId": 30100043,
+    "constellationId": 20010005,
+    "regionId": 10001004,
+    "position": {
+      "x": -186461514766262000,
+      "y": 819689580936283,
+      "z": 48707960659449000
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100032,
+      30100033,
+      30100035,
+      30100036,
+      30100037,
+      30100044,
+      30100078
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100044": {
+    "systemId": 30100044,
+    "constellationId": 20010005,
+    "regionId": 10001004,
+    "position": {
+      "x": -185984006145908000,
+      "y": 2821891058576460,
+      "z": 49728924406356400
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100038,
+      30100042,
+      30100043
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100045": {
+    "systemId": 30100045,
+    "constellationId": 20010002,
+    "regionId": 10001004,
+    "position": {
+      "x": -182532247178929000,
+      "y": -3998202716560290,
+      "z": 54466314249236500
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100033
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100046": {
+    "systemId": 30100046,
+    "constellationId": 20010002,
+    "regionId": 10001004,
+    "position": {
+      "x": -186063803331525000,
+      "y": -5086202993475580,
+      "z": 52670707705542300
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100033
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100047": {
+    "systemId": 30100047,
+    "constellationId": 20010002,
+    "regionId": 10001004,
+    "position": {
+      "x": -182077481641093000,
+      "y": -3095918627846420,
+      "z": 54791462311670500
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100033
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100048": {
+    "systemId": 30100048,
+    "constellationId": 20010003,
+    "regionId": 10001004,
+    "position": {
+      "x": -179352130069079000,
+      "y": -4832137721205800,
+      "z": 51976946583803000
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100035
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100049": {
+    "systemId": 30100049,
+    "constellationId": 20010003,
+    "regionId": 10001004,
+    "position": {
+      "x": -179703556246407000,
+      "y": -2433679077429160,
+      "z": 50475801952187100
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100035
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100050": {
+    "systemId": 30100050,
+    "constellationId": 20010003,
+    "regionId": 10001004,
+    "position": {
+      "x": -180529838592895000,
+      "y": -4630413979419820,
+      "z": 50575791305476700
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100035
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100051": {
+    "systemId": 30100051,
+    "constellationId": 20010004,
+    "regionId": 10001004,
+    "position": {
+      "x": -185013704795641000,
+      "y": -2590381940642570,
+      "z": 46037604421673700
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100036
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100052": {
+    "systemId": 30100052,
+    "constellationId": 20010004,
+    "regionId": 10001004,
+    "position": {
+      "x": -183949858250636000,
+      "y": -4102674480204040,
+      "z": 48280292439991400
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100036
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100053": {
+    "systemId": 30100053,
+    "constellationId": 20010004,
+    "regionId": 10001004,
+    "position": {
+      "x": -182216459943797000,
+      "y": -3104096870889730,
+      "z": 48167414183731000
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100036
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100054": {
+    "systemId": 30100054,
+    "constellationId": 20010005,
+    "regionId": 10001004,
+    "position": {
+      "x": -186670959202499000,
+      "y": -4422576982691620,
+      "z": 52195061434536400
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100037
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100055": {
+    "systemId": 30100055,
+    "constellationId": 20010005,
+    "regionId": 10001004,
+    "position": {
+      "x": -188643165655474000,
+      "y": -4265208142595150,
+      "z": 50935088564111700
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100037
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100056": {
+    "systemId": 30100056,
+    "constellationId": 20010005,
+    "regionId": 10001004,
+    "position": {
+      "x": -188118807295390000,
+      "y": -2580835717538980,
+      "z": 50713263501407200
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100037
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100057": {
+    "systemId": 30100057,
+    "constellationId": 20010006,
+    "regionId": 10001004,
+    "position": {
+      "x": -194215716005631000,
+      "y": 4716668174962850,
+      "z": 58405160860257400
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100034,
+      30100058,
+      30100059,
+      30100060
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100058": {
+    "systemId": 30100058,
+    "constellationId": 20010006,
+    "regionId": 10001004,
+    "position": {
+      "x": -196199854751556000,
+      "y": 4177715392090640,
+      "z": 57413147601175400
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100057,
+      30100059,
+      30100060,
+      30100061
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100059": {
+    "systemId": 30100059,
+    "constellationId": 20010006,
+    "regionId": 10001004,
+    "position": {
+      "x": -194935380043027000,
+      "y": 5440514141569540,
+      "z": 58712946528353500
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100057,
+      30100058,
+      30100060,
+      30100062
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100060": {
+    "systemId": 30100060,
+    "constellationId": 20010006,
+    "regionId": 10001004,
+    "position": {
+      "x": -195232523180279000,
+      "y": 3514988690885960,
+      "z": 59424634679553700
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100057,
+      30100058,
+      30100059,
+      30100061,
+      30100062,
+      30100063
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100061": {
+    "systemId": 30100061,
+    "constellationId": 20010006,
+    "regionId": 10001004,
+    "position": {
+      "x": -195085516319745000,
+      "y": 5726167411703630,
+      "z": 61316307432879200
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100058,
+      30100060,
+      30100063
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100062": {
+    "systemId": 30100062,
+    "constellationId": 20010006,
+    "regionId": 10001004,
+    "position": {
+      "x": -196978403407131000,
+      "y": 4867865341238120,
+      "z": 59842998795949900
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100059,
+      30100060,
+      30100063
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100063": {
+    "systemId": 30100063,
+    "constellationId": 20010006,
+    "regionId": 10001004,
+    "position": {
+      "x": -197257831640398000,
+      "y": 3134223913003620,
+      "z": 60358066675858600
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100060,
+      30100061,
+      30100062
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100064": {
+    "systemId": 30100064,
+    "constellationId": 20010007,
+    "regionId": 10001004,
+    "position": {
+      "x": -175236244754475000,
+      "y": 8068332803236290,
+      "z": 64327828073151600
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100039,
+      30100065,
+      30100066,
+      30100067
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100065": {
+    "systemId": 30100065,
+    "constellationId": 20010007,
+    "regionId": 10001004,
+    "position": {
+      "x": -176561831143496000,
+      "y": 8691012334966270,
+      "z": 65517807637055700
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100064,
+      30100066,
+      30100067,
+      30100068
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100066": {
+    "systemId": 30100066,
+    "constellationId": 20010007,
+    "regionId": 10001004,
+    "position": {
+      "x": -172927870352520000,
+      "y": 9481756883326550,
+      "z": 64044192769923200
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100064,
+      30100065,
+      30100067,
+      30100069
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100067": {
+    "systemId": 30100067,
+    "constellationId": 20010007,
+    "regionId": 10001004,
+    "position": {
+      "x": -173419198528018000,
+      "y": 9527396728529100,
+      "z": 66475224550334000
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100064,
+      30100065,
+      30100066,
+      30100068,
+      30100069,
+      30100070
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100068": {
+    "systemId": 30100068,
+    "constellationId": 20010007,
+    "regionId": 10001004,
+    "position": {
+      "x": -173966980368683000,
+      "y": 7536463275702620,
+      "z": 64569245601586000
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100065,
+      30100067,
+      30100070
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100069": {
+    "systemId": 30100069,
+    "constellationId": 20010007,
+    "regionId": 10001004,
+    "position": {
+      "x": -171962792835660000,
+      "y": 7547895579463350,
+      "z": 66389715659233600
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100066,
+      30100067,
+      30100070
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100070": {
+    "systemId": 30100070,
+    "constellationId": 20010007,
+    "regionId": 10001004,
+    "position": {
+      "x": -175072450017427000,
+      "y": 6824151341277940,
+      "z": 66977215804250400
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100067,
+      30100068,
+      30100069
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100071": {
+    "systemId": 30100071,
+    "constellationId": 20010008,
+    "regionId": 10001004,
+    "position": {
+      "x": -169046760319887000,
+      "y": 2801683399102410,
+      "z": 42849019405225800
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100041,
+      30100072,
+      30100073,
+      30100074
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100072": {
+    "systemId": 30100072,
+    "constellationId": 20010008,
+    "regionId": 10001004,
+    "position": {
+      "x": -169670382846471000,
+      "y": 1099605074028780,
+      "z": 42888754655111600
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100071,
+      30100073,
+      30100074,
+      30100075
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100073": {
+    "systemId": 30100073,
+    "constellationId": 20010008,
+    "regionId": 10001004,
+    "position": {
+      "x": -168157645820884000,
+      "y": 571216982883560,
+      "z": 43454898334477700
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100071,
+      30100072,
+      30100074,
+      30100076
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100074": {
+    "systemId": 30100074,
+    "constellationId": 20010008,
+    "regionId": 10001004,
+    "position": {
+      "x": -166589995380869000,
+      "y": 1564820527780330,
+      "z": 40640865839195600
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100071,
+      30100072,
+      30100073,
+      30100075,
+      30100076,
+      30100077
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100075": {
+    "systemId": 30100075,
+    "constellationId": 20010008,
+    "regionId": 10001004,
+    "position": {
+      "x": -168235655098001000,
+      "y": 1485604186367860,
+      "z": 43389054027023600
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100072,
+      30100074,
+      30100077
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100076": {
+    "systemId": 30100076,
+    "constellationId": 20010008,
+    "regionId": 10001004,
+    "position": {
+      "x": -170058897526377000,
+      "y": 4668136157348510,
+      "z": 40410541173042400
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100073,
+      30100074,
+      30100077
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100077": {
+    "systemId": 30100077,
+    "constellationId": 20010008,
+    "regionId": 10001004,
+    "position": {
+      "x": -167672531522484000,
+      "y": 3390162407887320,
+      "z": 41929188958792100
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100074,
+      30100075,
+      30100076
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100078": {
+    "systemId": 30100078,
+    "constellationId": 20010009,
+    "regionId": 10001004,
+    "position": {
+      "x": -192549756057521000,
+      "y": 2302575154977030,
+      "z": 35607399546528000
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100043,
+      30100079,
+      30100080,
+      30100081
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100079": {
+    "systemId": 30100079,
+    "constellationId": 20010009,
+    "regionId": 10001004,
+    "position": {
+      "x": -195441145229662000,
+      "y": 2594106866079630,
+      "z": 36095802071008800
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100078,
+      30100080,
+      30100081,
+      30100082
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100080": {
+    "systemId": 30100080,
+    "constellationId": 20010009,
+    "regionId": 10001004,
+    "position": {
+      "x": -192524031727782000,
+      "y": 2737173547248700,
+      "z": 32634929885185900
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100078,
+      30100079,
+      30100081,
+      30100083
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100081": {
+    "systemId": 30100081,
+    "constellationId": 20010009,
+    "regionId": 10001004,
+    "position": {
+      "x": -192158521887187000,
+      "y": 2691481095488650,
+      "z": 35041185837938700
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100078,
+      30100079,
+      30100080,
+      30100082,
+      30100083,
+      30100084
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100082": {
+    "systemId": 30100082,
+    "constellationId": 20010009,
+    "regionId": 10001004,
+    "position": {
+      "x": -193729472386456000,
+      "y": 3750684017167360,
+      "z": 36016637290195300
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100079,
+      30100081,
+      30100084
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100083": {
+    "systemId": 30100083,
+    "constellationId": 20010009,
+    "regionId": 10001004,
+    "position": {
+      "x": -191492858855656000,
+      "y": 3526024194848270,
+      "z": 35405818356250700
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100080,
+      30100081,
+      30100084
+    ],
+    "hasObservatory": false,
+    "isRegional": false
+  },
+  "30100084": {
+    "systemId": 30100084,
+    "constellationId": 20010009,
+    "regionId": 10001004,
+    "position": {
+      "x": -193371366622407000,
+      "y": 3924755619764680,
+      "z": 33976551252330000
+    },
+    "security": 1,
+    "adjacentSystems": [
+      30100081,
+      30100082,
+      30100083
+    ],
+    "hasObservatory": false,
+    "isRegional": false
   }
 }
