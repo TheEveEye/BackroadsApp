@@ -330,7 +330,7 @@ export function BridgePlanner() {
   const SETTINGS_STORAGE_KEY = 'br.settings.v1';
   const ANSIBLEX_STORAGE_KEY = 'br.ansiblex.v1';
   const CYNO_BEACONS_STORAGE_KEY = 'br.cynoBeacons.v1';
-  const { session } = useAuth();
+  const { session, getAccessToken } = useAuth();
 
   const [graph, setGraph] = useState<GraphData | null>(() => (window as any).appGraph || null);
   const [showAnsiblexModal, setShowAnsiblexModal] = useState(false);
@@ -744,7 +744,7 @@ export function BridgePlanner() {
 
   const refreshCharacterJumpSkills = async () => {
     if (skillsRefreshState.loading) return;
-    if (!session || session.characterId <= 0 || !session.accessToken) {
+    if (!session || session.characterId <= 0) {
       setSkillsRefreshState({ loading: false, message: 'Log in again to grant character skills access.', status: 'error' });
       return;
     }
@@ -755,9 +755,11 @@ export function BridgePlanner() {
 
     setSkillsRefreshState({ loading: true, message: null, status: 'idle' });
     try {
+      const accessToken = await getAccessToken();
+      if (!accessToken) throw new Error('Log in again to grant character skills access.');
       const resp = await fetch(`https://esi.evetech.net/latest/characters/${session.characterId}/skills/?datasource=tranquility`, {
         headers: {
-          Authorization: `Bearer ${session.accessToken}`,
+          Authorization: `Bearer ${accessToken}`,
         },
       });
       const data = await resp.json().catch(() => null) as EveSkillsResponse | { error?: string; message?: string } | null;

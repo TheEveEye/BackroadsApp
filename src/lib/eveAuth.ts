@@ -4,6 +4,7 @@ export type EveSession = {
   characterId: number;
   characterName: string;
   accessToken?: string;
+  refreshToken?: string;
   corporationId?: number | null;
   allianceId?: number | null;
   ownerHash?: string;
@@ -19,7 +20,6 @@ export type ToolWhitelist = {
 
 export type AuthConfig = {
   clientId: string;
-  clientSecret?: string;
   callbackUrl?: string;
   scopes: string;
   authorizeUrl: string;
@@ -100,7 +100,6 @@ export const getAuthConfig = (): AuthConfig => {
 
   return {
     clientId: env.VITE_EVE_CLIENT_ID || '',
-    clientSecret: env.VITE_EVE_CLIENT_SECRET || '',
     callbackUrl,
     scopes: env.VITE_EVE_SCOPES || 'publicData',
     authorizeUrl: env.VITE_EVE_AUTH_URL || 'https://login.eveonline.com/v2/oauth/authorize',

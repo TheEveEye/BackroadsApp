@@ -2,6 +2,10 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AUTH_RETURN_KEY, AUTH_STATE_KEY, AUTH_STORAGE_KEY, AUTH_VERIFIER_KEY, getAuthConfig, isAuthBypassed, isWhitelisted, type EveSession, type ToolKey } from '../lib/eveAuth';
 
+const ACCESS_TOKEN_REFRESH_SKEW_MS = 60_000;
+
+type TokenPayload = Record<string, unknown>;
+
 const AuthContext = createContext<{
   bypassEnabled: boolean;
   session: EveSession | null;
@@ -10,6 +14,7 @@ const AuthContext = createContext<{
   login: () => void;
   logout: () => void;
   hasAccess: (tool: ToolKey) => boolean;
+  getAccessToken: () => Promise<string | null>;
 } | null>(null);
 
 const loadStoredSession = (): EveSession | null => {
@@ -20,7 +25,8 @@ const loadStoredSession = (): EveSession | null => {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return null;
     const expiresAt = Number(parsed.expiresAt);
-    if (Number.isFinite(expiresAt) && expiresAt > 0 && Date.now() > expiresAt) return null;
+    const refreshToken = parsed.refreshToken ? String(parsed.refreshToken) : undefined;
+    if (Number.isFinite(expiresAt) && expiresAt > 0 && Date.now() > expiresAt && !refreshToken) return null;
     const characterId = Number(parsed.characterId);
     const characterName = String(parsed.characterName || '').trim();
     if (!Number.isFinite(characterId) || !characterName) return null;
@@ -28,6 +34,7 @@ const loadStoredSession = (): EveSession | null => {
       characterId,
       characterName,
       accessToken: parsed.accessToken ? String(parsed.accessToken) : undefined,
+      refreshToken,
       corporationId: parsed.corporationId != null ? Number(parsed.corporationId) : null,
       allianceId: parsed.allianceId != null ? Number(parsed.allianceId) : null,
       ownerHash: parsed.ownerHash ? String(parsed.ownerHash) : undefined,
@@ -42,20 +49,26 @@ const loadStoredSession = (): EveSession | null => {
 const persistSession = (session: EveSession) => {
   try {
     localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
-  } catch {}
+  } catch {
+    // Browser storage can be unavailable in private or restricted contexts.
+  }
 };
 
 const clearStoredSession = () => {
   try {
     localStorage.removeItem(AUTH_STORAGE_KEY);
-  } catch {}
+  } catch {
+    // Ignore storage cleanup failures.
+  }
 };
 
 const clearLoginState = () => {
   try {
     sessionStorage.removeItem(AUTH_STATE_KEY);
     sessionStorage.removeItem(AUTH_VERIFIER_KEY);
-  } catch {}
+  } catch {
+    // Ignore storage cleanup failures.
+  }
 };
 
 const base64UrlEncode = (data: ArrayBuffer) => {
@@ -83,6 +96,25 @@ const createBypassSession = (): EveSession => ({
   characterName: 'Auth Bypass',
 });
 
+const getTokenExpiry = (expiresIn: unknown) => {
+  const seconds = Number(expiresIn);
+  return Number.isFinite(seconds) && seconds > 0 ? Date.now() + seconds * 1000 : undefined;
+};
+
+const getStringField = (payload: TokenPayload | null, key: string) => {
+  const value = payload?.[key];
+  return typeof value === 'string' && value ? value : undefined;
+};
+
+const readJsonObject = async (response: Response): Promise<TokenPayload | null> => {
+  const data = await response.json().catch(() => null);
+  return data && typeof data === 'object' ? data as TokenPayload : null;
+};
+
+const getTokenErrorMessage = (payload: TokenPayload | null, fallback: string) => (
+  getStringField(payload, 'error_description') || getStringField(payload, 'error') || fallback
+);
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -93,14 +125,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<'idle' | 'loading' | 'authenticated' | 'error'>(() => (bypassEnabled || session ? 'authenticated' : 'idle'));
   const [error, setError] = useState<string | null>(null);
   const config = useMemo(() => getAuthConfig(), []);
+  const sessionRef = useRef<EveSession | null>(session);
+  const refreshInFlightRef = useRef<Promise<EveSession | null> | null>(null);
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+
+  const setAndPersistSession = useCallback((nextSession: EveSession) => {
+    sessionRef.current = nextSession;
+    setSession(nextSession);
+    persistSession(nextSession);
+    setStatus('authenticated');
+    setError(null);
+  }, []);
 
   const logout = useCallback(() => {
     if (bypassEnabled) {
+      sessionRef.current = bypassSession;
       setSession(bypassSession);
       setStatus('authenticated');
       setError(null);
       return;
     }
+    sessionRef.current = null;
     setSession(null);
     setStatus('idle');
     setError(null);
@@ -109,8 +157,80 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearLoginState();
     try {
       sessionStorage.removeItem(AUTH_RETURN_KEY);
-    } catch {}
+    } catch {
+      // Ignore storage cleanup failures.
+    }
   }, [bypassEnabled, bypassSession]);
+
+  const refreshSession = useCallback(async () => {
+    if (bypassEnabled) return bypassSession;
+    if (refreshInFlightRef.current) return refreshInFlightRef.current;
+
+    const currentSession = sessionRef.current;
+    if (!currentSession?.refreshToken) return null;
+    if (!config.clientId) {
+      setError('Missing EVE client id.');
+      setStatus('error');
+      return null;
+    }
+
+    const refreshPromise = (async () => {
+      try {
+        const body = new URLSearchParams();
+        body.set('grant_type', 'refresh_token');
+        body.set('refresh_token', currentSession.refreshToken!);
+        body.set('client_id', config.clientId);
+
+        const tokenResp = await fetch(config.tokenUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: body.toString(),
+        });
+        const tokenData = await readJsonObject(tokenResp);
+        if (!tokenResp.ok) {
+          throw new Error(getTokenErrorMessage(tokenData, 'Failed to refresh EVE token.'));
+        }
+
+        const accessToken = getStringField(tokenData, 'access_token');
+        if (!accessToken) throw new Error('Missing refreshed access token.');
+
+        const nextSession: EveSession = {
+          ...currentSession,
+          accessToken,
+          refreshToken: getStringField(tokenData, 'refresh_token') || currentSession.refreshToken,
+          scopes: getStringField(tokenData, 'scope') || currentSession.scopes,
+          expiresAt: getTokenExpiry(tokenData?.expires_in),
+        };
+
+        setAndPersistSession(nextSession);
+        return nextSession;
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Failed to refresh EVE session.';
+        logout();
+        setError(message);
+        setStatus('error');
+        return null;
+      } finally {
+        refreshInFlightRef.current = null;
+      }
+    })();
+
+    refreshInFlightRef.current = refreshPromise;
+    return refreshPromise;
+  }, [bypassEnabled, bypassSession, config.clientId, config.tokenUrl, logout, setAndPersistSession]);
+
+  const getAccessToken = useCallback(async () => {
+    if (bypassEnabled) return null;
+    const currentSession = sessionRef.current;
+    if (!currentSession) return null;
+    const expiresAt = Number(currentSession.expiresAt);
+    const hasUsableAccessToken = currentSession.accessToken && (!Number.isFinite(expiresAt) || expiresAt - Date.now() > ACCESS_TOKEN_REFRESH_SKEW_MS);
+    if (hasUsableAccessToken) return currentSession.accessToken!;
+    const refreshedSession = await refreshSession();
+    return refreshedSession?.accessToken ?? null;
+  }, [bypassEnabled, refreshSession]);
 
   const login = useCallback(async () => {
     if (bypassEnabled) {
@@ -141,8 +261,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       url.searchParams.set('code_challenge', challenge);
       url.searchParams.set('code_challenge_method', 'S256');
       window.location.assign(url.toString());
-    } catch (err: any) {
-      setError(err?.message || 'Failed to start login.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to start login.');
       setStatus('error');
     }
   }, [bypassEnabled, bypassSession, config, location.hash, location.pathname, location.search]);
@@ -190,30 +310,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const body = new URLSearchParams();
         body.set('grant_type', 'authorization_code');
         body.set('code', code);
-        if (!config.clientSecret) {
-          body.set('client_id', config.clientId);
-        }
+        body.set('client_id', config.clientId);
         body.set('code_verifier', verifier);
         if (config.callbackUrl) body.set('redirect_uri', config.callbackUrl);
 
         const headers: Record<string, string> = {
           'Content-Type': 'application/x-www-form-urlencoded',
         };
-        if (config.clientSecret) {
-          headers.Authorization = `Basic ${btoa(`${config.clientId}:${config.clientSecret}`)}`;
-        }
 
         const tokenResp = await fetch(config.tokenUrl, {
           method: 'POST',
           headers,
           body: body.toString(),
         });
-        const tokenData = await tokenResp.json();
+        const tokenData = await readJsonObject(tokenResp);
         if (!tokenResp.ok) {
-          throw new Error(tokenData?.error_description || tokenData?.error || 'Failed to fetch tokens.');
+          throw new Error(getTokenErrorMessage(tokenData, 'Failed to fetch tokens.'));
         }
-        const accessToken = tokenData.access_token;
+        const accessToken = getStringField(tokenData, 'access_token');
         if (!accessToken) throw new Error('Missing access token.');
+        const refreshToken = getStringField(tokenData, 'refresh_token');
 
         const verifyResp = await fetch(config.verifyUrl, {
           headers: {
@@ -238,46 +354,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             corporationId = Number(profileData.corporation_id) || null;
             allianceId = Number(profileData.alliance_id) || null;
           }
-        } catch {}
-
-        const expiresIn = Number(tokenData.expires_in);
-        const expiresAt = Number.isFinite(expiresIn) ? Date.now() + expiresIn * 1000 : undefined;
+        } catch {
+          // Profile data is only needed for whitelist enrichment.
+        }
 
         const nextSession: EveSession = {
           characterId,
           characterName,
           accessToken,
+          refreshToken,
           corporationId,
           allianceId,
           ownerHash: verifyData.CharacterOwnerHash ? String(verifyData.CharacterOwnerHash) : undefined,
-          scopes: tokenData.scope ? String(tokenData.scope) : config.scopes,
-          expiresAt,
+          scopes: getStringField(tokenData, 'scope') || config.scopes,
+          expiresAt: getTokenExpiry(tokenData?.expires_in),
         };
 
-        setSession(nextSession);
-        persistSession(nextSession);
-        setStatus('authenticated');
+        setAndPersistSession(nextSession);
         clearLoginState();
 
         const returnTo = sessionStorage.getItem(AUTH_RETURN_KEY) || '/';
         sessionStorage.removeItem(AUTH_RETURN_KEY);
         navigate(returnTo, { replace: true });
-      } catch (err: any) {
-        setError(err?.message || 'Login failed.');
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'Login failed.');
         setStatus('error');
       }
     };
 
     finishLogin();
-  }, [bypassEnabled, config, location.pathname, location.search, navigate]);
+  }, [bypassEnabled, config, location.pathname, location.search, navigate, setAndPersistSession]);
 
   useEffect(() => {
     if (bypassEnabled) return;
     if (!session?.expiresAt) return;
-    if (Date.now() > session.expiresAt) {
-      logout();
-    }
-  }, [bypassEnabled, session, logout]);
+    const refreshIn = Math.max(0, session.expiresAt - Date.now() - ACCESS_TOKEN_REFRESH_SKEW_MS);
+    const timer = window.setTimeout(() => {
+      if (sessionRef.current?.refreshToken) {
+        refreshSession();
+      } else if (sessionRef.current?.expiresAt && Date.now() > sessionRef.current.expiresAt) {
+        logout();
+      }
+    }, refreshIn);
+    return () => window.clearTimeout(timer);
+  }, [bypassEnabled, session?.expiresAt, refreshSession, logout]);
 
   return (
     <AuthContext.Provider
@@ -289,6 +409,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         login,
         logout,
         hasAccess,
+        getAccessToken,
       }}
     >
       {children}
