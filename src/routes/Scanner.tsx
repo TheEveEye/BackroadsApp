@@ -1,29 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import type { GraphData } from '../lib/data';
-import { getCopyButtonClass, getCopyButtonIconColor, getCopyButtonIconName, getCopyButtonLabel, useCopyStatuses } from '../lib/copy';
+import { useCopyStatuses } from '../lib/copy';
 import { resolveQueryToId, findPathTo } from '../lib/graph';
-import { AutocompleteInput } from '../components/AutocompleteInput';
-import { Icon } from '../components/Icon';
 import { AnsiblexModal as SharedAnsiblexModal } from '../components/AnsiblexModal';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import SegmentedSlider from '../components/SegmentedSlider';
-
-type WormholeType = 'Conflux' | 'Barbican' | 'Redoubt' | 'Sentinel' | 'Vidette';
-type EolLevel = 'lt1d' | 'lt4h' | 'lt1h';
-type MassLevel = 'gt50' | 'lt50' | 'lt10';
-
-type Wormhole = {
-  id: string;
-  systemId: number | null;
-  systemName: string;
-  type: WormholeType | null;
-  // null = fresh/unknown, otherwise life remaining bucket
-  eol: EolLevel | null;
-  mass: MassLevel; // mass remaining bucket
-  bookmarkInside: boolean;
-  bookmarkOutside: boolean;
-};
+import {
+  ScannerRoutesSidebar,
+  ScannerSetupPanel,
+  ScannerWormholeList,
+  type EolLevel,
+  type MassLevel,
+  type ScannerSettings,
+  type ScannerWormhole as Wormhole,
+  type ScannerWormholeRoute,
+  type WormholeType,
+} from '../components/ScannerPanels';
 
 export function Scanner() {
   const graph: GraphData | null = (window as any).appGraph || null;
@@ -45,15 +37,7 @@ export function Scanner() {
     } catch {}
     return { fromQuery: '', toQuery: '' };
   });
-  const [settings, setSettings] = useState<{
-    excludeZarzakh: boolean;
-    sameRegionOnly: boolean;
-    titanBridgeFirstJump: boolean;
-    allowAnsiblex?: boolean;
-    ansiblexes?: Array<{ from: number; to: number; enabled?: boolean }>;
-    blacklistEnabled?: boolean;
-    blacklist?: Array<{ id: number; enabled?: boolean }>;
-  }>(() => {
+  const [settings, setSettings] = useState<ScannerSettings>(() => {
     const defaults = {
       excludeZarzakh: true,
       sameRegionOnly: false,
@@ -300,10 +284,6 @@ export function Scanner() {
     ]);
   };
 
-  const hasObservatory = (id: number) => {
-    try { return !!graph?.systems[String(id)]?.hasObservatory; } catch { return false; }
-  };
-
   const observatoryItems = useMemo(() => {
     if (!graph) return [] as Array<{ id: number; name: string; regionName?: string }>;
     const systems: any = (graph as any).systems || {};
@@ -322,8 +302,6 @@ export function Scanner() {
     list.sort((a, b) => a.name.localeCompare(b.name));
     return list;
   }, [graph]);
-
-  const norm = (s: string) => s.toUpperCase().replace(/[-\s]/g, '');
 
   const buildShareUrl = (includePublic: boolean) => {
     const compact = buildCompact(wormholes);
@@ -487,16 +465,8 @@ export function Scanner() {
   }, [graph, wormholes, fromId, toId, settings]);
 
   // Build all possible wormhole-assisted routes by pairing scanned wormholes of the same type
-  const wormholeRoutes = useMemo(() => {
-    const out: Array<{
-      id: string;
-      type: WormholeType;
-      fromWh: Wormhole;
-      toWh: Wormhole;
-      fromJumps: number;
-      toJumps: number;
-      total: number;
-    }> = [];
+  const wormholeRoutes = useMemo<ScannerWormholeRoute[]>(() => {
+    const out: ScannerWormholeRoute[] = [];
     if (!graph || fromId == null || toId == null) return out;
     // Filter to valid, typed wormholes with resolved system IDs
     const typed = wormholes.filter(w => w.systemId != null && w.type != null) as Array<Required<Pick<Wormhole, 'systemId' | 'type'>> & Wormhole>;
@@ -526,16 +496,6 @@ export function Scanner() {
     );
     return out;
   }, [graph, fromId, toId, wormholes, jumpCounts]);
-
-  const typePillClass = (t: WormholeType | null) => {
-    const base = 'px-3 sm:px-4 py-1 sm:py-1.5 rounded-md border text-sm sm:text-base font-semibold shadow-sm ';
-    if (t === 'Conflux') return base + 'bg-blue-600/10 border-blue-500/60 text-blue-700 dark:text-blue-300';
-    if (t === 'Barbican') return base + 'bg-amber-500/10 border-amber-500/60 text-amber-700 dark:text-amber-300';
-    if (t === 'Redoubt') return base + 'bg-gray-500/10 border-gray-500/60 text-gray-700 dark:text-gray-300';
-    if (t === 'Sentinel') return base + 'bg-purple-500/10 border-purple-500/60 text-purple-700 dark:text-purple-300';
-    if (t === 'Vidette') return base + 'bg-teal-500/10 border-teal-500/60 text-teal-700 dark:text-teal-300';
-    return base + 'bg-gray-500/10 border-gray-400/60 text-slate-800 dark:text-slate-100';
-  };
 
   // Route filters (apply to the routes list on the right)
   // Life requirement: require both sides to have at least the selected life bucket
@@ -600,228 +560,37 @@ export function Scanner() {
     return null;
   }, [wormholeRoutes.length, fromId, toId, hasSameTypePair]);
 
-  // Determine warning icon color and tooltip for a wormhole side
-  const getWhWarning = (wh: Wormhole | null | undefined): { color: string; title: string } | null => {
-    if (!wh) return null;
-    const redLabels: string[] = [];
-    const amberLabels: string[] = [];
-    // Mass severity
-    if (wh.mass === 'lt10') redLabels.push('Mass <10%');
-    else if (wh.mass === 'lt50') amberLabels.push('Mass <50%');
-    // Life severity (no warning for <1d)
-    if (wh.eol === 'lt1h') redLabels.push('Life <1h');
-    else if (wh.eol === 'lt4h') amberLabels.push('Life <4h');
-    const labels = [...redLabels, ...amberLabels];
-    if (labels.length === 0) return null;
-    const color = redLabels.length > 0 ? '#ef4444' : '#f59e0b';
-    return { color, title: labels.join(' + ') };
-  };
-
   return (
     <section className="grid gap-6 md:grid-cols-3 items-start">
       <div className="grid gap-6 md:pr-2 md:col-span-2">
-      {/* Route selection panel */}
-      <section className="grid gap-4 grid-cols-1 md:grid-cols-2 bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
-        <label className="grid gap-2">
-          Start system (name):
-          <AutocompleteInput graph={graph} value={route.fromQuery} onChange={(v)=> setRoute(r => ({ ...r, fromQuery: v }))} placeholder="e.g. Jita" />
-        </label>
-        <label className="grid gap-2">
-          Destination system (name):
-          <AutocompleteInput graph={graph} value={route.toQuery} onChange={(v)=> setRoute(r => ({ ...r, toQuery: v }))} placeholder="e.g. Amarr" />
-        </label>
-        <fieldset className="md:col-span-2 border border-gray-200 dark:border-gray-700 rounded-md p-3">
-          <legend className="px-1 text-sm text-gray-700 dark:text-gray-300">Settings</legend>
-          <label className="inline-flex items-center gap-2 mr-4">
-            <input type="checkbox" className="accent-blue-600" checked={settings.excludeZarzakh} onChange={(e)=> setSettings({ ...settings, excludeZarzakh: e.target.checked })} />
-            <span>Exclude Zarzakh</span>
-          </label>
-          <label className="inline-flex items-center gap-2 mr-4">
-            <input type="checkbox" className="accent-purple-600" checked={settings.titanBridgeFirstJump} onChange={(e)=> setSettings({ ...settings, titanBridgeFirstJump: e.target.checked })} />
-            <span>Count Titan bridge from start as first jump</span>
-          </label>
-          <label className="inline-flex items-center gap-2 mr-3">
-            <input type="checkbox" className="accent-blue-600" checked={!!settings.allowAnsiblex} onChange={(e)=> setSettings({ ...settings, allowAnsiblex: e.target.checked })} />
-            <span>Allow Ansiblex jump bridges</span>
-          </label>
-          <button type="button" className="px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center justify-center gap-1 leading-none" onClick={() => {
-            const ev = new CustomEvent('open-ansiblex-modal');
-            window.dispatchEvent(ev);
-          }}>
-            <Icon name="gear" size={16} />
-            <span className="inline-block align-middle">Configure…</span>
-          </button>
-          <button
-            type="button"
-            className="ml-auto px-2 py-1 text-sm rounded border border-red-300 text-red-700 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20 leading-none float-right"
-            onClick={() => setShowClearConfirm(true)}
-            title="Clear all saved settings"
-          >
-            Clear settings
-          </button>
-        </fieldset>
-      </section>
+        <ScannerSetupPanel
+          graph={graph}
+          route={route}
+          settings={settings}
+          onRouteChange={setRoute}
+          onSettingsChange={setSettings}
+          onConfigureAnsiblex={() => {
+            const event = new CustomEvent('open-ansiblex-modal');
+            window.dispatchEvent(event);
+          }}
+          onClearSettings={() => setShowClearConfirm(true)}
+        />
 
-      <div className="flex items-center">
-        <h1 className="text-2xl font-semibold">Drifter Scanner</h1>
-      </div>
-
-      {wormholes.length === 0 && (
-        <p className="text-slate-600 dark:text-slate-300">No wormholes yet. Click "New Wormhole" to add one.</p>
-      )}
-
-      <ul className="grid gap-4">
-        {wormholes.map((wh, idx) => (
-          <li key={wh.id} className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-gray-900 p-4">
-            <div className="flex flex-wrap md:flex-nowrap items-start gap-6">
-              <div className="flex-1 min-w-[260px]">
-                <div className="font-semibold mb-2">Solar System</div>
-                <AutocompleteInput
-                  graph={graph}
-                  value={wh.systemName}
-                  onChange={(v) => {
-                    const idFromMap = graph?.idsByName ? graph.idsByName[norm(v)] : undefined;
-                    const matchId = (typeof idFromMap === 'number' && hasObservatory(idFromMap)) ? idFromMap : null;
-                    setWormholes(list => list.map((x,i)=> i===idx ? { ...x, systemName: v, systemId: matchId } : x));
-                  }}
-                  placeholder="Select…"
-                  className="max-w-xs"
-                  items={observatoryItems}
-                />
-                
-              </div>
-              <div className="flex-none">
-                <div className="font-semibold mb-2">Wormhole Type</div>
-                <SegmentedSlider
-                  options={(['Conflux','Barbican','Redoubt','Sentinel','Vidette'] as WormholeType[]).map(t => ({ label: t[0], value: t }))}
-                  value={wh.type ?? undefined}
-                  onChange={(v) => setWormholes(list => list.map((x,i)=> i===idx ? { ...x, type: v as WormholeType } : x))}
-                  disableFirstSelectionSlide
-                  getColorForValue={(v) => {
-                    // Reuse the same hues as route type pills (Scanner.typePillClass)
-                    if (v === 'Conflux') return 'bg-blue-600';
-                    if (v === 'Barbican') return 'bg-amber-500';
-                    if (v === 'Redoubt') return 'bg-gray-500';
-                    if (v === 'Sentinel') return 'bg-purple-500';
-                    if (v === 'Vidette') return 'bg-teal-500';
-                    return 'bg-gray-600';
-                  }}
-                />
-              </div>
-              <div className="flex-none">
-                <div className="font-semibold mb-2">Life remaining</div>
-                <SegmentedSlider
-                  options={[
-                    { label: '1d', value: 'lt1d' },
-                    { label: '4h', value: 'lt4h' },
-                    { label: '1h', value: 'lt1h' },
-                  ]}
-                  value={wh.eol ?? undefined}
-                  onChange={(v) => setWormholes(list => list.map((x,i)=> i===idx ? { ...x, eol: (v as EolLevel) } : x))}
-                  getColorForValue={(v) => {
-                    if (v === 'lt1h') return 'bg-red-500';
-                    if (v === 'lt4h') return 'bg-amber-500';
-                    if (v === 'lt1d') return 'bg-blue-600';
-                    return 'bg-gray-500';
-                  }}
-                />
-              </div>
-              <div className="flex-none">
-                <div className="font-semibold mb-2">Mass</div>
-                <SegmentedSlider
-                  options={[
-                    { label: '>50%', value: 'gt50' },
-                    { label: '<50%', value: 'lt50' },
-                    { label: '<10%', value: 'lt10' },
-                  ]}
-                  value={wh.mass}
-                  onChange={(v) => setWormholes(list => list.map((x,i)=> i===idx ? { ...x, mass: v as MassLevel } : x))}
-                  getColorForValue={(v) => {
-                    if (v === 'lt10') return 'bg-red-500';
-                    if (v === 'lt50') return 'bg-amber-500';
-                    if (v === 'gt50') return 'bg-blue-600';
-                    return 'bg-gray-500';
-                  }}
-                />
-              </div>
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-3">
-              <button className="px-3 py-1.5 rounded bg-red-500 text-white hover:bg-red-600" onClick={() => setWormholes(list => list.filter((_,i)=> i!==idx))}>Remove</button>
-              {(() => { const jc = jumpCounts.get(wh.id); return (
-                <span className="flex-1 min-w-0 text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap truncate">
-                  {fromId != null && jc?.from != null ? `${jc.from} jumps from start` : '—'}
-                  <span className="mx-2 text-gray-400">•</span>
-                  {toId != null && jc?.to != null ? `${jc.to} jumps from destination` : '—'}
-                </span>
-              ); })()}
-              <div className="ml-auto flex items-center gap-4 text-sm text-gray-700 dark:text-gray-300">
-                <label className="inline-flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={wh.bookmarkInside}
-                    onChange={(e)=> setWormholes(list => list.map((x,i)=> i===idx ? { ...x, bookmarkInside: e.target.checked } : x))}
-                  />
-                  <span>Bookmark In</span>
-                </label>
-                <label className="inline-flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={wh.bookmarkOutside}
-                    onChange={(e)=> setWormholes(list => list.map((x,i)=> i===idx ? { ...x, bookmarkOutside: e.target.checked } : x))}
-                  />
-                  <span>Bookmark Out</span>
-                </label>
-              </div>
-            </div>
-          </li>
-        ))}
-      </ul>
-
-      <div className="relative flex items-center">
-        {/* Left spacer to keep the center button truly centered (matches two 36px buttons + 8px gap => 80px = w-20) */}
-        <div className="w-20 shrink-0" aria-hidden="true" />
-        <div className="flex-1 flex justify-center">
-          <button onClick={addNew} className="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700">New Wormhole</button>
-        </div>
-        <div className="flex items-center gap-3">
-          <label className="inline-flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
-            <input
-              type="checkbox"
-              checked={publicShare}
-              onChange={(e) => setPublicShare(e.target.checked)}
-            />
-            <span>Public link</span>
-          </label>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={handleCopyDiscord}
-              className={getCopyButtonClass(copyStatuses.discord ?? null, "px-2 py-1 text-xs rounded border inline-flex items-center gap-1 transition-colors")}
-              aria-label="Copy Discord"
-            >
-              <Icon
-                name={getCopyButtonIconName(copyStatuses.discord ?? null, 'discord')}
-                size={14}
-                color={getCopyButtonIconColor(copyStatuses.discord ?? null)}
-              />
-              <span>{getCopyButtonLabel(copyStatuses.discord ?? null, 'Copy Discord')}</span>
-            </button>
-            <button
-              type="button"
-              onClick={handleCopyLink}
-              className={getCopyButtonClass(copyStatuses.link ?? null, "px-2 py-1 text-xs rounded border inline-flex items-center gap-1 transition-colors")}
-              aria-label="Copy Link"
-            >
-              <Icon
-                name={getCopyButtonIconName(copyStatuses.link ?? null, 'link')}
-                size={14}
-                color={getCopyButtonIconColor(copyStatuses.link ?? null)}
-              />
-              <span>{getCopyButtonLabel(copyStatuses.link ?? null, 'Copy Link')}</span>
-            </button>
-          </div>
-        </div>
-      </div>
+        <ScannerWormholeList
+          graph={graph}
+          wormholes={wormholes}
+          observatoryItems={observatoryItems}
+          jumpCounts={jumpCounts}
+          fromId={fromId}
+          toId={toId}
+          publicShare={publicShare}
+          copyStatuses={copyStatuses}
+          onWormholesChange={setWormholes}
+          onAddNew={addNew}
+          onPublicShareChange={setPublicShare}
+          onCopyDiscord={handleCopyDiscord}
+          onCopyLink={handleCopyLink}
+        />
 
       {showAnsiblexModal && (
         <SharedAnsiblexModal
@@ -842,167 +611,25 @@ export function Scanner() {
       />
       </div>
 
-      {/* Right: Routes panel (half width of left) */}
-      <aside className="grid gap-4 md:pl-2 items-start content-start">
-        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white/50 dark:bg-black/20 p-4">
-          <div className="flex items-center justify-between mb-2">
-            <h2 className="text-lg font-semibold">Routes</h2>
-          </div>
-          {/* Filters */}
-          <div className="mb-3 flex flex-wrap items-center gap-4 text-sm text-slate-800 dark:text-slate-200">
-            <div className="inline-flex items-center gap-2">
-              <span className="text-slate-600 dark:text-slate-400">Require lifespan:</span>
-              <div className="flex-1">
-                <SegmentedSlider
-                  options={[
-                    { label: '1d', value: 'lt1d' },
-                    { label: '4h', value: 'lt4h' },
-                    { label: '1h', value: 'lt1h' },
-                  ]}
-                  value={filterEolThreshold}
-                  onChange={(v) => setFilterEolThreshold(v as EolLevel)}
-                  getColorForValue={(v) => v === 'lt1h' ? 'bg-red-500' : v === 'lt4h' ? 'bg-amber-500' : /* v === 'lt1d' */ 'bg-blue-600'}
-                />
-              </div>
-            </div>
-            <div className="inline-flex items-center gap-2">
-              <span className="text-slate-600 dark:text-slate-400">Require mass:</span>
-              <div className="flex-1">
-                <SegmentedSlider
-                  options={[
-                    { label: '>50%', value: 'gt50' },
-                    { label: '<50%', value: 'lt50' },
-                    { label: '<10%', value: 'lt10' },
-                  ]}
-                  value={filterMassThreshold}
-                  onChange={(v) => setFilterMassThreshold(v as MassLevel)}
-                  getColorForValue={(v) => v === 'lt10' ? 'bg-red-500' : v === 'lt50' ? 'bg-amber-500' : 'bg-blue-600'}
-                />
-              </div>
-            </div>
-          </div>
-          {/* Wormhole-assisted routes derived from scanned wormholes */}
-          {noRoutesMessage && (
-            <div className="text-sm text-slate-600 dark:text-slate-400">{noRoutesMessage}</div>
-          )}
-          {!noRoutesMessage && filteredWormholeRoutes.length === 0 && (
-            <div className="text-sm text-slate-600 dark:text-slate-400">No routes match the selected filters.</div>
-          )}
-          {baseWormholeRoutes.map((r) => (
-            <div key={r.id} className="relative rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-4 bg-white dark:bg-gray-900 mb-4 last:mb-0">
-              <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5 sm:gap-3.5 text-slate-800 dark:text-slate-100">
-                <div className="flex items-center gap-2">
-                  <span className="text-base sm:text-lg font-semibold tracking-wide text-left">{r.fromWh.systemName || (graph as any)?.namesById?.[String(r.fromWh.systemId)] || r.fromWh.systemId}</span>
-                  <span className="relative h-px flex-1 bg-gray-300 dark:bg-gray-600">
-                    {(() => { const w = getWhWarning(r.fromWh); return w ? (
-                      <span className="absolute -top-3 left-1/2 -translate-x-1/2">
-                        <Icon name="warn" size={14} color={w.color} title={w.title} />
-                      </span>
-                    ) : null; })()}
-                  </span>
-                </div>
-                <span className={typePillClass(r.type)}>{r.type}</span>
-                <div className="flex items-center gap-2">
-                  <span className="relative h-px flex-1 bg-gray-300 dark:bg-gray-600">
-                    {(() => { const w = getWhWarning(r.toWh); return w ? (
-                      <span className="absolute -top-3 left-1/2 -translate-x-1/2">
-                        <Icon name="warn" size={14} color={w.color} title={w.title} />
-                      </span>
-                    ) : null; })()}
-                  </span>
-                  <span className="text-base sm:text-lg font-semibold tracking-wide text-right">{r.toWh.systemName || (graph as any)?.namesById?.[String(r.toWh.systemId)] || r.toWh.systemId}</span>
-                </div>
-              </div>
-              <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center">
-                <div className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 text-left">{r.fromJumps} jumps</div>
-                <div className="text-xs sm:text-sm text-slate-700 dark:text-slate-300 font-medium">Total: {r.total} jumps</div>
-                <div className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 text-right">{r.toJumps} jumps</div>
-              </div>
-            </div>
-          ))}
-          
-          <div className="mt-4 relative rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-4 bg-white dark:bg-gray-900">
-            <div className="flex items-center gap-2.5 sm:gap-3.5 text-slate-800 dark:text-slate-100">
-              {(() => {
-                const namesById: any = (graph as any)?.namesById || {};
-                const left = ((fromId != null ? namesById[String(fromId)] : undefined) ?? (route.fromQuery || '—')) as string;
-                const right = ((toId != null ? namesById[String(toId)] : undefined) ?? (route.toQuery || '—')) as string;
-                return (
-                  <>
-                    <span className="text-base sm:text-lg font-semibold tracking-wide">{left}</span>
-                    <span className="h-px flex-1 bg-gray-300 dark:bg-gray-600" />
-                    <span className="text-base sm:text-lg font-semibold tracking-wide">{right}</span>
-                  </>
-                );
-              })()}
-            </div>
-            <div className="mt-2 text-center text-xs sm:text-sm text-slate-700 dark:text-slate-300 font-medium">
-              {directGatePath && directGatePath.length > 0 ? `Total: ${directGatePath.length - 1} jumps` : 'Select start and destination'}
-            </div>
-          </div>
-          {/* Separator */}
-          <div className="my-3 border-t border-dashed border-gray-300 dark:border-gray-700" />
-          {/* Toggle hidden routes visibility */}
-          {hasHiddenRoutes && !showAllRoutes && (
-            <div className="mt-3 text-center">
-              <button
-                type="button"
-                className="px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
-                onClick={() => setShowAllRoutes(true)}
-              >
-                Show all routes ({hiddenRouteCount} more)
-              </button>
-            </div>
-          )}
-          {hasHiddenRoutes && showAllRoutes && (
-            <div className="mt-3 text-center">
-              <button
-                type="button"
-                className="px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
-                onClick={() => setShowAllRoutes(false)}
-              >
-                Hide extra routes
-              </button>
-            </div>
-          )}
-          {hasHiddenRoutes && showAllRoutes && (
-            <div className="mt-3 grid gap-4">
-              {extraWormholeRoutes.map((r) => (
-                <div key={r.id} className="relative rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-4 bg-white dark:bg-gray-900">
-                  <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5 sm:gap-3.5 text-slate-800 dark:text-slate-100">
-                    <div className="flex items-center gap-2">
-                      <span className="text-base sm:text-lg font-semibold tracking-wide text-left">{r.fromWh.systemName || (graph as any)?.namesById?.[String(r.fromWh.systemId)] || r.fromWh.systemId}</span>
-                      <span className="relative h-px flex-1 bg-gray-300 dark:bg-gray-600">
-                        {(() => { const w = getWhWarning(r.fromWh); return w ? (
-                          <span className="absolute -top-3 left-1/2 -translate-x-1/2">
-                            <Icon name="warn" size={14} color={w.color} title={w.title} />
-                          </span>
-                        ) : null; })()}
-                      </span>
-                    </div>
-                    <span className={typePillClass(r.type)}>{r.type}</span>
-                    <div className="flex items-center gap-2">
-                      <span className="relative h-px flex-1 bg-gray-300 dark:bg-gray-600">
-                        {(() => { const w = getWhWarning(r.toWh); return w ? (
-                          <span className="absolute -top-3 left-1/2 -translate-x-1/2">
-                            <Icon name="warn" size={14} color={w.color} title={w.title} />
-                          </span>
-                        ) : null; })()}
-                      </span>
-                      <span className="text-base sm:text-lg font-semibold tracking-wide text-right">{r.toWh.systemName || (graph as any)?.namesById?.[String(r.toWh.systemId)] || r.toWh.systemId}</span>
-                    </div>
-                  </div>
-                  <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center">
-                    <div className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 text-left">{r.fromJumps} jumps</div>
-                    <div className="text-xs sm:text-sm text-slate-700 dark:text-slate-300 font-medium">Total: {r.total} jumps</div>
-                    <div className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 text-right">{r.toJumps} jumps</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </aside>
+      <ScannerRoutesSidebar
+        graph={graph}
+        route={route}
+        fromId={fromId}
+        toId={toId}
+        directGatePath={directGatePath}
+        noRoutesMessage={noRoutesMessage}
+        filteredWormholeRoutes={filteredWormholeRoutes}
+        baseWormholeRoutes={baseWormholeRoutes}
+        extraWormholeRoutes={extraWormholeRoutes}
+        hiddenRouteCount={hiddenRouteCount}
+        hasHiddenRoutes={hasHiddenRoutes}
+        showAllRoutes={showAllRoutes}
+        filterEolThreshold={filterEolThreshold}
+        filterMassThreshold={filterMassThreshold}
+        onFilterEolThresholdChange={setFilterEolThreshold}
+        onFilterMassThresholdChange={setFilterMassThreshold}
+        onShowAllRoutesChange={setShowAllRoutes}
+      />
     </section>
   );
 }
