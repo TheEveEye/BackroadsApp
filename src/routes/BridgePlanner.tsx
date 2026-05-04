@@ -9,6 +9,7 @@ import { CynoBeaconModal } from '../components/CynoBeaconModal';
 import { BridgePlannerMap } from '../components/BridgePlannerMap';
 import { SegmentedSlider } from '../components/SegmentedSlider';
 import { ModalShell } from '../components/ModalShell';
+import { useAuth } from '../components/AuthProvider';
 import { getCopyButtonClass, getCopyButtonIconColor, getCopyButtonIconName, getCopyButtonLabel, useCopyStatuses } from '../lib/copy';
 import { calculateJumpTimerStops, getRouteTravelMinutes, clampFatigueReduction, type JumpTimerStop, type TimerMode } from '../lib/jumpTimers';
 
@@ -104,6 +105,22 @@ const RANGE_PRESETS = [
 
 const isotopeFormatter = new Intl.NumberFormat('en-US');
 const FATIGUE_REDUCTION_OPTIONS = [0, 75, 90] as const;
+const EVE_SKILLS_SCOPE = 'esi-skills.read_skills.v1';
+const EVE_JUMP_SKILL_IDS = {
+  jdc: 21611,
+  jfc: 21610,
+  jf: 29029,
+} as const;
+
+type EveSkillEntry = {
+  active_skill_level?: number;
+  trained_skill_level?: number;
+  skill_id?: number;
+};
+
+type EveSkillsResponse = {
+  skills?: EveSkillEntry[];
+};
 
 function getPresetFuelPerLy(shipClass: string) {
   return RANGE_PRESETS.find((preset) => preset.label === shipClass)?.fuelPerLy ?? null;
@@ -111,6 +128,19 @@ function getPresetFuelPerLy(shipClass: string) {
 
 function getPresetFatigueReduction(shipClass: string) {
   return RANGE_PRESETS.find((preset) => preset.label === shipClass)?.fatigueReduction ?? 0;
+}
+
+function clampSkillLevel(value: number) {
+  return Math.max(0, Math.min(5, Number.isFinite(value) ? Math.trunc(value) : 0));
+}
+
+function getEveSkillLevel(skills: EveSkillEntry[], skillId: number) {
+  const skill = skills.find((entry) => Number(entry.skill_id) === skillId);
+  return clampSkillLevel(Number(skill?.active_skill_level ?? skill?.trained_skill_level ?? 0));
+}
+
+function hasScope(scopes: string | undefined, scope: string) {
+  return (scopes ?? '').split(/\s+/).includes(scope);
 }
 
 function calculateRouteIsotopes(route: RouteOption, fuelPerLy: number | null, jfcLevel: number, shipClass: string, jfLevel: number) {
@@ -300,6 +330,7 @@ export function BridgePlanner() {
   const SETTINGS_STORAGE_KEY = 'br.settings.v1';
   const ANSIBLEX_STORAGE_KEY = 'br.ansiblex.v1';
   const CYNO_BEACONS_STORAGE_KEY = 'br.cynoBeacons.v1';
+  const { session } = useAuth();
 
   const [graph, setGraph] = useState<GraphData | null>(() => (window as any).appGraph || null);
   const [showAnsiblexModal, setShowAnsiblexModal] = useState(false);
@@ -444,6 +475,11 @@ export function BridgePlanner() {
     initialRouteStops.map((_, index) => `route-stop-${index}`)
   );
   const [rangePopoverOpen, setRangePopoverOpen] = useState(false);
+  const [skillsRefreshState, setSkillsRefreshState] = useState<{ loading: boolean; message: string | null; status: 'idle' | 'success' | 'error' }>({
+    loading: false,
+    message: null,
+    status: 'idle',
+  });
   const rangePopoverRef = useRef<HTMLDivElement | null>(null);
   const jdcSliderRef = useRef<HTMLDivElement | null>(null);
   const [jdcSliderWidth, setJdcSliderWidth] = useState<number | null>(null);
@@ -693,6 +729,71 @@ export function BridgePlanner() {
   );
   const hasBlankWaypoint = waypointQueries.some((stop) => !stop.trim());
   const hasInvalidWaypoint = waypointQueries.some((stop, idx) => stop.trim() && routeStopIds[idx + 1] == null);
+  const skillsRefreshTitle = skillsRefreshState.loading
+    ? 'Refreshing character jump skills'
+    : skillsRefreshState.message ?? 'Refresh character jump skills';
+  const skillsRefreshToneClass = skillsRefreshState.status === 'error'
+    ? 'text-red-600 dark:text-red-400'
+    : skillsRefreshState.status === 'success'
+      ? 'text-emerald-600 dark:text-emerald-400'
+      : 'text-slate-700 dark:text-slate-300';
+  const clearSkillsRefreshStatus = () => {
+    if (skillsRefreshState.status === 'idle' && !skillsRefreshState.message) return;
+    setSkillsRefreshState({ loading: false, message: null, status: 'idle' });
+  };
+
+  const refreshCharacterJumpSkills = async () => {
+    if (skillsRefreshState.loading) return;
+    if (!session || session.characterId <= 0 || !session.accessToken) {
+      setSkillsRefreshState({ loading: false, message: 'Log in again to grant character skills access.', status: 'error' });
+      return;
+    }
+    if (!hasScope(session.scopes, EVE_SKILLS_SCOPE)) {
+      setSkillsRefreshState({ loading: false, message: 'Log in again with the character skills scope.', status: 'error' });
+      return;
+    }
+
+    setSkillsRefreshState({ loading: true, message: null, status: 'idle' });
+    try {
+      const resp = await fetch(`https://esi.evetech.net/latest/characters/${session.characterId}/skills/?datasource=tranquility`, {
+        headers: {
+          Authorization: `Bearer ${session.accessToken}`,
+        },
+      });
+      const data = await resp.json().catch(() => null) as EveSkillsResponse | { error?: string; message?: string } | null;
+      if (!resp.ok) {
+        const message = data && 'error' in data
+          ? data.error
+          : data && 'message' in data
+            ? data.message
+            : null;
+        throw new Error(message || `Failed to refresh character skills (${resp.status}).`);
+      }
+      const skills = Array.isArray((data as EveSkillsResponse | null)?.skills) ? (data as EveSkillsResponse).skills! : [];
+      const jdc = getEveSkillLevel(skills, EVE_JUMP_SKILL_IDS.jdc);
+      const jfc = getEveSkillLevel(skills, EVE_JUMP_SKILL_IDS.jfc);
+      const jf = getEveSkillLevel(skills, EVE_JUMP_SKILL_IDS.jf);
+
+      setPlanner((prev) => {
+        const baseRange = RANGE_PRESETS.find((preset) => preset.label === prev.presetShipClass)?.base ?? prev.bridgeRange;
+        const bridgeRange = Number((baseRange * (1 + 0.2 * jdc)).toFixed(1));
+        return {
+          ...prev,
+          presetJdc: jdc,
+          presetJfc: jfc,
+          presetJf: jf,
+          bridgeRange,
+        };
+      });
+      setSkillsRefreshState({ loading: false, message: `Updated skills: JDC ${jdc}, JFC ${jfc}, JF ${jf}.`, status: 'success' });
+    } catch (err: unknown) {
+      setSkillsRefreshState({
+        loading: false,
+        message: err instanceof Error ? err.message : 'Failed to refresh character skills.',
+        status: 'error',
+      });
+    }
+  };
 
   const [routeResult, setRouteResult] = useState<{ routes: RouteOption[]; message: string | null; loading: boolean; baselineJumps: number | null }>({
     routes: [],
@@ -1344,12 +1445,26 @@ export function BridgePlanner() {
                         </div>
                       </div>
                       <div className="grid gap-1 text-xs text-slate-600 dark:text-slate-300 mt-2">
-                        <span>Jump Drive Calibration</span>
+                        <div className="flex items-center justify-between gap-2">
+                          <span>Jump Drive Calibration</span>
+                          <button
+                            type="button"
+                            className={`h-7 w-7 rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-700 dark:hover:bg-gray-800 inline-flex items-center justify-center ${skillsRefreshToneClass}`}
+                            onClick={refreshCharacterJumpSkills}
+                            disabled={skillsRefreshState.loading}
+                            aria-label={skillsRefreshTitle}
+                            title={skillsRefreshTitle}
+                          >
+                            <Icon name="refresh" size={15} className={skillsRefreshState.loading ? 'animate-spin' : undefined} />
+                          </button>
+                          <span className="sr-only" aria-live="polite">{skillsRefreshState.message}</span>
+                        </div>
                         <SegmentedSlider
                           containerRef={jdcSliderRef}
                           options={[0, 1, 2, 3, 4, 5].map((lvl) => ({ label: String(lvl), value: String(lvl) }))}
                           value={String(planner.presetJdc)}
                           onChange={(value) => {
+                            clearSkillsRefreshStatus();
                             const jdc = Math.max(0, Math.min(5, Number(value)));
                             const baseRange = RANGE_PRESETS.find((p) => p.label === planner.presetShipClass)?.base ?? planner.bridgeRange;
                             const range = Number((baseRange * (1 + 0.2 * jdc)).toFixed(1));
@@ -1368,6 +1483,7 @@ export function BridgePlanner() {
                           options={[0, 1, 2, 3, 4, 5].map((lvl) => ({ label: String(lvl), value: String(lvl) }))}
                           value={String(planner.presetJfc)}
                           onChange={(value) => {
+                            clearSkillsRefreshStatus();
                             const jfc = Math.max(0, Math.min(5, Number(value)));
                             setPlanner((prev) => ({ ...prev, presetJfc: jfc }));
                           }}
@@ -1384,6 +1500,7 @@ export function BridgePlanner() {
                           options={[0, 1, 2, 3, 4, 5].map((lvl) => ({ label: String(lvl), value: String(lvl) }))}
                           value={String(planner.presetJf)}
                           onChange={(value) => {
+                            clearSkillsRefreshStatus();
                             const jf = Math.max(0, Math.min(5, Number(value)));
                             setPlanner((prev) => ({ ...prev, presetJf: jf }));
                           }}

@@ -13,6 +13,7 @@ const NAME_TO_STEM: Record<string, string> = {
   'chevron-down': 'chevron.down',
   'line-3-horizontal': 'line.3.horizontal',
   'reverse-route': 'arrow.left.arrow.right',
+  refresh: 'arrow.trianglehead.2.counterclockwise',
   scope: 'scope',
 };
 

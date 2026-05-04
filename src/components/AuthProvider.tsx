@@ -27,6 +27,7 @@ const loadStoredSession = (): EveSession | null => {
     return {
       characterId,
       characterName,
+      accessToken: parsed.accessToken ? String(parsed.accessToken) : undefined,
       corporationId: parsed.corporationId != null ? Number(parsed.corporationId) : null,
       allianceId: parsed.allianceId != null ? Number(parsed.allianceId) : null,
       ownerHash: parsed.ownerHash ? String(parsed.ownerHash) : undefined,
@@ -245,6 +246,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const nextSession: EveSession = {
           characterId,
           characterName,
+          accessToken,
           corporationId,
           allianceId,
           ownerHash: verifyData.CharacterOwnerHash ? String(verifyData.CharacterOwnerHash) : undefined,

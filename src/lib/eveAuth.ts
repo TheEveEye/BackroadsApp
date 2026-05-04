@@ -3,6 +3,7 @@ export type ToolKey = 'observatories' | 'scanner' | 'bridgePlanner';
 export type EveSession = {
   characterId: number;
   characterName: string;
+  accessToken?: string;
   corporationId?: number | null;
   allianceId?: number | null;
   ownerHash?: string;
