@@ -8,10 +8,9 @@ import { BlacklistModal } from '../components/BlacklistModal';
 import { CynoBeaconModal } from '../components/CynoBeaconModal';
 import { BridgePlannerMap } from '../components/BridgePlannerMap';
 import { SegmentedSlider } from '../components/SegmentedSlider';
-import { BridgeRoutesPanel, JumpTimersPanel } from '../components/BridgePlannerPanels';
-import { BridgePlannerWaypointsModal } from '../components/BridgePlannerWaypointsModal';
+import { ModalShell } from '../components/ModalShell';
 import { useAuth } from '../components/AuthProvider';
-import { useCopyStatuses } from '../lib/copy';
+import { getCopyButtonClass, getCopyButtonIconColor, getCopyButtonIconName, getCopyButtonLabel, useCopyStatuses } from '../lib/copy';
 import { calculateJumpTimerStops, getRouteTravelMinutes, clampFatigueReduction, type JumpTimerStop, type TimerMode } from '../lib/jumpTimers';
 
 //const LY = 9.4607e15;
@@ -1714,38 +1713,253 @@ export function BridgePlanner() {
             </fieldset>
           </section>
 
-          <BridgeRoutesPanel
-            loading={routeResult.loading}
-            message={routeResult.message}
-            displayRoutes={displayRoutes}
-            selectedRoute={selectedRoute}
-            displayStagingId={displayStagingId}
-            displayDestinationId={displayDestinationId}
-            routesToShow={planner.routesToShow}
-            eveLinksMarkup={eveLinksMarkup}
-            plainTextRoutes={plainTextRoutes}
-            copyStatuses={copyStatuses}
-            headerCopyOpen={headerCopyOpen}
-            routeCopyOpenKey={routeCopyOpenKey}
-            isBridgeOnlyMode={isBridgeOnlyMode}
-            routeTravelMinutesByKey={jumpTimersResult.routeTravelMinutesByKey}
-            timersLoading={jumpTimersResult.loading}
-            onCopyText={copyText}
-            onHeaderCopyOpenChange={setHeaderCopyOpen}
-            onRouteCopyOpenKeyChange={setRouteCopyOpenKey}
-            onRoutesToShowChange={(routesToShow) => setPlanner((prev) => ({ ...prev, routesToShow }))}
-            onSelectRoute={(routeKey) => {
-              setSelectedRouteKey(routeKey);
-              setUserSelectedRoute(true);
-            }}
-            renderSystemName={renderSystemName}
-            getBridgeSequence={getBridgeSequence}
-            getRouteBridgeLy={getRouteBridgeLy}
-            calculateRouteIsotopes={(route) => calculateRouteIsotopes(route, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf)}
-            formatIsotopes={formatIsotopes}
-            formatTimerMinutes={formatTimerMinutes}
-            buildRouteCopyPayload={buildRouteCopyPayload}
-          />
+          <section className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white/50 dark:bg-black/20 p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-semibold">Routes</h2>
+                {routeResult.loading && <span className="text-xs text-slate-500">Updating…</span>}
+              </div>
+              <div className="flex items-center gap-2 text-xs text-slate-500">
+                {(() => {
+                  const headerCopyState = copyStatuses.header ?? null;
+                  return (
+                <div className="relative">
+                  <div
+                    className="relative"
+                    onMouseLeave={() => setHeaderCopyOpen(false)}
+                  >
+                    <button
+                      type="button"
+                      className={getCopyButtonClass(headerCopyState, "px-2 py-1 text-xs rounded border inline-flex items-center gap-1 transition-colors")}
+                      disabled={!eveLinksMarkup && !plainTextRoutes}
+                      aria-label="Copy"
+                      onMouseEnter={() => setHeaderCopyOpen(true)}
+                    >
+                      <Icon
+                        name={getCopyButtonIconName(headerCopyState)}
+                        size={14}
+                        color={getCopyButtonIconColor(headerCopyState)}
+                      />
+                      <span>{getCopyButtonLabel(headerCopyState)}</span>
+                    </button>
+                    {headerCopyOpen && (
+                      <div className="absolute right-0 top-full pt-1 z-10">
+                        <div
+                          className="min-w-[180px] rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg overflow-hidden"
+                          onMouseEnter={() => setHeaderCopyOpen(true)}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setHeaderCopyOpen(false);
+                              if (eveLinksMarkup) copyText(eveLinksMarkup, 'header');
+                            }}
+                            className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50"
+                            disabled={!eveLinksMarkup}
+                          >
+                            Copy EVE in-game links
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setHeaderCopyOpen(false);
+                              if (plainTextRoutes) copyText(plainTextRoutes, 'header');
+                            }}
+                            className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50"
+                            disabled={!plainTextRoutes}
+                          >
+                            Copy plain text
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                  );
+                })()}
+                <span>Show</span>
+                <select
+                  className="rounded border border-gray-300 dark:border-gray-700 bg-white/80 dark:bg-gray-900 px-2 py-1 text-xs"
+                  value={planner.routesToShow}
+                  onChange={(e) => setPlanner((prev) => ({ ...prev, routesToShow: Number(e.target.value) }))}
+                >
+                  {[5, 10, 15, 20, 25].map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+                <span>routes</span>
+              </div>
+            </div>
+            {!routeResult.loading && routeResult.routes.length === 0 ? (
+              <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">
+                {routeResult.message || 'No routes available.'}
+              </p>
+            ) : (
+              <div className="mt-3 grid gap-3">
+                {displayRoutes.map((item, idx) => {
+                  const route = item.route;
+                  if (!route) {
+                    return (
+                      <div
+                        key={`placeholder-${idx}`}
+                        className="relative w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-gray-900/30 px-4 py-3"
+                        aria-hidden="true"
+                      >
+                        <div className="h-4 w-3/4 rounded bg-slate-200/80 dark:bg-slate-700/50" />
+                        <div className="mt-2 h-3 w-2/3 rounded bg-slate-200/70 dark:bg-slate-700/40" />
+                      </div>
+                    );
+                  }
+
+                  const isSelected = selectedRoute?.key === route.key;
+                  const routeTravelMinutes = isBridgeOnlyMode ? jumpTimersResult.routeTravelMinutesByKey[route.key] ?? null : null;
+                  const chainIds = getBridgeSequence(route);
+                  const displayChainIds = displayStagingId != null && chainIds[0] !== displayStagingId ? [displayStagingId, ...chainIds] : chainIds;
+                  const stopChainIds = [
+                    displayStagingId,
+                    ...(route.waypointIds ?? []),
+                    displayDestinationId,
+                  ].filter((id): id is number => id != null);
+                  const gateDetails = route.bridgeLegs
+                    .map((leg, legIdx) => leg.approachJumps > 0 ? `${leg.approachJumps}j to park${route.bridgeLegs.length > 1 ? ` ${legIdx + 1}` : ''}` : null)
+                    .filter((value): value is string => value != null);
+                  if (route.postBridgeJumps > 0) gateDetails.push(`${route.postBridgeJumps}j after`);
+                  const routeBridgeLy = getRouteBridgeLy(route);
+                  const routeIsotopes = isBridgeOnlyMode
+                    ? calculateRouteIsotopes(route, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf)
+                    : null;
+                  const routeCopyState = copyStatuses[route.key] ?? null;
+                  return (
+                    <div
+                      key={route.key}
+                      className={
+                        "relative w-full rounded-lg border px-4 py-3 transition " +
+                        (isSelected
+                          ? "border-amber-400 bg-amber-50/80 dark:bg-amber-900/20 shadow-sm"
+                          : "border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-gray-900/40 hover:border-amber-300")
+                      }
+                      role="button"
+                      tabIndex={0}
+                      aria-pressed={isSelected}
+                      onClick={() => {
+                        setSelectedRouteKey(route.key);
+                        setUserSelectedRoute(true);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setSelectedRouteKey(route.key);
+                          setUserSelectedRoute(true);
+                        }
+                      }}
+                    >
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0 flex-1 text-left pointer-events-none">
+                          <div className="text-sm font-medium text-slate-900 dark:text-slate-100 flex flex-wrap items-center gap-x-1 gap-y-0.5">
+                            {displayChainIds.map((id, chainIdx) => (
+                              <span key={`${route.key}-${id}-${chainIdx}`} className="inline-flex items-center gap-x-1 gap-y-0.5 flex-wrap">
+                                {chainIdx > 0 && <span aria-hidden="true">→</span>}
+                                {renderSystemName(id)}
+                              </span>
+                            ))}
+                            {displayDestinationId != null && displayChainIds[displayChainIds.length - 1] !== displayDestinationId && (
+                              <span className="inline-flex items-center gap-x-1 gap-y-0.5 flex-wrap">
+                                <span aria-hidden="true">→</span>
+                                {renderSystemName(displayDestinationId)}
+                              </span>
+                            )}
+                          </div>
+                          {route.waypointIds && route.waypointIds.length > 0 && (
+                            <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 flex flex-wrap items-center gap-x-1 gap-y-0.5">
+                              <span>Stops:</span>
+                              {stopChainIds.map((id, chainIdx) => (
+                                <span key={`${route.key}-stop-${id}-${chainIdx}`} className="inline-flex items-center gap-x-1 gap-y-0.5 flex-wrap">
+                                  {chainIdx > 0 && <span aria-hidden="true">→</span>}
+                                  {renderSystemName(id)}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <div className="shrink-0 flex items-center gap-2 self-start" onClick={(event) => event.stopPropagation()}>
+                          {idx === 0 && (
+                            <span className="text-[10px] uppercase tracking-wide rounded-full bg-amber-200 text-amber-900 px-2 py-0.5">
+                              Best
+                            </span>
+                          )}
+                          <div className="relative pointer-events-auto">
+                            <div
+                              className="relative"
+                              onMouseLeave={() => setRouteCopyOpenKey(null)}
+                            >
+                              <button
+                                type="button"
+                                className={getCopyButtonClass(routeCopyState, "px-2 py-1 text-xs rounded border inline-flex items-center gap-1 transition-colors")}
+                                aria-label="Copy"
+                                onMouseEnter={() => setRouteCopyOpenKey(route.key)}
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <Icon
+                                  name={getCopyButtonIconName(routeCopyState)}
+                                  size={14}
+                                  color={getCopyButtonIconColor(routeCopyState)}
+                                />
+                                <span>{getCopyButtonLabel(routeCopyState)}</span>
+                              </button>
+                              {routeCopyOpenKey === route.key && (
+                                <div className="absolute right-0 top-full pt-1 z-10">
+                                  <div
+                                    className="min-w-[180px] rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg overflow-hidden"
+                                    onMouseEnter={() => setRouteCopyOpenKey(route.key)}
+                                    onClick={(event) => event.stopPropagation()}
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const payload = buildRouteCopyPayload(route);
+                                        setRouteCopyOpenKey(null);
+                                        if (payload.eve) copyText(payload.eve, route.key);
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800"
+                                    >
+                                      Copy EVE in-game links
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const payload = buildRouteCopyPayload(route);
+                                        setRouteCopyOpenKey(null);
+                                        if (payload.plain) copyText(payload.plain, route.key);
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800"
+                                    >
+                                      Copy plain text
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="mt-1 flex items-center justify-between gap-3 text-xs text-slate-600 dark:text-slate-300 pointer-events-none">
+                        <span className="min-w-0">
+                          {routeBridgeLy.toFixed(2)} ly
+                          {routeTravelMinutes != null ? ` • ${formatTimerMinutes(routeTravelMinutes)}` : ''}
+                          {isBridgeOnlyMode && routeTravelMinutes == null && jumpTimersResult.loading ? ' • calculating…' : ''}
+                          {gateDetails.length > 0 ? ` • ${gateDetails.join(' • ')}` : ''}
+                          {routeIsotopes != null ? ` • ${formatIsotopes(routeIsotopes)} isotopes` : ''}
+                        </span>
+                        <span className="shrink-0 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                          {route.totalJumps} jump{route.totalJumps === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
         </div>
 
         <div className="lg:sticky lg:top-20 lg:self-start">
@@ -1774,52 +1988,224 @@ export function BridgePlanner() {
               }}
             />
             {isBridgeOnlyMode && (
-              <JumpTimersPanel
-                timerMode={planner.timerMode}
-                fatigueReduction={planner.presetFatigueReduction}
-                startingFatigueMinutes={planner.startingFatigueMinutes}
-                startingActivationMinutes={planner.startingActivationMinutes}
-                selectedRoute={selectedRoute}
-                loading={jumpTimersResult.loading}
-                timerStops={selectedTimerStops}
-                selectedRouteIsotopes={selectedRouteIsotopes}
-                onTimerModeChange={(timerMode) => setPlanner((prev) => ({ ...prev, timerMode }))}
-                nameFor={nameFor}
-                formatTimerMinutes={formatTimerMinutes}
-                formatRelativeTimer={formatRelativeTimer}
-                formatIsotopes={formatIsotopes}
-              />
+              <section className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white/50 dark:bg-black/20 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <h2 className="text-lg font-semibold">Jump timers</h2>
+                    <label className="inline-flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                      <span>Mode</span>
+                      <select
+                        className="rounded border border-gray-300 dark:border-gray-700 bg-white/80 dark:bg-gray-900 px-2 py-1 text-xs"
+                        value={planner.timerMode}
+                        onChange={(event) => {
+                          const timerMode = event.target.value === 'jump-asap' ? 'jump-asap' : 'fastest-arrival';
+                          setPlanner((prev) => ({ ...prev, timerMode }));
+                        }}
+                      >
+                        <option value="fastest-arrival">Fastest arrival</option>
+                        <option value="jump-asap">Jump ASAP</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div className="text-xs text-slate-600 dark:text-slate-300 text-right">
+                    <span>Fatigue reduction {planner.presetFatigueReduction}%</span>
+                    {selectedRouteIsotopes != null && (
+                      <span> • {formatIsotopes(selectedRouteIsotopes)} isotopes</span>
+                    )}
+                  </div>
+                </div>
+                {(planner.startingFatigueMinutes > 0 || planner.startingActivationMinutes > 0) && (
+                  <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                    Starts with {formatTimerMinutes(planner.startingFatigueMinutes)} fatigue and {formatTimerMinutes(planner.startingActivationMinutes)} activation.
+                  </p>
+                )}
+                {!selectedRoute ? (
+                  <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">Select a route to see timer details.</p>
+                ) : jumpTimersResult.loading && selectedTimerStops.length === 0 ? (
+                  <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">Calculating jump timers…</p>
+                ) : selectedTimerStops.length === 0 ? (
+                  <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">No bridge legs available for timer calculation.</p>
+                ) : (
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="min-w-full text-left text-xs">
+                      <thead className="text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                        <tr className="border-b border-gray-200 dark:border-gray-700">
+                          <th className="py-2 pr-3 font-medium whitespace-nowrap w-16">Stop</th>
+                          <th className="py-2 pr-3 font-medium w-[28%]">Leg</th>
+                          <th className="py-2 pr-3 font-medium whitespace-nowrap w-24">Distance</th>
+                          <th className="py-2 pr-3 font-medium whitespace-nowrap w-24">Activation</th>
+                          <th className="py-2 pr-3 font-medium whitespace-nowrap w-24">Fatigue</th>
+                          <th className="py-2 font-medium whitespace-nowrap w-20">Arrival</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 dark:divide-gray-800 text-slate-600 dark:text-slate-300">
+                        {selectedTimerStops.map((stop) => (
+                          <tr key={`${stop.fromId}-${stop.toId}-${stop.index}`}>
+                            <td className="py-2 pr-3 whitespace-nowrap">
+                              <span className="font-medium text-slate-900 dark:text-slate-100">{stop.index}</span>
+                              <span className="ml-1 text-slate-500 dark:text-slate-400">{nameFor(stop.toId)}</span>
+                            </td>
+                            <td className="py-2 pr-3 min-w-[140px]">
+                              {nameFor(stop.fromId)} → {nameFor(stop.toId)}
+                            </td>
+                            <td className="py-2 pr-3 whitespace-nowrap w-24">
+                              {stop.bridgeLy.toFixed(2)} ly
+                            </td>
+                            <td className="py-2 pr-3 whitespace-nowrap w-24">{formatTimerMinutes(stop.activationMinutes)}</td>
+                            <td className="py-2 pr-3 whitespace-nowrap w-24">{formatTimerMinutes(stop.fatigueAfterJumpMinutes)}</td>
+                            <td className="py-2 whitespace-nowrap w-20">{formatRelativeTimer(stop.arrivalMinutes)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+                  Usually, jumping ASAP is fastest, so both modes often match.
+                </p>
+              </section>
             )}
           </div>
         </div>
       </div>
 
       {showWaypointsModal && (
-        <BridgePlannerWaypointsModal
-          graph={graph}
-          routeStops={routeStops}
-          routeStopKeys={routeStopKeys}
-          dragState={dragState}
-          isDropping={isRouteStopDropping}
-          rowRefs={routeStopRowRefs}
-          getRowTransform={getRouteStopRowTransform}
-          onUpdateStop={updateRouteStop}
-          onRemoveStop={removeWaypoint}
-          onAddWaypoint={addWaypoint}
+        <ModalShell
           onClose={() => setShowWaypointsModal(false)}
-          onStartDrag={startRouteStopDrag}
-          onUpdateDrag={updateRouteStopDrag}
-          onFinishDrag={finishRouteStopDrag}
-          onCancelDrag={() => {
-            if (routeStopDropRafRef.current != null) {
-              window.cancelAnimationFrame(routeStopDropRafRef.current);
-              routeStopDropRafRef.current = null;
-            }
-            setIsRouteStopDropping(false);
-            dragStateRef.current = null;
-            setDragState(null);
-          }}
-        />
+          panelClassName="w-full max-w-[640px] overflow-visible rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-4 flex flex-col gap-4"
+          labelledBy="route-stops-modal-title"
+        >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 id="route-stops-modal-title" className="text-lg font-semibold">Route stops</h2>
+                <p className="text-sm text-slate-600 dark:text-slate-300">
+                  Manage the ordered list of systems the planner must route through.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
+                onClick={() => setShowWaypointsModal(false)}
+                aria-label="Close"
+              >
+                <Icon name="close" size={20} />
+              </button>
+            </div>
+
+            <div className="grid gap-3">
+              {routeStops.map((stop, index) => {
+                const isStart = index === 0;
+                const isDestination = index === routeStops.length - 1;
+                const stopLabel = isStart ? 'Start' : isDestination ? 'End' : `Via ${index}`;
+                const isDropTarget = dragState?.targetIndex === index && dragState.activeIndex !== index;
+                const isDraggedRow = dragState?.activeIndex === index;
+                const rowTransform = getRouteStopRowTransform(index);
+                return (
+                  <div
+                    key={routeStopKeys[index] ?? `route-stop-${index}`}
+                    ref={(node) => {
+                      routeStopRowRefs.current[index] = node;
+                    }}
+                    className={
+                      "relative flex items-center gap-2 rounded-md border bg-white dark:bg-gray-900 px-2.5 py-2 transition-colors cursor-grab active:cursor-grabbing " +
+                      (isDropTarget
+                        ? "border-amber-400 bg-amber-50/80 dark:bg-amber-900/20"
+                        : "border-gray-200 dark:border-gray-700") +
+                      (isDraggedRow ? " z-20 shadow-md" : "")
+                    }
+                    style={{
+                      transform: rowTransform,
+                      transition: (isDraggedRow || isRouteStopDropping)
+                        ? 'none'
+                        : 'transform 180ms ease, background-color 180ms ease, border-color 180ms ease',
+                    }}
+                    onPointerDown={(event) => {
+                      if (event.button !== 0) return;
+                      const target = event.target as HTMLElement;
+                      if (target.closest('input, button, ul, li')) return;
+                      event.preventDefault();
+                      event.currentTarget.setPointerCapture(event.pointerId);
+                      startRouteStopDrag(index, event.clientY);
+                    }}
+                    onPointerMove={(event) => {
+                      if (dragState?.activeIndex !== index) return;
+                      updateRouteStopDrag(event.clientY);
+                    }}
+                    onPointerUp={(event) => {
+                      if (dragState?.activeIndex !== index) return;
+                      try { event.currentTarget.releasePointerCapture(event.pointerId); } catch {}
+                      finishRouteStopDrag();
+                    }}
+                    onPointerCancel={(event) => {
+                      if (dragState?.activeIndex !== index) return;
+                      try { event.currentTarget.releasePointerCapture(event.pointerId); } catch {}
+                      if (routeStopDropRafRef.current != null) {
+                        window.cancelAnimationFrame(routeStopDropRafRef.current);
+                        routeStopDropRafRef.current = null;
+                      }
+                      setIsRouteStopDropping(false);
+                      dragStateRef.current = null;
+                      setDragState(null);
+                    }}
+                  >
+                    <div className="shrink-0 w-8 h-8 rounded border border-gray-300 dark:border-gray-700 inline-flex items-center justify-center text-slate-500 dark:text-slate-400">
+                      <Icon name="line-3-horizontal" size={15} />
+                    </div>
+                    <div
+                      className={
+                        'shrink-0 w-14 rounded-md px-2 py-1 text-center text-[11px] font-semibold uppercase tracking-wide ' +
+                        (isStart
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+                          : isDestination
+                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+                            : 'bg-slate-200/70 text-slate-700 dark:bg-slate-800 dark:text-slate-300')
+                      }
+                    >
+                      {stopLabel}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <AutocompleteInput
+                        compact
+                        graph={graph}
+                        value={stop}
+                        onChange={(value) => updateRouteStop(index, value)}
+                        placeholder={isStart ? 'e.g. UALX-3' : isDestination ? 'e.g. C-J6MT' : 'Waypoint system'}
+                      />
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        className="w-8 h-8 rounded border border-red-300 text-red-700 dark:border-red-800 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 inline-flex items-center justify-center"
+                        onClick={() => removeWaypoint(index)}
+                        aria-label={isStart ? 'Remove start system' : isDestination ? 'Remove destination system' : `Remove waypoint ${index}`}
+                        title={isStart ? 'Remove start system' : isDestination ? 'Remove destination system' : `Remove waypoint ${index}`}
+                      >
+                        <Icon name="close" size={14} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                className="px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center gap-2"
+                onClick={addWaypoint}
+              >
+                <Icon name="plus" size={16} />
+                <span>Add waypoint</span>
+              </button>
+              <button
+                type="button"
+                className="px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
+                onClick={() => setShowWaypointsModal(false)}
+              >
+                Done
+              </button>
+            </div>
+        </ModalShell>
       )}
 
       {showAnsiblexModal && (
