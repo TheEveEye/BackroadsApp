@@ -150,7 +150,7 @@ export function Results({ results, namesById, lyRadius, graph }: { results: Obse
                         chips.push(
                           <Icon
                             key={`sep-${i}`}
-                            ship="Titan Bridge"
+                            ship="Titan"
                             size={18}
                             ariaLabel="Titan bridge"
                             title="Titan bridge"

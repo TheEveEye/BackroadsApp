@@ -19,18 +19,20 @@ const NAME_TO_STEM: Record<string, string> = {
 
 const SHIP_TO_FILENAME: Record<string, string> = {
   'Black Ops': 'battleship_32.png',
-  'Carrier Jump': 'carrier_32.png',
-  'Carrier Conduit': 'carrier_32.png',
+  'Carrier': 'carrier_32.png',
+  'Command Carrier': 'carrier_32.png',
   'Dreadnought': 'dreadnought_32.png',
   'Force Auxiliary': 'forceAuxiliary_32.png',
   'Jump Freighter': 'freighter_32.png',
   'Lancer Dreadnought': 'dreadnought_32.png',
   'Rorqual': 'freighter_32.png',
-  'Supercarrier Jump': 'superCarrier_32.png',
+  'Supercarrier': 'superCarrier_32.png',
   'Titan': 'titan_32.png',
-  'Titan Bridge': 'titan_32.png',
-  'Titan Jump': 'titan_32.png',
 };
+
+const GOLD_SHIPS = new Set(['Black Ops', 'Command Carrier', 'Jump Freighter', 'Lancer Dreadnought']);
+const GOLD_FILTER_DARK = 'brightness(0) saturate(100%) invert(86%) sepia(91%) saturate(721%) hue-rotate(350deg) brightness(105%) contrast(102%)';
+const GOLD_FILTER_LIGHT = 'brightness(0) saturate(100%) invert(67%) sepia(88%) saturate(943%) hue-rotate(356deg) brightness(99%) contrast(101%)';
 
 function getIsDarkMode() {
   if (typeof window === 'undefined' || typeof document === 'undefined') return false;
@@ -120,6 +122,10 @@ export function Icon({
     import: 0.5,
   };
   const yNudge = typeof offsetY === 'number' ? offsetY : (name ? OFFSET_BY_NAME[String(name)] ?? 0 : 0);
+  const shipName = ship ? String(ship) : '';
+  const shipFilter = GOLD_SHIPS.has(shipName)
+    ? isDarkMode ? GOLD_FILTER_DARK : GOLD_FILTER_LIGHT
+    : isDarkMode ? undefined : 'invert(1)';
 
   const sharedStyle: CSSProperties = {
     display: 'inline-block',
@@ -138,7 +144,7 @@ export function Icon({
         alt={ariaLabel ?? ''}
         aria-hidden={ariaLabel ? undefined : true}
         title={title}
-        style={{ ...sharedStyle, objectFit: 'contain', filter: isDarkMode ? undefined : 'invert(1)' }}
+        style={{ ...sharedStyle, objectFit: 'contain', filter: shipFilter }}
       />
     );
   }

@@ -91,17 +91,26 @@ type RouteRequestState = {
 
 const RANGE_PRESETS = [
   { label: 'Black Ops', base: 4.0, fuelPerLy: 700, fatigueReduction: 75 }, // 8.0 at JDC 5
-  { label: 'Carrier Jump', base: 3.5, fuelPerLy: 3000, fatigueReduction: 0 }, // 7.0 at JDC 5
-  { label: 'Carrier Conduit', base: 3.5, fuelPerLy: 3000, fatigueReduction: 0 }, // 7.0 at JDC 5
   { label: 'Dreadnought', base: 3.5, fuelPerLy: 3000, fatigueReduction: 0 }, // 7.0 at JDC 5
-  { label: 'Force Auxiliary', base: 3.5, fuelPerLy: 3000, fatigueReduction: 0 }, // 7.0 at JDC 5
-  { label: 'Jump Freighter', base: 5.0, fuelPerLy: 10000, fatigueReduction: 90 }, // 10.0 at JDC 5
   { label: 'Lancer Dreadnought', base: 4.0, fuelPerLy: 20000, fatigueReduction: 0 }, // 8.0 at JDC 5
+  { label: 'Carrier', base: 3.5, fuelPerLy: 3000, fatigueReduction: 0 }, // 7.0 at JDC 5
+  { label: 'Command Carrier', base: 4.0, fuelPerLy: 3000, fatigueReduction: 0 }, // 8.0 at JDC 5
+  { label: 'Force Auxiliary', base: 3.5, fuelPerLy: 3000, fatigueReduction: 0 }, // 7.0 at JDC 5
+  { label: 'Supercarrier', base: 3.0, fuelPerLy: 3000, fatigueReduction: 0 }, // 6.0 at JDC 5
+  { label: 'Titan', base: 3.0, fuelPerLy: 3000, fatigueReduction: 0 }, // 6.0 at JDC 5
+  { label: 'Jump Freighter', base: 5.0, fuelPerLy: 10000, fatigueReduction: 90 }, // 10.0 at JDC 5
   { label: 'Rorqual', base: 5.0, fuelPerLy: 4000, fatigueReduction: 90 }, // 10.0 at JDC 5
-  { label: 'Supercarrier Jump', base: 3.0, fuelPerLy: 3000, fatigueReduction: 0 }, // 6.0 at JDC 5
-  { label: 'Titan Bridge', base: 3.0, fuelPerLy: 3000, fatigueReduction: 0 }, // 6.0 at JDC 5
-  { label: 'Titan Jump', base: 3.0, fuelPerLy: 3000, fatigueReduction: 0 }, // 6.0 at JDC 5
 ] as const;
+
+const LEGACY_PRESET_LABELS: Record<string, string> = {
+  'Carrier Jump': 'Carrier',
+  'Carrier Conduit': 'Carrier',
+  'T1 Carrier': 'Carrier',
+  'T2 Carrier': 'Command Carrier',
+  'Supercarrier Jump': 'Supercarrier',
+  'Titan Bridge': 'Titan',
+  'Titan Jump': 'Titan',
+};
 
 const isotopeFormatter = new Intl.NumberFormat('en-US');
 const FATIGUE_REDUCTION_OPTIONS = [0, 75, 90] as const;
@@ -123,11 +132,15 @@ type EveSkillsResponse = {
 };
 
 function getPresetFuelPerLy(shipClass: string) {
-  return RANGE_PRESETS.find((preset) => preset.label === shipClass)?.fuelPerLy ?? null;
+  return RANGE_PRESETS.find((preset) => preset.label === normalizePresetShipClass(shipClass))?.fuelPerLy ?? null;
 }
 
 function getPresetFatigueReduction(shipClass: string) {
-  return RANGE_PRESETS.find((preset) => preset.label === shipClass)?.fatigueReduction ?? 0;
+  return RANGE_PRESETS.find((preset) => preset.label === normalizePresetShipClass(shipClass))?.fatigueReduction ?? 0;
+}
+
+function normalizePresetShipClass(shipClass: string) {
+  return LEGACY_PRESET_LABELS[shipClass] ?? shipClass;
 }
 
 function clampSkillLevel(value: number) {
@@ -423,11 +436,11 @@ export function BridgePlanner() {
       routeStops: ['', ''],
       bridgeRange: 6,
       routesToShow: 5,
-      presetShipClass: 'Titan Bridge',
+      presetShipClass: 'Titan',
       presetJdc: 5,
       presetJfc: 5,
       presetJf: 5,
-      presetFatigueReduction: getPresetFatigueReduction('Titan Bridge'),
+      presetFatigueReduction: getPresetFatigueReduction('Titan'),
       startingFatigueMinutes: 0,
       startingActivationMinutes: 0,
       timerMode: 'jump-asap',
@@ -442,12 +455,15 @@ export function BridgePlanner() {
               ? parsed.routeStops
               : [typeof parsed.stagingQuery === 'string' ? parsed.stagingQuery : '', typeof parsed.targetQuery === 'string' ? parsed.targetQuery : '']
           );
+          const presetShipClass = typeof parsed.presetShipClass === 'string'
+            ? normalizePresetShipClass(parsed.presetShipClass)
+            : defaults.presetShipClass;
           return {
             ...defaults,
             routeStops: parsedStops,
             bridgeRange: Number.isFinite(parsed.bridgeRange) ? Number(parsed.bridgeRange) : defaults.bridgeRange,
             routesToShow: Number.isFinite(parsed.routesToShow) ? Math.max(1, Math.min(25, Number(parsed.routesToShow))) : defaults.routesToShow,
-            presetShipClass: typeof parsed.presetShipClass === 'string' ? parsed.presetShipClass : defaults.presetShipClass,
+            presetShipClass,
             presetJdc: Number.isFinite(parsed.presetJdc) ? Math.max(0, Math.min(5, Number(parsed.presetJdc))) : defaults.presetJdc,
             presetJfc: Number.isFinite(parsed.presetJfc) ? Math.max(0, Math.min(5, Number(parsed.presetJfc))) : defaults.presetJfc,
             presetJf: Number.isFinite(parsed.presetJf) ? Math.max(0, Math.min(5, Number(parsed.presetJf))) : defaults.presetJf,
@@ -777,7 +793,7 @@ export function BridgePlanner() {
       const jf = getEveSkillLevel(skills, EVE_JUMP_SKILL_IDS.jf);
 
       setPlanner((prev) => {
-        const baseRange = RANGE_PRESETS.find((preset) => preset.label === prev.presetShipClass)?.base ?? prev.bridgeRange;
+        const baseRange = RANGE_PRESETS.find((preset) => preset.label === normalizePresetShipClass(prev.presetShipClass))?.base ?? prev.bridgeRange;
         const bridgeRange = Number((baseRange * (1 + 0.2 * jdc)).toFixed(1));
         return {
           ...prev,
@@ -1468,7 +1484,7 @@ export function BridgePlanner() {
                           onChange={(value) => {
                             clearSkillsRefreshStatus();
                             const jdc = Math.max(0, Math.min(5, Number(value)));
-                            const baseRange = RANGE_PRESETS.find((p) => p.label === planner.presetShipClass)?.base ?? planner.bridgeRange;
+                            const baseRange = RANGE_PRESETS.find((p) => p.label === normalizePresetShipClass(planner.presetShipClass))?.base ?? planner.bridgeRange;
                             const range = Number((baseRange * (1 + 0.2 * jdc)).toFixed(1));
                             setPlanner((prev) => ({ ...prev, presetJdc: jdc, bridgeRange: range }));
                           }}
