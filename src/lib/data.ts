@@ -5,6 +5,10 @@ export type SystemNode = {
   position: { x: number; y: number; z: number };
   position2D?: { x: number; y: number };
   security?: number;
+  power: number;
+  workforce: number;
+  magmaticGas: number;
+  superionicIce: number;
   npcFactionId?: number;
   isSovereigntyEligible: boolean;
   adjacentSystems: number[];
@@ -31,7 +35,7 @@ export async function loadData(): Promise<GraphData> {
   let constellationsById: Record<string, string> | undefined;
   let idsByName: Record<string, number> | undefined;
   try {
-  const namesResp = await fetch(`${base}data/system_names.json`);
+    const namesResp = await fetch(`${base}data/system_names.json`);
     if (namesResp.ok) {
       const names = (await namesResp.json()) as {
         byId: Record<string, string>;
@@ -57,7 +61,7 @@ export async function loadData(): Promise<GraphData> {
       }
       idsByName = map;
     }
-  } catch (_) {
+  } catch {
     // optional
   }
 
@@ -67,18 +71,18 @@ export async function loadData(): Promise<GraphData> {
       const constellations = (await constellationsResp.json()) as { byId: Record<string, string> };
       constellationsById = constellations.byId;
     }
-  } catch (_) {
+  } catch {
     // optional
   }
 
   
   try {
-  const regionsResp = await fetch(`${base}data/region_names.json`);
+    const regionsResp = await fetch(`${base}data/region_names.json`);
     if (regionsResp.ok) {
       const regions = (await regionsResp.json()) as { byId: Record<string, string> };
       regionsById = regions.byId;
     }
-  } catch (_) {
+  } catch {
     // optional
   }
   return { systems, namesById, idsByName, regionsById, constellationsById };

@@ -12,6 +12,8 @@ import type { GraphData, SystemNode } from '../lib/data';
 import { Icon } from './Icon';
 
 type MapMode = 'schematic' | 'geographic';
+type MetricMapDataDisplay = 'power' | 'workforce' | 'magmaticGas' | 'superionicIce';
+type MapDataDisplay = 'none' | MetricMapDataDisplay | 'alliance';
 type Viewport = {
   zoom: number;
   panX: number;
@@ -22,7 +24,17 @@ type MapPoint = {
   x: number;
   y: number;
   security: number;
+  power: number;
+  workforce: number;
+  magmaticGas: number;
+  superionicIce: number;
+  holdingAllianceId?: number;
   eligible: boolean;
+};
+type MarkerGeometry = {
+  kind: 'circle' | 'pill';
+  halfWidth: number;
+  halfHeight: number;
 };
 type MapEdge = {
   from: MapPoint;
@@ -48,6 +60,9 @@ const MAX_ZOOM = 16;
 const MAP_PADDING = 48;
 const PROJECTION_ANIMATION_MS = 560;
 const INITIAL_VIEWPORT: Viewport = { zoom: 1, panX: 0, panY: 0 };
+const METRIC_LABEL_FONT = '600 10px system-ui, -apple-system, Segoe UI, sans-serif';
+const METRIC_PILL_HEIGHT = 16;
+const METRIC_PILL_HORIZONTAL_PADDING = 6;
 const SECURITY_COLORS = [
   '#833862',
   '#692623',
@@ -70,6 +85,188 @@ function getIsDarkMode() {
 
 function clampZoom(value: number) {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value));
+}
+
+function getMarkerValue(point: MapPoint, display: MapDataDisplay) {
+  if (display === 'power') return point.power;
+  if (display === 'workforce') return point.workforce;
+  if (display === 'magmaticGas') return point.magmaticGas;
+  if (display === 'superionicIce') return point.superionicIce;
+  return null;
+}
+
+function isMetricDataDisplay(display: MapDataDisplay): display is MetricMapDataDisplay {
+  return (
+    display === 'power'
+    || display === 'workforce'
+    || display === 'magmaticGas'
+    || display === 'superionicIce'
+  );
+}
+
+function formatMarkerValue(value: number) {
+  return Math.round(value).toString();
+}
+
+function getHslRelativeLuminance(hue: number, saturation: number, lightness: number) {
+  const normalizedSaturation = saturation / 100;
+  const normalizedLightness = lightness / 100;
+  const chroma = (
+    1 - Math.abs(2 * normalizedLightness - 1)
+  ) * normalizedSaturation;
+  const hueSegment = ((hue % 360) + 360) % 360 / 60;
+  const secondary = chroma * (1 - Math.abs(hueSegment % 2 - 1));
+  let red = 0;
+  let green = 0;
+  let blue = 0;
+  if (hueSegment < 1) {
+    red = chroma;
+    green = secondary;
+  } else if (hueSegment < 2) {
+    red = secondary;
+    green = chroma;
+  } else if (hueSegment < 3) {
+    green = chroma;
+    blue = secondary;
+  } else if (hueSegment < 4) {
+    green = secondary;
+    blue = chroma;
+  } else if (hueSegment < 5) {
+    red = secondary;
+    blue = chroma;
+  } else {
+    red = chroma;
+    blue = secondary;
+  }
+
+  const match = normalizedLightness - chroma / 2;
+  const toLinear = (channel: number) => {
+    const value = channel + match;
+    return value <= 0.04045
+      ? value / 12.92
+      : Math.pow((value + 0.055) / 1.055, 2.4);
+  };
+  return (
+    0.2126 * toLinear(red)
+    + 0.7152 * toLinear(green)
+    + 0.0722 * toLinear(blue)
+  );
+}
+
+function getMetricMarkerColors(
+  value: number,
+  display: MetricMapDataDisplay,
+  maximum: number,
+  isDarkMode: boolean,
+) {
+  const normalized = maximum > 0
+    ? Math.sqrt(Math.max(0, Math.min(1, value / maximum)))
+    : 0;
+  const color = {
+    power: { hue: 142, saturation: 78 },
+    workforce: { hue: 50, saturation: 88 },
+    magmaticGas: { hue: 27, saturation: 92 },
+    superionicIce: { hue: 191, saturation: 88 },
+  }[display];
+  const minimumLightness = isDarkMode ? 24 : 20;
+  const maximumLightness = display === 'workforce'
+    ? 94
+    : isDarkMode
+      ? 71
+      : 72;
+  const lightness = minimumLightness + normalized * (maximumLightness - minimumLightness);
+  const relativeLuminance = getHslRelativeLuminance(
+    color.hue,
+    color.saturation,
+    lightness,
+  );
+  return {
+    fill: `hsl(${color.hue} ${color.saturation}% ${lightness}%)`,
+    text: relativeLuminance >= 0.19 ? '#0f172a' : '#f8fafc',
+  };
+}
+
+function getPointMarkerGeometry(
+  point: MapPoint,
+  display: MapDataDisplay,
+  showDataLabels: boolean,
+  selected: boolean,
+  zoom: number,
+  measureLabel: (label: string) => number,
+) {
+  const value = getMarkerValue(point, display);
+  if (selected && showDataLabels && display === 'alliance' && point.holdingAllianceId) {
+    return { kind: 'circle', halfWidth: 18, halfHeight: 18 } satisfies MarkerGeometry;
+  }
+  if (selected && showDataLabels && value != null) {
+    const label = formatMarkerValue(value);
+    const width = Math.max(
+      METRIC_PILL_HEIGHT,
+      Math.ceil(measureLabel(label) + METRIC_PILL_HORIZONTAL_PADDING * 2),
+    );
+    return {
+      kind: 'pill',
+      halfWidth: width / 2,
+      halfHeight: METRIC_PILL_HEIGHT / 2,
+    } satisfies MarkerGeometry;
+  }
+  const radius = selected
+    ? 2.8
+    : zoom >= 4
+      ? 2.1
+      : point.eligible
+        ? 1.55
+        : 1.2;
+  return { kind: 'circle', halfWidth: radius, halfHeight: radius } satisfies MarkerGeometry;
+}
+
+function addMarkerPath(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  marker: MarkerGeometry,
+  expansion = 0,
+) {
+  const halfWidth = marker.halfWidth + expansion;
+  const halfHeight = marker.halfHeight + expansion;
+  context.beginPath();
+  if (marker.kind === 'circle') {
+    context.arc(x, y, halfWidth, 0, Math.PI * 2);
+    return;
+  }
+
+  const leftCapX = x - halfWidth + halfHeight;
+  const rightCapX = x + halfWidth - halfHeight;
+  context.moveTo(leftCapX, y - halfHeight);
+  context.lineTo(rightCapX, y - halfHeight);
+  context.arc(rightCapX, y, halfHeight, -Math.PI / 2, Math.PI / 2);
+  context.lineTo(leftCapX, y + halfHeight);
+  context.arc(leftCapX, y, halfHeight, Math.PI / 2, Math.PI * 1.5);
+  context.closePath();
+}
+
+function getMarkerHitDistance(
+  pointerX: number,
+  pointerY: number,
+  markerX: number,
+  markerY: number,
+  marker: MarkerGeometry,
+) {
+  const deltaX = pointerX - markerX;
+  const deltaY = pointerY - markerY;
+  const centerDistance = Math.hypot(deltaX, deltaY);
+  if (marker.kind === 'circle') {
+    return centerDistance <= Math.max(8, marker.halfWidth + 3)
+      ? centerDistance
+      : null;
+  }
+
+  const hitRadius = marker.halfHeight + 3;
+  const axisHalfLength = Math.max(0, marker.halfWidth - marker.halfHeight);
+  const closestAxisX = Math.max(-axisHalfLength, Math.min(axisHalfLength, deltaX));
+  return Math.hypot(deltaX - closestAxisX, deltaY) <= hitRadius
+    ? centerDistance
+    : null;
 }
 
 function getProjectedPosition(system: SystemNode, projectionMix: number) {
@@ -174,6 +371,7 @@ function pointInPolygon(point: { x: number; y: number }, polygon: Array<{ x: num
 type SovereigntyPlannerMapProps = {
   graph: GraphData | null;
   selectedSystemIds: ReadonlySet<number>;
+  holdingAllianceIdsBySystemId: ReadonlyMap<number, number>;
   onToggleSystem: (systemId: number) => void;
   territoryEditing: boolean;
   onLassoSelection: (systemIds: number[]) => void;
@@ -183,6 +381,7 @@ type SovereigntyPlannerMapProps = {
 export function SovereigntyPlannerMap({
   graph,
   selectedSystemIds,
+  holdingAllianceIdsBySystemId,
   onToggleSystem,
   territoryEditing,
   onLassoSelection,
@@ -192,10 +391,18 @@ export function SovereigntyPlannerMap({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const lassoRef = useRef<LassoState | null>(null);
+  const hoverTooltipRef = useRef<HTMLDivElement | null>(null);
   const resetAnimationFrameRef = useRef<number | null>(null);
   const projectionAnimationFrameRef = useRef<number | null>(null);
+  const allianceLogoCacheRef = useRef(new Map<
+    number,
+    { image: HTMLImageElement; status: 'loading' | 'loaded' | 'error' }
+  >());
+  const metricLabelWidthCacheRef = useRef(new Map<string, number>());
   const lastFitSelectionRequestRef = useRef(0);
   const [mode, setMode] = useState<MapMode>('schematic');
+  const [dataDisplay, setDataDisplay] = useState<MapDataDisplay>('none');
+  const [allianceLogoRevision, setAllianceLogoRevision] = useState(0);
   const [projectionMix, setProjectionMix] = useState(0);
   const [viewport, setViewport] = useState<Viewport>(INITIAL_VIEWPORT);
   const [size, setSize] = useState({ width: 1, height: 1 });
@@ -212,6 +419,10 @@ export function SovereigntyPlannerMap({
     )).length;
   }, [graph]);
   const hasSchematicCoordinates = schematicCount > 0;
+  const holdingAllianceIds = useMemo(
+    () => Array.from(new Set(holdingAllianceIdsBySystemId.values())),
+    [holdingAllianceIdsBySystemId],
+  );
 
   useEffect(() => {
     if (graph && !hasSchematicCoordinates && mode === 'schematic') {
@@ -219,6 +430,29 @@ export function SovereigntyPlannerMap({
       setProjectionMix(1);
     }
   }, [graph, hasSchematicCoordinates, mode]);
+
+  useEffect(() => {
+    if (dataDisplay !== 'alliance') return;
+    for (const allianceId of holdingAllianceIds) {
+      if (allianceLogoCacheRef.current.has(allianceId)) continue;
+      const image = new Image();
+      image.decoding = 'async';
+      const entry: {
+        image: HTMLImageElement;
+        status: 'loading' | 'loaded' | 'error';
+      } = { image, status: 'loading' };
+      allianceLogoCacheRef.current.set(allianceId, entry);
+      image.onload = () => {
+        entry.status = 'loaded';
+        setAllianceLogoRevision((revision) => revision + 1);
+      };
+      image.onerror = () => {
+        entry.status = 'error';
+        setAllianceLogoRevision((revision) => revision + 1);
+      };
+      image.src = `https://images.evetech.net/alliances/${allianceId}/logo?size=64`;
+    }
+  }, [dataDisplay, holdingAllianceIds]);
 
   const geometry = useMemo(() => {
     const points: MapPoint[] = [];
@@ -247,6 +481,11 @@ export function SovereigntyPlannerMap({
         x: position.x,
         y: position.y,
         security: typeof system.security === 'number' ? system.security : 0,
+        power: system.power ?? 0,
+        workforce: system.workforce ?? 0,
+        magmaticGas: system.magmaticGas ?? 0,
+        superionicIce: system.superionicIce ?? 0,
+        holdingAllianceId: holdingAllianceIdsBySystemId.get(id),
         eligible: system.isSovereigntyEligible,
       };
       points.push(point);
@@ -284,7 +523,21 @@ export function SovereigntyPlannerMap({
       ? { minX, maxX, minY, maxY }
       : null;
     return { points, edges, bounds };
-  }, [graph, projectionMix]);
+  }, [graph, holdingAllianceIdsBySystemId, projectionMix]);
+
+  const metricMaximums = useMemo(() => {
+    let power = 0;
+    let workforce = 0;
+    let magmaticGas = 0;
+    let superionicIce = 0;
+    for (const point of geometry.points) {
+      power = Math.max(power, point.power);
+      workforce = Math.max(workforce, point.workforce);
+      magmaticGas = Math.max(magmaticGas, point.magmaticGas);
+      superionicIce = Math.max(superionicIce, point.superionicIce);
+    }
+    return { power, workforce, magmaticGas, superionicIce };
+  }, [geometry.points]);
 
   const baseTransform = useMemo(() => {
     const bounds = geometry.bounds;
@@ -324,6 +577,14 @@ export function SovereigntyPlannerMap({
     x: transform.screenX + (point.x - transform.centerX) * transform.scale,
     y: transform.screenY + (point.y - transform.centerY) * transform.scale,
   }), [transform]);
+  const getCachedMetricLabelWidth = useCallback((label: string) => (
+    metricLabelWidthCacheRef.current.get(label) ?? label.length * 6.25
+  ), []);
+  const dataLabelZoomThreshold = mode === 'schematic' ? 10 : 5;
+  const showDataLabels = (
+    dataDisplay !== 'none'
+    && viewport.zoom >= dataLabelZoomThreshold
+  );
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -396,33 +657,96 @@ export function SovereigntyPlannerMap({
     drawEdges(true, 'region');
 
     context.setLineDash([]);
+    context.font = METRIC_LABEL_FONT;
+    const measureMetricLabel = (label: string) => {
+      const cachedWidth = metricLabelWidthCacheRef.current.get(label);
+      if (cachedWidth != null) return cachedWidth;
+      const width = context.measureText(label).width;
+      metricLabelWidthCacheRef.current.set(label, width);
+      return width;
+    };
     for (const point of geometry.points) {
       const screen = pointToScreen(point);
-      if (screen.x < -6 || screen.x > size.width + 6 || screen.y < -6 || screen.y > size.height + 6) continue;
       const selected = selectedSystemIds.has(point.id);
+      const showPointData = showDataLabels && selected;
+      const marker = getPointMarkerGeometry(
+        point,
+        dataDisplay,
+        showDataLabels,
+        selected,
+        viewport.zoom,
+        measureMetricLabel,
+      );
+      const renderMarginX = Math.max(6, marker.halfWidth + 3);
+      const renderMarginY = Math.max(6, marker.halfHeight + 3);
+      if (
+        screen.x < -renderMarginX
+        || screen.x > size.width + renderMarginX
+        || screen.y < -renderMarginY
+        || screen.y > size.height + renderMarginY
+      ) continue;
       const security = Math.max(0, Math.min(1, point.security));
       const hue = 4 + security * 205;
       context.globalAlpha = selected
         ? 1
-        : point.eligible
-          ? hasSelection ? 0.17 : 0.9
-          : hasSelection ? 0.045 : 0.12;
-      context.fillStyle = `hsl(${hue} 72% ${isDarkMode ? 62 : 42}%)`;
-      context.beginPath();
-      context.arc(
-        screen.x,
-        screen.y,
-        selected ? 2.8 : viewport.zoom >= 4 ? 2.1 : point.eligible ? 1.55 : 1.2,
-        0,
-        Math.PI * 2,
-      );
+        : territoryEditing
+          ? point.eligible
+            ? hasSelection ? 0.72 : 0.95
+            : hasSelection ? 0.2 : 0.24
+          : point.eligible
+            ? hasSelection ? 0.17 : 0.9
+            : hasSelection ? 0.045 : 0.12;
+      const markerValue = getMarkerValue(point, dataDisplay);
+      const metricColors = (
+        markerValue != null
+        && isMetricDataDisplay(dataDisplay)
+      )
+        ? getMetricMarkerColors(
+          markerValue,
+          dataDisplay,
+          metricMaximums[dataDisplay],
+          isDarkMode,
+        )
+        : null;
+      context.fillStyle = metricColors?.fill
+        ?? `hsl(${hue} 72% ${isDarkMode ? 62 : 42}%)`;
+      addMarkerPath(context, screen.x, screen.y, marker);
       context.fill();
+      const allianceLogoEntry = point.holdingAllianceId
+        ? allianceLogoCacheRef.current.get(point.holdingAllianceId)
+        : null;
+      if (
+        showPointData
+        && dataDisplay === 'alliance'
+        && allianceLogoEntry?.status === 'loaded'
+      ) {
+        const allianceLogoRadius = Math.max(1, marker.halfWidth - 1);
+        context.save();
+        context.beginPath();
+        context.arc(screen.x, screen.y, allianceLogoRadius, 0, Math.PI * 2);
+        context.clip();
+        context.drawImage(
+          allianceLogoEntry.image,
+          screen.x - marker.halfWidth,
+          screen.y - marker.halfHeight,
+          marker.halfWidth * 2,
+          marker.halfHeight * 2,
+        );
+        context.restore();
+      }
+      if (showPointData && markerValue != null) {
+        context.fillStyle = metricColors?.text ?? (isDarkMode ? '#0f172a' : '#ffffff');
+        context.globalAlpha = 1;
+        context.font = METRIC_LABEL_FONT;
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.fillText(formatMarkerValue(markerValue), screen.x, screen.y + 0.5);
+      }
       if (selected) {
         context.strokeStyle = isDarkMode ? '#f8fafc' : '#0f172a';
-        context.globalAlpha = 0.7;
-        context.lineWidth = 0.9;
-        context.beginPath();
-        context.arc(screen.x, screen.y, 4.5, 0, Math.PI * 2);
+        context.globalAlpha = territoryEditing ? 0.92 : 0.7;
+        context.lineWidth = territoryEditing ? 1.2 : 0.9;
+        addMarkerPath(context, screen.x, screen.y, marker, 1.7);
         context.stroke();
       }
     }
@@ -431,11 +755,18 @@ export function SovereigntyPlannerMap({
       const point = geometry.points.find((candidate) => candidate.id === hovered.id);
       if (point) {
         const screen = pointToScreen(point);
+        const marker = getPointMarkerGeometry(
+          point,
+          dataDisplay,
+          showDataLabels,
+          selectedSystemIds.has(point.id),
+          viewport.zoom,
+          measureMetricLabel,
+        );
         context.strokeStyle = isDarkMode ? '#f8fafc' : '#0f172a';
         context.globalAlpha = 1;
         context.lineWidth = 1.5;
-        context.beginPath();
-        context.arc(screen.x, screen.y, 5, 0, Math.PI * 2);
+        addMarkerPath(context, screen.x, screen.y, marker, 2.5);
         context.stroke();
       }
     }
@@ -459,15 +790,20 @@ export function SovereigntyPlannerMap({
     }
     context.restore();
   }, [
+    allianceLogoRevision,
     geometry.edges,
     geometry.points,
+    dataDisplay,
     hovered,
     isDarkMode,
     lassoPoints,
+    metricMaximums,
     pointToScreen,
     selectedSystemIds,
+    showDataLabels,
     size.height,
     size.width,
+    territoryEditing,
     viewport.zoom,
   ]);
 
@@ -629,13 +965,35 @@ export function SovereigntyPlannerMap({
     for (const point of geometry.points) {
       if (eligibleOnly && !point.eligible) continue;
       const screen = pointToScreen(point);
-      const distance = Math.hypot(screen.x - pointerX, screen.y - pointerY);
-      if (distance <= 8 && (!nearest || distance < nearest.distance)) {
-        nearest = { id: point.id, x: screen.x, y: screen.y, distance };
+      const marker = getPointMarkerGeometry(
+        point,
+        dataDisplay,
+        showDataLabels,
+        selectedSystemIds.has(point.id),
+        viewport.zoom,
+        getCachedMetricLabelWidth,
+      );
+      const hitDistance = getMarkerHitDistance(
+        pointerX,
+        pointerY,
+        screen.x,
+        screen.y,
+        marker,
+      );
+      if (hitDistance != null && (!nearest || hitDistance < nearest.distance)) {
+        nearest = { id: point.id, x: screen.x, y: screen.y, distance: hitDistance };
       }
     }
     return nearest;
-  }, [geometry.points, pointToScreen]);
+  }, [
+    dataDisplay,
+    geometry.points,
+    getCachedMetricLabelWidth,
+    pointToScreen,
+    selectedSystemIds,
+    showDataLabels,
+    viewport.zoom,
+  ]);
 
   const handlePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || (event.target as HTMLElement).closest('[data-map-control]')) return;
@@ -802,7 +1160,63 @@ export function SovereigntyPlannerMap({
     ? 0
     : Math.min(10, Math.ceil(hoveredSecurity * 10));
   const hoveredSecurityColor = SECURITY_COLORS[hoveredSecurityIndex] ?? SECURITY_COLORS[0];
-  const hoverTooltipWidth = Math.min(260, Math.max(72, (hoveredName?.length ?? 0) * 7 + 44));
+  const hoverTooltipWidth = Math.min(280, Math.max(176, (hoveredName?.length ?? 0) * 7 + 44));
+  const hoveredPoint = hovered
+    ? geometry.points.find((point) => point.id === hovered.id)
+    : null;
+  const hoveredMarker = hoveredPoint
+    ? getPointMarkerGeometry(
+      hoveredPoint,
+      dataDisplay,
+      showDataLabels,
+      selectedSystemIds.has(hoveredPoint.id),
+      viewport.zoom,
+      getCachedMetricLabelWidth,
+    )
+    : null;
+  const hoverTooltipHeight = 112;
+  const hoverTooltipLeft = hovered
+    ? Math.max(
+      8,
+      Math.min(
+        Math.max(8, size.width - hoverTooltipWidth - 8),
+        hovered.x - hoverTooltipWidth / 2,
+      ),
+    )
+    : 8;
+  const hoverTooltipTop = hovered
+    ? Math.max(
+      8,
+      Math.min(
+        Math.max(8, size.height - hoverTooltipHeight - 8),
+        hovered.y + (hoveredMarker?.halfHeight ?? 0) + 9,
+      ),
+    )
+    : 8;
+  const hoveredSystemId = hovered?.id ?? null;
+
+  useLayoutEffect(() => {
+    const tooltip = hoverTooltipRef.current;
+    if (
+      hoveredSystemId == null
+      || !tooltip
+      || window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ) return;
+
+    const animation = tooltip.animate(
+      [
+        { opacity: 0, transform: 'translateY(-4px) scaleX(0.96) scaleY(0.82)' },
+        { opacity: 1, transform: 'translateY(0) scaleX(1) scaleY(1)' },
+      ],
+      {
+        duration: 150,
+        easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
+        fill: 'both',
+      },
+    );
+    return () => animation.cancel();
+  }, [hoveredSystemId]);
+
   const isAtFitTarget = (
     Math.abs(viewport.zoom - fitTargetViewport.zoom) < 0.001
     && Math.abs(viewport.panX - fitTargetViewport.panX) < 0.1
@@ -837,6 +1251,26 @@ export function SovereigntyPlannerMap({
             : 'Sovereignty map. Drag to pan and use the mouse wheel or map controls to zoom.'}
       >
         <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" aria-hidden="true" />
+
+        <label
+          data-map-control
+          className="absolute left-3 top-3 z-20 flex items-center gap-2 rounded-md border border-gray-300 bg-white/90 px-2 py-1.5 text-xs text-slate-600 shadow-sm backdrop-blur dark:border-gray-700 dark:bg-gray-900/90 dark:text-slate-300"
+        >
+          <span>Dots</span>
+          <select
+            value={dataDisplay}
+            onChange={(event) => setDataDisplay(event.target.value as MapDataDisplay)}
+            className="rounded border-0 bg-transparent py-0 pl-1 pr-6 text-xs font-medium text-slate-900 focus:ring-1 focus:ring-purple-500 dark:text-slate-100"
+            aria-label="System dot data"
+          >
+            <option value="none">No data</option>
+            <option value="power">Power</option>
+            <option value="workforce">Workforce</option>
+            <option value="magmaticGas">Magmatic Gas</option>
+            <option value="superionicIce">Superionic Ice</option>
+            <option value="alliance">Alliance logo</option>
+          </select>
+        </label>
 
         <div data-map-control className="absolute right-3 top-3 z-20 flex flex-col items-center gap-2">
           <div className="flex h-32 w-10 items-center justify-center">
@@ -876,16 +1310,40 @@ export function SovereigntyPlannerMap({
 
         {hovered && hoveredSystem && (
           <div
-            className="pointer-events-none absolute z-10 whitespace-nowrap rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-slate-900 shadow dark:border-gray-700 dark:bg-gray-900 dark:text-slate-100"
+            ref={hoverTooltipRef}
+            className="pointer-events-none absolute z-30 min-w-44 whitespace-nowrap rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs text-slate-900 shadow dark:border-gray-700 dark:bg-gray-900 dark:text-slate-100"
             style={{
-              left: Math.max(8, Math.min(size.width - hoverTooltipWidth - 8, hovered.x + 10)),
-              top: Math.max(8, hovered.y - 30),
+              left: hoverTooltipLeft,
+              top: hoverTooltipTop,
+              width: hoverTooltipWidth,
+              transformOrigin: 'top center',
+              willChange: 'transform, opacity',
             }}
           >
-            <span>{hoveredName} </span>
-            <span style={{ color: hoveredSecurityColor, fontWeight: 700 }}>
-              {hoveredSecurity.toFixed(1)}
-            </span>
+            <div>
+              <span className="font-medium">{hoveredName} </span>
+              <span style={{ color: hoveredSecurityColor, fontWeight: 700 }}>
+                {hoveredSecurity.toFixed(1)}
+              </span>
+            </div>
+            <div className="mt-1.5 grid grid-cols-[auto_auto] gap-x-5 gap-y-0.5 border-t border-slate-200 pt-1.5 text-slate-500 dark:border-slate-700 dark:text-slate-400">
+              <span>Workforce</span>
+              <span className="text-right font-medium tabular-nums text-slate-800 dark:text-slate-200">
+                {(hoveredSystem.workforce ?? 0).toLocaleString()}
+              </span>
+              <span>Power</span>
+              <span className="text-right font-medium tabular-nums text-slate-800 dark:text-slate-200">
+                {(hoveredSystem.power ?? 0).toLocaleString()}
+              </span>
+              <span>Magmatic Gas</span>
+              <span className="text-right font-medium tabular-nums text-slate-800 dark:text-slate-200">
+                {(hoveredSystem.magmaticGas ?? 0).toLocaleString()}
+              </span>
+              <span>Superionic Ice</span>
+              <span className="text-right font-medium tabular-nums text-slate-800 dark:text-slate-200">
+                {(hoveredSystem.superionicIce ?? 0).toLocaleString()}
+              </span>
+            </div>
           </div>
         )}
 

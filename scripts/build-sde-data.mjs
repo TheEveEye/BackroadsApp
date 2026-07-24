@@ -10,6 +10,8 @@ const DEFAULT_CACHE_PATH = '.cache/eve-online-static-data-latest-jsonl.zip';
 const DEFAULT_OUT_DIR = 'public/data';
 const NEW_EDEN_MIN_SYSTEM_ID = 30000000;
 const NEW_EDEN_MAX_SYSTEM_ID = 30999999;
+const MAGMATIC_GAS_TYPE_ID = 81143;
+const SUPERIONIC_ICE_TYPE_ID = 81144;
 
 function usage() {
   console.log(`Usage: node scripts/build-sde-data.mjs [options]
@@ -205,6 +207,7 @@ async function main() {
     : await downloadSde(args.url, args.cachePath, args.forceDownload);
 
   const solarSystems = parseJsonl(unzipEntry(zipPath, 'mapSolarSystems.jsonl'), 'mapSolarSystems.jsonl');
+  const planetResources = parseJsonl(unzipEntry(zipPath, 'planetResources.jsonl'), 'planetResources.jsonl');
   const stargates = parseJsonl(unzipEntry(zipPath, 'mapStargates.jsonl'), 'mapStargates.jsonl');
   const constellations = parseJsonl(unzipEntry(zipPath, 'mapConstellations.jsonl'), 'mapConstellations.jsonl');
   const regions = parseJsonl(unzipEntry(zipPath, 'mapRegions.jsonl'), 'mapRegions.jsonl');
@@ -217,6 +220,7 @@ async function main() {
   const constellationIds = new Set();
   const constellationsById = new Map(constellations.map((row) => [Number(row._key), row]));
   const regionsById = new Map(regions.map((row) => [Number(row._key), row]));
+  const planetResourcesById = new Map(planetResources.map((row) => [Number(row._key), row]));
   let position2DCount = 0;
   let sovereigntyEligibleCount = 0;
   let npcNullsecCount = 0;
@@ -230,6 +234,30 @@ async function main() {
     const constellationId = Number(row.constellationID);
     const securityStatus = Number(row.securityStatus);
     const position2D = readPosition2D(row.position2D);
+    let power = 0;
+    let workforce = 0;
+    let magmaticGas = 0;
+    let superionicIce = 0;
+    for (const resourceSourceId of [row.starID, ...(row.planetIDs ?? [])]) {
+      const resources = planetResourcesById.get(Number(resourceSourceId));
+      const sourcePower = Number(resources?.power);
+      const sourceWorkforce = Number(resources?.workforce);
+      if (Number.isFinite(sourcePower)) power += sourcePower;
+      if (Number.isFinite(sourceWorkforce)) workforce += sourceWorkforce;
+    }
+    for (const planetId of row.planetIDs ?? []) {
+      const reagent = planetResourcesById.get(Number(planetId))?.reagent;
+      const amountPerCycle = Number(reagent?.amount_per_cycle);
+      const cyclePeriodSeconds = Number(reagent?.cycle_period);
+      if (
+        !Number.isFinite(amountPerCycle)
+        || !Number.isFinite(cyclePeriodSeconds)
+        || cyclePeriodSeconds <= 0
+      ) continue;
+      const amountPerHour = amountPerCycle * 3600 / cyclePeriodSeconds;
+      if (Number(reagent?.type_id) === MAGMATIC_GAS_TYPE_ID) magmaticGas += amountPerHour;
+      if (Number(reagent?.type_id) === SUPERIONIC_ICE_TYPE_ID) superionicIce += amountPerHour;
+    }
     const inheritedFactionId = row.factionID
       ?? constellationsById.get(constellationId)?.factionID
       ?? regionsById.get(regionId)?.factionID;
@@ -251,6 +279,10 @@ async function main() {
       },
       ...(position2D ? { position2D } : {}),
       security: roundSecurity(securityStatus),
+      power,
+      workforce,
+      magmaticGas,
+      superionicIce,
       ...(hasNpcFaction ? { npcFactionId } : {}),
       isSovereigntyEligible,
       adjacentSystems: [],

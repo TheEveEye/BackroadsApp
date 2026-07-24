@@ -179,6 +179,17 @@ export function SovereigntyPlanner() {
     return { items, systemIdsByKey };
   }, [eligibleSystemIds, graph, sovereigntyHolders]);
 
+  const holdingAllianceIdsBySystemId = useMemo(() => {
+    const allianceIdsBySystemId = new Map<number, number>();
+    for (const holder of sovereigntyHolders) {
+      if (holder.kind !== 'alliance') continue;
+      for (const systemId of holder.systemIds) {
+        allianceIdsBySystemId.set(systemId, holder.id);
+      }
+    }
+    return allianceIdsBySystemId;
+  }, [sovereigntyHolders]);
+
   const toggleSystem = useCallback((systemId: number) => {
     if (!territoryEditing || !eligibleSystemIds.has(systemId)) return;
     setSelectedSystemIds((current) => {
@@ -244,7 +255,7 @@ export function SovereigntyPlanner() {
 
   return (
     <>
-      <div className="grid h-[calc(100vh-12rem)] min-h-[540px] gap-4 md:grid-cols-[18rem_minmax(0,1fr)] lg:grid-cols-[20rem_minmax(0,1fr)]">
+      <div className="grid min-h-[540px] flex-1 gap-4 md:grid-cols-[18rem_minmax(0,1fr)] lg:grid-cols-[20rem_minmax(0,1fr)]">
         <aside
           className="flex min-h-32 flex-col gap-4 rounded-lg border border-gray-200 bg-white/50 p-4 dark:border-gray-700 dark:bg-black/20 md:min-h-0"
           aria-label="Sovereignty planner toolbar"
@@ -340,6 +351,7 @@ export function SovereigntyPlanner() {
         <SovereigntyPlannerMap
           graph={graph}
           selectedSystemIds={selectedSystemIds}
+          holdingAllianceIdsBySystemId={holdingAllianceIdsBySystemId}
           onToggleSystem={toggleSystem}
           territoryEditing={territoryEditing}
           onLassoSelection={handleLassoSelection}
