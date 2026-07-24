@@ -17,6 +17,7 @@ export function Layout() {
     if (p.startsWith('/scanner')) document.title = `${base} | Drifter Scanner`;
     else if (p.startsWith('/observatories')) document.title = `${base} | Observatories`;
     else if (p.startsWith('/bridge-planner')) document.title = `${base} | Bridge Planner`;
+    else if (p.startsWith('/sovereignty-planner')) document.title = `${base} | Sovereignty Planner`;
     else document.title = base;
   }, [location.pathname]);
   // Globally load data so routes like Scanner work on direct entry
@@ -77,6 +78,13 @@ export function Layout() {
                   `px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-xs sm:text-sm font-medium hover:bg-slate-100 dark:hover:bg-slate-800 ${isActive ? 'text-blue-700 dark:text-blue-400' : 'text-slate-700 dark:text-slate-300'}`}
               >
                 Bridge Planner
+              </NavLink>
+              <NavLink
+                to="/sovereignty-planner"
+                className={({ isActive }) =>
+                  `px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-xs sm:text-sm font-medium hover:bg-slate-100 dark:hover:bg-slate-800 ${isActive ? 'text-blue-700 dark:text-blue-400' : 'text-slate-700 dark:text-slate-300'}`}
+              >
+                Sovereignty Planner
               </NavLink>
               <NavLink
                 to="/scanner"

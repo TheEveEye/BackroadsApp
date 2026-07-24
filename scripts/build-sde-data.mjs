@@ -133,6 +133,13 @@ function roundSecurity(value) {
   return Math.round(number * 10) / 10;
 }
 
+function readPosition2D(value) {
+  const x = Number(value?.x);
+  const y = Number(value?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+}
+
 function sortedNumericEntries(record) {
   return Object.entries(record).sort(([a], [b]) => Number(a) - Number(b));
 }
@@ -199,6 +206,7 @@ async function main() {
 
   const solarSystems = parseJsonl(unzipEntry(zipPath, 'mapSolarSystems.jsonl'), 'mapSolarSystems.jsonl');
   const stargates = parseJsonl(unzipEntry(zipPath, 'mapStargates.jsonl'), 'mapStargates.jsonl');
+  const constellations = parseJsonl(unzipEntry(zipPath, 'mapConstellations.jsonl'), 'mapConstellations.jsonl');
   const regions = parseJsonl(unzipEntry(zipPath, 'mapRegions.jsonl'), 'mapRegions.jsonl');
   const sdeMeta = parseJsonl(unzipEntry(zipPath, '_sde.jsonl'), '_sde.jsonl')[0];
 
@@ -206,6 +214,12 @@ async function main() {
   const namesById = {};
   const byName = {};
   const regionIds = new Set();
+  const constellationIds = new Set();
+  const constellationsById = new Map(constellations.map((row) => [Number(row._key), row]));
+  const regionsById = new Map(regions.map((row) => [Number(row._key), row]));
+  let position2DCount = 0;
+  let sovereigntyEligibleCount = 0;
+  let npcNullsecCount = 0;
 
   for (const row of solarSystems) {
     const id = Number(row._key);
@@ -213,22 +227,39 @@ async function main() {
 
     const name = englishName(row.name);
     const regionId = Number(row.regionID);
+    const constellationId = Number(row.constellationID);
+    const securityStatus = Number(row.securityStatus);
+    const position2D = readPosition2D(row.position2D);
+    const inheritedFactionId = row.factionID
+      ?? constellationsById.get(constellationId)?.factionID
+      ?? regionsById.get(regionId)?.factionID;
+    const npcFactionId = Number(inheritedFactionId);
+    const hasNpcFaction = Number.isInteger(npcFactionId) && npcFactionId > 0;
+    const isNullsec = Number.isFinite(securityStatus) && securityStatus <= 0;
+    const isSovereigntyEligible = isNullsec && !hasNpcFaction;
+    if (position2D) position2DCount += 1;
+    if (isSovereigntyEligible) sovereigntyEligibleCount += 1;
+    else if (isNullsec && hasNpcFaction) npcNullsecCount += 1;
     systems[String(id)] = {
       systemId: id,
-      constellationId: Number(row.constellationID),
+      constellationId,
       regionId,
       position: {
         x: Number(row.position?.x ?? 0),
         y: Number(row.position?.y ?? 0),
         z: Number(row.position?.z ?? 0),
       },
-      security: roundSecurity(row.securityStatus),
+      ...(position2D ? { position2D } : {}),
+      security: roundSecurity(securityStatus),
+      ...(hasNpcFaction ? { npcFactionId } : {}),
+      isSovereigntyEligible,
       adjacentSystems: [],
       hasObservatory: false,
       isRegional: false,
     };
 
     regionIds.add(regionId);
+    constellationIds.add(constellationId);
     if (name) {
       namesById[String(id)] = name;
       byName[name.toLowerCase()] = id;
@@ -275,16 +306,30 @@ async function main() {
     if (regionIds.has(id)) regionNamesById[String(id)] = englishName(row.name);
   }
 
+  const constellationNamesById = {};
+  for (const row of constellations) {
+    const id = Number(row._key);
+    if (constellationIds.has(id)) constellationNamesById[String(id)] = englishName(row.name);
+  }
+
   const sortedSystems = Object.fromEntries(sortedNumericEntries(systems));
   const sortedNamesById = Object.fromEntries(sortedNumericEntries(namesById));
   const sortedRegionsById = Object.fromEntries(sortedNumericEntries(regionNamesById));
+  const sortedConstellationsById = Object.fromEntries(sortedNumericEntries(constellationNamesById));
 
   writeJson(resolve(outDir, 'systems_index.json'), sortedSystems);
   writeJson(resolve(outDir, 'system_names.json'), { byId: sortedNamesById, byName });
   writeJson(resolve(outDir, 'region_names.json'), { byId: sortedRegionsById });
+  writeJson(resolve(outDir, 'constellation_names.json'), { byId: sortedConstellationsById });
 
   console.log(`SDE build: ${sdeMeta?.buildNumber ?? 'unknown'}`);
   console.log(`Wrote ${Object.keys(sortedSystems).length} systems to ${outDir}`);
+  console.log(`Included schematic 2D positions for ${position2DCount} systems`);
+  if (position2DCount !== Object.keys(sortedSystems).length) {
+    console.warn(`Missing schematic 2D positions for ${Object.keys(sortedSystems).length - position2DCount} systems`);
+  }
+  console.log(`Marked ${sovereigntyEligibleCount} systems as sovereignty eligible`);
+  console.log(`Excluded ${npcNullsecCount} NPC-controlled nullsec systems`);
   console.log(`Preserved/loaded ${observatoryIds.size} Jove Observatory system flags`);
 }
 

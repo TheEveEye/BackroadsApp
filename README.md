@@ -59,9 +59,11 @@ Notes:
 
 All data is loaded client-side from `public/data`:
 
-- `systems_index.json` (required)
+- `systems_index.json` (required; includes each system's 3D `position` and, when supplied by the SDE, schematic `position2D`)
 - `system_names.json` (optional; improves name lookup)
   - Shape: `{ byId: Record<string,string>, byName: Record<string, number> }`
+- `constellation_names.json` (optional; provides names for constellation-level selection)
+  - Shape: `{ byId: Record<string,string> }`
 - `region_names.json` (optional; shows region names)
   - Shape: `{ byId: Record<string,string> }`
 
