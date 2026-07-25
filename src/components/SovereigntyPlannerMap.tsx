@@ -404,6 +404,7 @@ export function SovereigntyPlannerMap({
   const [dataDisplay, setDataDisplay] = useState<MapDataDisplay>('none');
   const [allianceLogoRevision, setAllianceLogoRevision] = useState(0);
   const [projectionMix, setProjectionMix] = useState(0);
+  const [projectionLabelVisibility, setProjectionLabelVisibility] = useState<boolean | null>(null);
   const [viewport, setViewport] = useState<Viewport>(INITIAL_VIEWPORT);
   const [size, setSize] = useState({ width: 1, height: 1 });
   const [isPanning, setIsPanning] = useState(false);
@@ -583,7 +584,10 @@ export function SovereigntyPlannerMap({
   const dataLabelZoomThreshold = mode === 'schematic' ? 10 : 5;
   const showDataLabels = (
     dataDisplay !== 'none'
-    && viewport.zoom >= dataLabelZoomThreshold
+    && (
+      projectionLabelVisibility
+      ?? viewport.zoom >= dataLabelZoomThreshold
+    )
   );
 
   useLayoutEffect(() => {
@@ -631,9 +635,7 @@ export function SovereigntyPlannerMap({
       const interConstellation = boundary === 'constellation';
       context.lineWidth = prominent ? 1 : 0.65;
       context.strokeStyle = '#64748b';
-      context.globalAlpha = prominent
-        ? (interRegion ? 0.68 : interConstellation ? 0.56 : 0.48)
-        : hasSelection ? 0.07 : 0.13;
+      context.globalAlpha = prominent ? 0.55 : territoryEditing ? 0.35 : 0.15;
       context.setLineDash(interRegion ? [7, 4] : interConstellation ? [1.5, 3] : []);
       context.beginPath();
       for (const edge of geometry.edges) {
@@ -897,6 +899,8 @@ export function SovereigntyPlannerMap({
       selectedSystemIds,
       size,
     );
+    const targetLabelZoomThreshold = nextMode === 'schematic' ? 10 : 5;
+    setProjectionLabelVisibility(targetViewport.zoom >= targetLabelZoomThreshold);
     const startedAt = performance.now();
     const easeInOutCubic = (progress: number) => (
       progress < 0.5
@@ -919,6 +923,7 @@ export function SovereigntyPlannerMap({
         projectionAnimationFrameRef.current = null;
         setProjectionMix(targetMix);
         setViewport(targetViewport);
+        setProjectionLabelVisibility(null);
       }
     };
 
