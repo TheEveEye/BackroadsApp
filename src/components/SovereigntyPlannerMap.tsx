@@ -9,6 +9,7 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react';
 import type { GraphData, SystemNode } from '../lib/data';
+import { Dropdown, type DropdownOption } from './Dropdown';
 import { Icon } from './Icon';
 
 type MapMode = 'schematic' | 'geographic';
@@ -76,6 +77,14 @@ const SECURITY_COLORS = [
   '#5698E5',
   '#4173DB',
 ];
+const DATA_DISPLAY_OPTIONS = [
+  { value: 'none', label: 'No data' },
+  { value: 'power', label: 'Power' },
+  { value: 'workforce', label: 'Workforce' },
+  { value: 'magmaticGas', label: 'Magmatic Gas' },
+  { value: 'superionicIce', label: 'Superionic Ice' },
+  { value: 'alliance', label: 'Alliance logo' },
+] satisfies readonly DropdownOption[];
 
 function getIsDarkMode() {
   return typeof window !== 'undefined'
@@ -1257,25 +1266,19 @@ export function SovereigntyPlannerMap({
       >
         <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" aria-hidden="true" />
 
-        <label
+        <div
           data-map-control
-          className="absolute left-3 top-3 z-20 flex items-center gap-2 rounded-md border border-gray-300 bg-white/90 px-2 py-1.5 text-xs text-slate-600 shadow-sm backdrop-blur dark:border-gray-700 dark:bg-gray-900/90 dark:text-slate-300"
+          className="absolute left-3 top-3 z-20"
         >
-          <span>Dots</span>
-          <select
+          <Dropdown
             value={dataDisplay}
-            onChange={(event) => setDataDisplay(event.target.value as MapDataDisplay)}
-            className="rounded border-0 bg-transparent py-0 pl-1 pr-6 text-xs font-medium text-slate-900 focus:ring-1 focus:ring-purple-500 dark:text-slate-100"
-            aria-label="System dot data"
-          >
-            <option value="none">No data</option>
-            <option value="power">Power</option>
-            <option value="workforce">Workforce</option>
-            <option value="magmaticGas">Magmatic Gas</option>
-            <option value="superionicIce">Superionic Ice</option>
-            <option value="alliance">Alliance logo</option>
-          </select>
-        </label>
+            options={DATA_DISPLAY_OPTIONS}
+            onChange={(nextValue) => setDataDisplay(nextValue as MapDataDisplay)}
+            ariaLabel="System dot data"
+            label="Dots"
+            buttonClassName="!bg-white/90 px-2.5 py-1.5 shadow-sm backdrop-blur dark:!bg-gray-900/90"
+          />
+        </div>
 
         <div data-map-control className="absolute right-3 top-3 z-20 flex flex-col items-center gap-2">
           <div className="flex h-32 w-10 items-center justify-center">
