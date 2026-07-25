@@ -95,14 +95,16 @@ async function downloadSde(url, cachePath, forceDownload) {
   return outputPath;
 }
 
-function unzipEntry(zipPath, entryName) {
+function unzipEntry(zipPath, entryName, maxBufferMb = 64) {
   const result = spawnSync('unzip', ['-p', zipPath, entryName], {
     encoding: 'utf8',
-    maxBuffer: 1024 * 1024 * 64,
+    maxBuffer: 1024 * 1024 * maxBufferMb,
   });
 
   if (result.status !== 0) {
-    throw new Error(`Failed to read ${entryName} from ${zipPath}: ${result.stderr || result.stdout}`);
+    throw new Error(
+      `Failed to read ${entryName} from ${zipPath}: ${String(result.stderr || '').slice(0, 2000)}`,
+    );
   }
 
   return result.stdout;
@@ -119,6 +121,24 @@ function parseJsonl(text, entryName) {
     } catch (error) {
       throw new Error(`Invalid JSON in ${entryName}:${i + 1}: ${error.message}`);
     }
+  }
+  return rows;
+}
+
+function parseJsonlForKeys(text, entryName, keys) {
+  const rows = new Map();
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    let row;
+    try {
+      row = JSON.parse(line);
+    } catch (error) {
+      throw new Error(`Invalid JSON in ${entryName}:${i + 1}: ${error.message}`);
+    }
+    const key = Number(row?._key);
+    if (keys.has(key)) rows.set(key, row);
   }
   return rows;
 }
@@ -199,6 +219,50 @@ function writeJson(path, value) {
   writeFileSync(outputPath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+function plainText(value) {
+  return englishName(value)
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getUpgradeMenuMetadata(type) {
+  const name = englishName(type.name);
+  const tierMatch = name.match(/\s([123])$/);
+  const tier = tierMatch ? Number(tierMatch[1]) : undefined;
+  if (type.marketGroupID === 1282) return { category: 'Strategic' };
+  if (type.marketGroupID === 1283) {
+    return {
+      category: 'Mining',
+      family: name.replace(/\s+Prospecting Array\s+[123]$/, ''),
+      ...(tier ? { tier } : {}),
+    };
+  }
+  if (type.marketGroupID === 1284) {
+    return {
+      category: 'Ratting',
+      family: name.replace(/\s+[123]$/, ''),
+      ...(tier ? { tier } : {}),
+    };
+  }
+  if (type.marketGroupID === 3736) {
+    return {
+      category: 'Colony Resources',
+      family: name.replace(/\s+[123]$/, ''),
+      ...(tier ? { tier } : {}),
+    };
+  }
+  if (type.marketGroupID === 3739) {
+    return {
+      category: 'Exploration',
+      family: 'Exploration Detector',
+      ...(tier ? { tier } : {}),
+    };
+  }
+  if (type.marketGroupID === 3741) return { category: 'System Effects' };
+  throw new Error(`Unknown sovereignty upgrade market group ${type.marketGroupID} for ${name}`);
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const outDir = resolve(args.outDir);
@@ -211,6 +275,16 @@ async function main() {
   const stargates = parseJsonl(unzipEntry(zipPath, 'mapStargates.jsonl'), 'mapStargates.jsonl');
   const constellations = parseJsonl(unzipEntry(zipPath, 'mapConstellations.jsonl'), 'mapConstellations.jsonl');
   const regions = parseJsonl(unzipEntry(zipPath, 'mapRegions.jsonl'), 'mapRegions.jsonl');
+  const sovereigntyUpgrades = parseJsonl(
+    unzipEntry(zipPath, 'sovereigntyUpgrades.jsonl'),
+    'sovereigntyUpgrades.jsonl',
+  );
+  const sovereigntyTypeIds = new Set(sovereigntyUpgrades.map((row) => Number(row._key)));
+  const sovereigntyTypes = parseJsonlForKeys(
+    unzipEntry(zipPath, 'types.jsonl', 256),
+    'types.jsonl',
+    sovereigntyTypeIds,
+  );
   const sdeMeta = parseJsonl(unzipEntry(zipPath, '_sde.jsonl'), '_sde.jsonl')[0];
 
   const systems = {};
@@ -348,15 +422,47 @@ async function main() {
   const sortedNamesById = Object.fromEntries(sortedNumericEntries(namesById));
   const sortedRegionsById = Object.fromEntries(sortedNumericEntries(regionNamesById));
   const sortedConstellationsById = Object.fromEntries(sortedNumericEntries(constellationNamesById));
+  const publishedSovereigntyUpgrades = sovereigntyUpgrades
+    .map((upgrade) => {
+      const typeId = Number(upgrade._key);
+      const type = sovereigntyTypes.get(typeId);
+      if (!type?.published) return null;
+      return {
+        typeId,
+        name: englishName(type.name),
+        description: plainText(type.description),
+        ...getUpgradeMenuMetadata(type),
+        ...(upgrade.mutually_exclusive_group
+          ? { mutuallyExclusiveGroup: upgrade.mutually_exclusive_group }
+          : {}),
+        powerAllocation: Number(upgrade.power_allocation ?? 0),
+        powerProduction: Number(upgrade.power_production ?? 0),
+        workforceAllocation: Number(upgrade.workforce_allocation ?? 0),
+        workforceProduction: Number(upgrade.workforce_production ?? 0),
+        ...(upgrade.fuel
+          ? {
+              fuel: {
+                typeId: Number(upgrade.fuel.type_id),
+                startupCost: Number(upgrade.fuel.startup_cost ?? 0),
+                hourlyUpkeep: Number(upgrade.fuel.hourly_upkeep ?? 0),
+              },
+            }
+          : {}),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
 
   writeJson(resolve(outDir, 'systems_index.json'), sortedSystems);
   writeJson(resolve(outDir, 'system_names.json'), { byId: sortedNamesById, byName });
   writeJson(resolve(outDir, 'region_names.json'), { byId: sortedRegionsById });
   writeJson(resolve(outDir, 'constellation_names.json'), { byId: sortedConstellationsById });
+  writeJson(resolve(outDir, 'sovereignty_upgrades.json'), publishedSovereigntyUpgrades);
 
   console.log(`SDE build: ${sdeMeta?.buildNumber ?? 'unknown'}`);
   console.log(`Wrote ${Object.keys(sortedSystems).length} systems to ${outDir}`);
   console.log(`Included schematic 2D positions for ${position2DCount} systems`);
+  console.log(`Wrote ${publishedSovereigntyUpgrades.length} published sovereignty upgrades`);
   if (position2DCount !== Object.keys(sortedSystems).length) {
     console.warn(`Missing schematic 2D positions for ${Object.keys(sortedSystems).length - position2DCount} systems`);
   }

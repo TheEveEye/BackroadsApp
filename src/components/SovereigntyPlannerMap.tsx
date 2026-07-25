@@ -9,11 +9,29 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react';
 import type { GraphData, SystemNode } from '../lib/data';
+import { getSovereigntySecurityColor } from '../lib/security';
+import {
+  ANSIBLEX_MAX_RANGE_LY,
+  getAnsiblexDistanceLy,
+  getSovereigntyUpgradeIconUrl,
+} from '../lib/sovereigntyPlan';
+import type {
+  PlannedAnsiblexLink,
+  PlannedSystemUpgrade,
+  SovereigntyPlanSummary,
+  SovereigntyUpgradeDefinition,
+  SystemResourceSummary,
+} from '../lib/sovereigntyPlan';
 import { Dropdown, type DropdownOption } from './Dropdown';
 import { Icon } from './Icon';
 
 type MapMode = 'schematic' | 'geographic';
-type MetricMapDataDisplay = 'power' | 'workforce' | 'magmaticGas' | 'superionicIce';
+type MetricMapDataDisplay =
+  | 'power'
+  | 'workforce'
+  | 'magmaticGas'
+  | 'superionicIce'
+  | 'upgradeCount';
 type MapDataDisplay = 'none' | MetricMapDataDisplay | 'alliance';
 type Viewport = {
   zoom: number;
@@ -29,6 +47,7 @@ type MapPoint = {
   workforce: number;
   magmaticGas: number;
   superionicIce: number;
+  upgradeCount: number;
   holdingAllianceId?: number;
   eligible: boolean;
 };
@@ -55,6 +74,14 @@ type LassoState = {
   pointerId: number;
   points: Array<{ x: number; y: number }>;
 };
+type PlannerPlacementMode = 'neutral' | 'upgrade' | 'ansiblex';
+type UpgradeIconGeometry = {
+  systemId: number;
+  typeId: number;
+  left: number;
+  top: number;
+  size: number;
+};
 
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 16;
@@ -64,25 +91,17 @@ const INITIAL_VIEWPORT: Viewport = { zoom: 1, panX: 0, panY: 0 };
 const METRIC_LABEL_FONT = '600 10px system-ui, -apple-system, Segoe UI, sans-serif';
 const METRIC_PILL_HEIGHT = 16;
 const METRIC_PILL_HORIZONTAL_PADDING = 6;
-const SECURITY_COLORS = [
-  '#833862',
-  '#692623',
-  '#AC2822',
-  '#BD4E26',
-  '#CC722C',
-  '#F5FD93',
-  '#90E56A',
-  '#82D8A8',
-  '#73CBF3',
-  '#5698E5',
-  '#4173DB',
-];
+const UPGRADE_ICON_SIZE = 18;
+const UPGRADE_ICON_GAP = 2;
+const MAGMATIC_GAS_TYPE_ID = 81143;
+const SUPERIONIC_ICE_TYPE_ID = 81144;
 const DATA_DISPLAY_OPTIONS = [
   { value: 'none', label: 'No data' },
   { value: 'power', label: 'Power' },
   { value: 'workforce', label: 'Workforce' },
   { value: 'magmaticGas', label: 'Magmatic Gas' },
   { value: 'superionicIce', label: 'Superionic Ice' },
+  { value: 'upgradeCount', label: 'Upgrade count' },
   { value: 'alliance', label: 'Alliance logo' },
 ] satisfies readonly DropdownOption[];
 
@@ -101,6 +120,7 @@ function getMarkerValue(point: MapPoint, display: MapDataDisplay) {
   if (display === 'workforce') return point.workforce;
   if (display === 'magmaticGas') return point.magmaticGas;
   if (display === 'superionicIce') return point.superionicIce;
+  if (display === 'upgradeCount') return point.upgradeCount;
   return null;
 }
 
@@ -110,11 +130,64 @@ function isMetricDataDisplay(display: MapDataDisplay): display is MetricMapDataD
     || display === 'workforce'
     || display === 'magmaticGas'
     || display === 'superionicIce'
+    || display === 'upgradeCount'
   );
 }
 
 function formatMarkerValue(value: number) {
   return Math.round(value).toString();
+}
+
+function getUpgradeIconGeometry(
+  systemId: number,
+  screen: { x: number; y: number },
+  marker: MarkerGeometry,
+  upgrades: readonly PlannedSystemUpgrade[],
+) {
+  const count = upgrades.length;
+  if (count === 0) return [];
+
+  const angles = count === 1
+    ? [-90]
+    : count === 2
+      ? [-120, -60]
+      : count === 3
+        ? [-135, -90, -45]
+        : Array.from(
+          { length: count },
+          (_, index) => -90 + index * (360 / count),
+        );
+  const minimumRadius = marker.halfHeight + UPGRADE_ICON_SIZE / 2 + 6;
+  const minimumCenterSpacing = UPGRADE_ICON_SIZE + UPGRADE_ICON_GAP;
+  let spacingRadius = 0;
+  const pairCount = count >= 4 ? angles.length : Math.max(0, angles.length - 1);
+  for (let index = 0; index < pairCount; index += 1) {
+    const previousAngle = angles[index] * Math.PI / 180;
+    const currentAngle = angles[(index + 1) % angles.length] * Math.PI / 180;
+    const horizontalDelta = Math.abs(Math.cos(currentAngle) - Math.cos(previousAngle));
+    const verticalDelta = Math.abs(Math.sin(currentAngle) - Math.sin(previousAngle));
+    const strongestAxisDelta = Math.max(horizontalDelta, verticalDelta);
+    if (strongestAxisDelta > 0) {
+      spacingRadius = Math.max(
+        spacingRadius,
+        minimumCenterSpacing / strongestAxisDelta,
+      );
+    }
+  }
+  const radius = Math.max(minimumRadius, spacingRadius);
+
+  return upgrades.map((upgrade, index): UpgradeIconGeometry => {
+    const angle = angles[index] * Math.PI / 180;
+    const centerX = screen.x + Math.cos(angle) * radius;
+    const centerY = screen.y + Math.sin(angle) * radius;
+    return {
+      systemId,
+      typeId: upgrade.typeId,
+      left: centerX - UPGRADE_ICON_SIZE / 2,
+      top: centerY - UPGRADE_ICON_SIZE / 2,
+      size: UPGRADE_ICON_SIZE,
+    };
+  });
 }
 
 function getHslRelativeLuminance(hue: number, saturation: number, lightness: number) {
@@ -176,6 +249,7 @@ function getMetricMarkerColors(
     workforce: { hue: 50, saturation: 88 },
     magmaticGas: { hue: 27, saturation: 92 },
     superionicIce: { hue: 191, saturation: 88 },
+    upgradeCount: { hue: 270, saturation: 78 },
   }[display];
   const minimumLightness = isDarkMode ? 24 : 20;
   const maximumLightness = display === 'workforce'
@@ -202,8 +276,20 @@ function getPointMarkerGeometry(
   selected: boolean,
   zoom: number,
   measureLabel: (label: string) => number,
+  overrideLabel?: string | null,
 ) {
   const value = getMarkerValue(point, display);
+  if (selected && overrideLabel) {
+    const width = Math.max(
+      METRIC_PILL_HEIGHT,
+      Math.ceil(measureLabel(overrideLabel) + METRIC_PILL_HORIZONTAL_PADDING * 2),
+    );
+    return {
+      kind: 'pill',
+      halfWidth: width / 2,
+      halfHeight: METRIC_PILL_HEIGHT / 2,
+    } satisfies MarkerGeometry;
+  }
   if (selected && showDataLabels && display === 'alliance' && point.holdingAllianceId) {
     return { kind: 'circle', halfWidth: 18, halfHeight: 18 } satisfies MarkerGeometry;
   }
@@ -276,6 +362,91 @@ function getMarkerHitDistance(
   return Math.hypot(deltaX - closestAxisX, deltaY) <= hitRadius
     ? centerDistance
     : null;
+}
+
+function getSegmentHitDistance(
+  pointerX: number,
+  pointerY: number,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+) {
+  const deltaX = to.x - from.x;
+  const deltaY = to.y - from.y;
+  const lengthSquared = deltaX * deltaX + deltaY * deltaY;
+  if (lengthSquared === 0) return Math.hypot(pointerX - from.x, pointerY - from.y);
+  const progress = Math.max(0, Math.min(
+    1,
+    ((pointerX - from.x) * deltaX + (pointerY - from.y) * deltaY) / lengthSquared,
+  ));
+  return Math.hypot(
+    pointerX - (from.x + deltaX * progress),
+    pointerY - (from.y + deltaY * progress),
+  );
+}
+
+function getAnsiblexArcControlPoint(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  fromSystemId: number,
+  toSystemId: number,
+) {
+  const deltaX = to.x - from.x;
+  const deltaY = to.y - from.y;
+  const distance = Math.hypot(deltaX, deltaY);
+  if (distance === 0) return { x: from.x, y: from.y };
+  const curveOffset = Math.min(64, Math.max(14, distance * 0.16));
+  const direction = deltaX === 0
+    ? fromSystemId < toSystemId ? 1 : -1
+    : deltaX > 0 ? -1 : 1;
+  return {
+    x: (from.x + to.x) / 2 - (deltaY / distance) * curveOffset * direction,
+    y: (from.y + to.y) / 2 + (deltaX / distance) * curveOffset * direction,
+  };
+}
+
+function addAnsiblexArcPath(
+  context: CanvasRenderingContext2D,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  fromSystemId: number,
+  toSystemId: number,
+) {
+  const control = getAnsiblexArcControlPoint(from, to, fromSystemId, toSystemId);
+  context.moveTo(from.x, from.y);
+  context.quadraticCurveTo(control.x, control.y, to.x, to.y);
+}
+
+function getAnsiblexArcHitDistance(
+  pointerX: number,
+  pointerY: number,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  fromSystemId: number,
+  toSystemId: number,
+) {
+  const control = getAnsiblexArcControlPoint(from, to, fromSystemId, toSystemId);
+  const directDistance = Math.hypot(to.x - from.x, to.y - from.y);
+  const segmentCount = Math.min(48, Math.max(12, Math.ceil(directDistance / 12)));
+  let minimumDistance = Infinity;
+  let previous = from;
+  for (let index = 1; index <= segmentCount; index += 1) {
+    const progress = index / segmentCount;
+    const inverse = 1 - progress;
+    const current = {
+      x: inverse * inverse * from.x
+        + 2 * inverse * progress * control.x
+        + progress * progress * to.x,
+      y: inverse * inverse * from.y
+        + 2 * inverse * progress * control.y
+        + progress * progress * to.y,
+    };
+    minimumDistance = Math.min(
+      minimumDistance,
+      getSegmentHitDistance(pointerX, pointerY, previous, current),
+    );
+    previous = current;
+  }
+  return minimumDistance;
 }
 
 function getProjectedPosition(system: SystemNode, projectionMix: number) {
@@ -385,6 +556,17 @@ type SovereigntyPlannerMapProps = {
   territoryEditing: boolean;
   onLassoSelection: (systemIds: number[]) => void;
   fitSelectionRequest: number;
+  placementMode: PlannerPlacementMode;
+  pendingAnsiblexFrom: number | null;
+  plannedLinks: readonly PlannedAnsiblexLink[];
+  plannedUpgradesBySystem: Readonly<Record<string, readonly PlannedSystemUpgrade[]>>;
+  upgradeDefinitionsById: ReadonlyMap<number, SovereigntyUpgradeDefinition>;
+  planSummary: SovereigntyPlanSummary;
+  selectedLinkId: string | null;
+  systemPlanSummaries: Readonly<Record<string, SystemResourceSummary>>;
+  placementBlockedReasons: ReadonlyMap<number, string>;
+  onPlanSystemClick: (systemId: number) => void;
+  onSelectLink: (linkId: string) => void;
 };
 
 export function SovereigntyPlannerMap({
@@ -395,6 +577,17 @@ export function SovereigntyPlannerMap({
   territoryEditing,
   onLassoSelection,
   fitSelectionRequest,
+  placementMode,
+  pendingAnsiblexFrom,
+  plannedLinks,
+  plannedUpgradesBySystem,
+  upgradeDefinitionsById,
+  planSummary,
+  selectedLinkId,
+  systemPlanSummaries,
+  placementBlockedReasons,
+  onPlanSystemClick,
+  onSelectLink,
 }: SovereigntyPlannerMapProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -407,11 +600,16 @@ export function SovereigntyPlannerMap({
     number,
     { image: HTMLImageElement; status: 'loading' | 'loaded' | 'error' }
   >());
+  const upgradeIconCacheRef = useRef(new Map<
+    number,
+    { image: HTMLImageElement; status: 'loading' | 'loaded' | 'error' }
+  >());
   const metricLabelWidthCacheRef = useRef(new Map<string, number>());
   const lastFitSelectionRequestRef = useRef(0);
   const [mode, setMode] = useState<MapMode>('schematic');
   const [dataDisplay, setDataDisplay] = useState<MapDataDisplay>('none');
   const [allianceLogoRevision, setAllianceLogoRevision] = useState(0);
+  const [upgradeIconRevision, setUpgradeIconRevision] = useState(0);
   const [projectionMix, setProjectionMix] = useState(0);
   const [projectionLabelVisibility, setProjectionLabelVisibility] = useState<boolean | null>(null);
   const [viewport, setViewport] = useState<Viewport>(INITIAL_VIEWPORT);
@@ -419,7 +617,15 @@ export function SovereigntyPlannerMap({
   const [isPanning, setIsPanning] = useState(false);
   const [isAltPressed, setIsAltPressed] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(getIsDarkMode);
+  const [isPlanTotalsExpanded, setIsPlanTotalsExpanded] = useState(true);
   const [hovered, setHovered] = useState<{ id: number; x: number; y: number } | null>(null);
+  const [hoveredUpgrade, setHoveredUpgrade] = useState<{
+    systemId: number;
+    typeId: number;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [hoveredLinkId, setHoveredLinkId] = useState<string | null>(null);
   const [lassoPoints, setLassoPoints] = useState<Array<{ x: number; y: number }>>([]);
 
   const schematicCount = useMemo(() => {
@@ -464,6 +670,28 @@ export function SovereigntyPlannerMap({
     }
   }, [dataDisplay, holdingAllianceIds]);
 
+  useEffect(() => {
+    for (const typeId of upgradeDefinitionsById.keys()) {
+      if (upgradeIconCacheRef.current.has(typeId)) continue;
+      const image = new Image();
+      image.decoding = 'async';
+      const entry: {
+        image: HTMLImageElement;
+        status: 'loading' | 'loaded' | 'error';
+      } = { image, status: 'loading' };
+      upgradeIconCacheRef.current.set(typeId, entry);
+      image.onload = () => {
+        entry.status = 'loaded';
+        setUpgradeIconRevision((revision) => revision + 1);
+      };
+      image.onerror = () => {
+        entry.status = 'error';
+        setUpgradeIconRevision((revision) => revision + 1);
+      };
+      image.src = getSovereigntyUpgradeIconUrl(typeId);
+    }
+  }, [upgradeDefinitionsById]);
+
   const geometry = useMemo(() => {
     const points: MapPoint[] = [];
     const pointsById = new Map<number, MapPoint>();
@@ -471,6 +699,7 @@ export function SovereigntyPlannerMap({
     if (!graph) {
       return {
         points,
+        pointsById,
         edges,
         bounds: null as { minX: number; maxX: number; minY: number; maxY: number } | null,
       };
@@ -495,6 +724,7 @@ export function SovereigntyPlannerMap({
         workforce: system.workforce ?? 0,
         magmaticGas: system.magmaticGas ?? 0,
         superionicIce: system.superionicIce ?? 0,
+        upgradeCount: plannedUpgradesBySystem[String(id)]?.length ?? 0,
         holdingAllianceId: holdingAllianceIdsBySystemId.get(id),
         eligible: system.isSovereigntyEligible,
       };
@@ -532,21 +762,23 @@ export function SovereigntyPlannerMap({
     const bounds = Number.isFinite(minX) && Number.isFinite(minY)
       ? { minX, maxX, minY, maxY }
       : null;
-    return { points, edges, bounds };
-  }, [graph, holdingAllianceIdsBySystemId, projectionMix]);
+    return { points, pointsById, edges, bounds };
+  }, [graph, holdingAllianceIdsBySystemId, plannedUpgradesBySystem, projectionMix]);
 
   const metricMaximums = useMemo(() => {
     let power = 0;
     let workforce = 0;
     let magmaticGas = 0;
     let superionicIce = 0;
+    let upgradeCount = 0;
     for (const point of geometry.points) {
       power = Math.max(power, point.power);
       workforce = Math.max(workforce, point.workforce);
       magmaticGas = Math.max(magmaticGas, point.magmaticGas);
       superionicIce = Math.max(superionicIce, point.superionicIce);
+      upgradeCount = Math.max(upgradeCount, point.upgradeCount);
     }
-    return { power, workforce, magmaticGas, superionicIce };
+    return { power, workforce, magmaticGas, superionicIce, upgradeCount };
   }, [geometry.points]);
 
   const baseTransform = useMemo(() => {
@@ -591,6 +823,7 @@ export function SovereigntyPlannerMap({
     metricLabelWidthCacheRef.current.get(label) ?? label.length * 6.25
   ), []);
   const dataLabelZoomThreshold = mode === 'schematic' ? 10 : 5;
+  const showUpgradeIcons = viewport.zoom >= dataLabelZoomThreshold;
   const showDataLabels = (
     dataDisplay !== 'none'
     && (
@@ -598,6 +831,27 @@ export function SovereigntyPlannerMap({
       ?? viewport.zoom >= dataLabelZoomThreshold
     )
   );
+  const ansiblexDistancesBySystemId = useMemo(() => {
+    const distances = new Map<number, number>();
+    if (
+      !graph
+      || placementMode !== 'ansiblex'
+      || pendingAnsiblexFrom == null
+    ) return distances;
+    for (const systemId of selectedSystemIds) {
+      distances.set(
+        systemId,
+        getAnsiblexDistanceLy(graph, pendingAnsiblexFrom, systemId),
+      );
+    }
+    return distances;
+  }, [graph, pendingAnsiblexFrom, placementMode, selectedSystemIds]);
+  const getAnsiblexDistanceLabel = useCallback((systemId: number) => {
+    const distance = ansiblexDistancesBySystemId.get(systemId);
+    return distance == null || !Number.isFinite(distance)
+      ? null
+      : `${distance.toFixed(1)} ly`;
+  }, [ansiblexDistancesBySystemId]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -668,6 +922,55 @@ export function SovereigntyPlannerMap({
     drawEdges(true, 'region');
 
     context.setLineDash([]);
+    for (const link of plannedLinks) {
+      const fromPoint = geometry.pointsById.get(link.from);
+      const toPoint = geometry.pointsById.get(link.to);
+      if (!fromPoint || !toPoint) continue;
+      const from = pointToScreen(fromPoint);
+      const to = pointToScreen(toPoint);
+      const emphasized = link.id === selectedLinkId || link.id === hoveredLinkId;
+      if (emphasized) {
+        context.beginPath();
+        addAnsiblexArcPath(context, from, to, link.from, link.to);
+        context.strokeStyle = isDarkMode ? '#c4b5fd' : '#7c3aed';
+        context.globalAlpha = 0.24;
+        context.lineWidth = 7;
+        context.stroke();
+      }
+      context.beginPath();
+      addAnsiblexArcPath(context, from, to, link.from, link.to);
+      context.strokeStyle = isDarkMode ? '#c4b5fd' : '#7c3aed';
+      context.globalAlpha = emphasized ? 1 : 0.82;
+      context.lineWidth = emphasized ? 2.8 : 2;
+      context.stroke();
+    }
+
+    if (
+      placementMode === 'ansiblex'
+      && pendingAnsiblexFrom != null
+      && hovered
+      && hovered.id !== pendingAnsiblexFrom
+      && selectedSystemIds.has(hovered.id)
+    ) {
+      const fromPoint = geometry.pointsById.get(pendingAnsiblexFrom);
+      const toPoint = geometry.pointsById.get(hovered.id);
+      if (fromPoint && toPoint) {
+        const from = pointToScreen(fromPoint);
+        const to = pointToScreen(toPoint);
+        const blocked = placementBlockedReasons.has(hovered.id);
+        context.beginPath();
+        addAnsiblexArcPath(context, from, to, pendingAnsiblexFrom, hovered.id);
+        context.setLineDash([6, 4]);
+        context.strokeStyle = blocked
+          ? isDarkMode ? '#fca5a5' : '#dc2626'
+          : isDarkMode ? '#ddd6fe' : '#7c3aed';
+        context.globalAlpha = 0.9;
+        context.lineWidth = 2;
+        context.stroke();
+        context.setLineDash([]);
+      }
+    }
+
     context.font = METRIC_LABEL_FONT;
     const measureMetricLabel = (label: string) => {
       const cachedWidth = metricLabelWidthCacheRef.current.get(label);
@@ -679,7 +982,11 @@ export function SovereigntyPlannerMap({
     for (const point of geometry.points) {
       const screen = pointToScreen(point);
       const selected = selectedSystemIds.has(point.id);
-      const showPointData = showDataLabels && selected;
+      const ansiblexDistance = ansiblexDistancesBySystemId.get(point.id);
+      const ansiblexDistanceLabel = getAnsiblexDistanceLabel(point.id);
+      const showPointData = selected && (
+        showDataLabels || ansiblexDistanceLabel != null
+      );
       const marker = getPointMarkerGeometry(
         point,
         dataDisplay,
@@ -687,9 +994,26 @@ export function SovereigntyPlannerMap({
         selected,
         viewport.zoom,
         measureMetricLabel,
+        ansiblexDistanceLabel,
       );
-      const renderMarginX = Math.max(6, marker.halfWidth + 3);
-      const renderMarginY = Math.max(6, marker.halfHeight + 3);
+      const plannedUpgrades = plannedUpgradesBySystem[String(point.id)] ?? [];
+      const upgradeIconGeometry = plannedUpgrades.length > 0 && showUpgradeIcons
+        ? getUpgradeIconGeometry(point.id, screen, marker, plannedUpgrades)
+        : [];
+      let renderMarginX = Math.max(6, marker.halfWidth + 3);
+      let renderMarginY = Math.max(6, marker.halfHeight + 3);
+      for (const icon of upgradeIconGeometry) {
+        renderMarginX = Math.max(
+          renderMarginX,
+          Math.abs(icon.left - screen.x),
+          Math.abs(icon.left + icon.size - screen.x),
+        );
+        renderMarginY = Math.max(
+          renderMarginY,
+          Math.abs(icon.top - screen.y),
+          Math.abs(icon.top + icon.size - screen.y),
+        );
+      }
       if (
         screen.x < -renderMarginX
         || screen.x > size.width + renderMarginX
@@ -698,17 +1022,23 @@ export function SovereigntyPlannerMap({
       ) continue;
       const security = Math.max(0, Math.min(1, point.security));
       const hue = 4 + security * 205;
+      const outsidePlacementTerritory = placementMode !== 'neutral' && !selected;
+      const placementBlocked = placementBlockedReasons.has(point.id);
       context.globalAlpha = selected
-        ? 1
+        ? ansiblexDistanceLabel != null ? 1 : placementBlocked ? 0.34 : 1
         : territoryEditing
           ? point.eligible
             ? hasSelection ? 0.72 : 0.95
             : hasSelection ? 0.2 : 0.24
+          : outsidePlacementTerritory
+            ? 0.055
           : point.eligible
             ? hasSelection ? 0.17 : 0.9
             : hasSelection ? 0.045 : 0.12;
       const markerValue = getMarkerValue(point, dataDisplay);
       const metricColors = (
+        ansiblexDistanceLabel == null
+        &&
         markerValue != null
         && isMetricDataDisplay(dataDisplay)
       )
@@ -719,7 +1049,15 @@ export function SovereigntyPlannerMap({
           isDarkMode,
         )
         : null;
-      context.fillStyle = metricColors?.fill
+      const ansiblexDistanceFill = ansiblexDistanceLabel == null
+        ? null
+        : point.id === pendingAnsiblexFrom
+          ? isDarkMode ? '#8b5cf6' : '#6d28d9'
+          : placementBlocked || (ansiblexDistance ?? Infinity) > ANSIBLEX_MAX_RANGE_LY
+            ? isDarkMode ? '#ef4444' : '#b91c1c'
+            : isDarkMode ? '#a78bfa' : '#7c3aed';
+      context.fillStyle = ansiblexDistanceFill
+        ?? metricColors?.fill
         ?? `hsl(${hue} 72% ${isDarkMode ? 62 : 42}%)`;
       addMarkerPath(context, screen.x, screen.y, marker);
       context.fill();
@@ -745,7 +1083,14 @@ export function SovereigntyPlannerMap({
         );
         context.restore();
       }
-      if (showPointData && markerValue != null) {
+      if (ansiblexDistanceLabel != null) {
+        context.fillStyle = '#ffffff';
+        context.globalAlpha = 1;
+        context.font = METRIC_LABEL_FONT;
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.fillText(ansiblexDistanceLabel, screen.x, screen.y + 0.5);
+      } else if (showPointData && markerValue != null) {
         context.fillStyle = metricColors?.text ?? (isDarkMode ? '#0f172a' : '#ffffff');
         context.globalAlpha = 1;
         context.font = METRIC_LABEL_FONT;
@@ -758,6 +1103,55 @@ export function SovereigntyPlannerMap({
         context.globalAlpha = territoryEditing ? 0.92 : 0.7;
         context.lineWidth = territoryEditing ? 1.2 : 0.9;
         addMarkerPath(context, screen.x, screen.y, marker, 1.7);
+        context.stroke();
+      }
+      const summary = systemPlanSummaries[String(point.id)];
+      if (summary?.remainingPower < 0 || summary?.remainingWorkforce < 0) {
+        context.globalAlpha = 1;
+        context.lineWidth = 2;
+        context.strokeStyle = summary.remainingPower < 0 ? '#dc2626' : '#d97706';
+        addMarkerPath(context, screen.x, screen.y, marker, 4.5);
+        context.stroke();
+        if (summary.remainingPower < 0 && summary.remainingWorkforce < 0) {
+          context.lineWidth = 1.5;
+          context.strokeStyle = '#d97706';
+          addMarkerPath(context, screen.x, screen.y, marker, 7);
+          context.stroke();
+        }
+      }
+      if (upgradeIconGeometry.length > 0) {
+        for (const icon of upgradeIconGeometry) {
+          const iconEntry = upgradeIconCacheRef.current.get(icon.typeId);
+          context.globalAlpha = 1;
+          if (iconEntry?.status === 'loaded') {
+            context.drawImage(
+              iconEntry.image,
+              icon.left,
+              icon.top,
+              icon.size,
+              icon.size,
+            );
+          } else {
+            context.save();
+            context.beginPath();
+            context.roundRect(icon.left, icon.top, icon.size, icon.size, 3);
+            context.clip();
+            context.fillStyle = '#7c3aed';
+            context.fillRect(icon.left, icon.top, icon.size, icon.size);
+            context.fillStyle = '#ffffff';
+            context.font = '700 10px system-ui, -apple-system, Segoe UI, sans-serif';
+            context.textAlign = 'center';
+            context.textBaseline = 'middle';
+            context.fillText('?', icon.left + icon.size / 2, icon.top + icon.size / 2 + 0.5);
+            context.restore();
+          }
+        }
+      }
+      if (point.id === pendingAnsiblexFrom) {
+        context.globalAlpha = 1;
+        context.lineWidth = 2.5;
+        context.strokeStyle = isDarkMode ? '#ddd6fe' : '#6d28d9';
+        addMarkerPath(context, screen.x, screen.y, marker, 9);
         context.stroke();
       }
     }
@@ -773,6 +1167,7 @@ export function SovereigntyPlannerMap({
           selectedSystemIds.has(point.id),
           viewport.zoom,
           measureMetricLabel,
+          getAnsiblexDistanceLabel(point.id),
         );
         context.strokeStyle = isDarkMode ? '#f8fafc' : '#0f172a';
         context.globalAlpha = 1;
@@ -802,19 +1197,32 @@ export function SovereigntyPlannerMap({
     context.restore();
   }, [
     allianceLogoRevision,
+    ansiblexDistancesBySystemId,
     geometry.edges,
     geometry.points,
+    geometry.pointsById,
+    getAnsiblexDistanceLabel,
     dataDisplay,
     hovered,
+    hoveredLinkId,
     isDarkMode,
     lassoPoints,
     metricMaximums,
     pointToScreen,
+    placementBlockedReasons,
+    placementMode,
+    plannedLinks,
+    pendingAnsiblexFrom,
+    selectedLinkId,
     selectedSystemIds,
     showDataLabels,
     size.height,
     size.width,
     territoryEditing,
+    plannedUpgradesBySystem,
+    showUpgradeIcons,
+    systemPlanSummaries,
+    upgradeIconRevision,
     viewport.zoom,
   ]);
 
@@ -825,6 +1233,12 @@ export function SovereigntyPlannerMap({
     media.addEventListener('change', update);
     return () => media.removeEventListener('change', update);
   }, []);
+
+  useEffect(() => {
+    if (placementMode !== 'neutral' || territoryEditing) {
+      setHoveredUpgrade(null);
+    }
+  }, [placementMode, territoryEditing]);
 
   const cancelViewportAnimation = useCallback(() => {
     if (resetAnimationFrameRef.current == null) return;
@@ -840,6 +1254,7 @@ export function SovereigntyPlannerMap({
 
   const animateViewportTo = useCallback((target: Viewport) => {
     setHovered(null);
+    setHoveredUpgrade(null);
     if (
       Math.abs(viewport.zoom - target.zoom) < 0.001
       && Math.abs(viewport.panX - target.panX) < 0.1
@@ -898,6 +1313,7 @@ export function SovereigntyPlannerMap({
     setLassoPoints([]);
     setMode(nextMode);
     setHovered(null);
+    setHoveredUpgrade(null);
 
     const startMix = projectionMix;
     const targetMix = nextMode === 'geographic' ? 1 : 0;
@@ -974,10 +1390,12 @@ export function SovereigntyPlannerMap({
     pointerX: number,
     pointerY: number,
     eligibleOnly: boolean,
+    selectedOnly = false,
   ) => {
     let nearest: { id: number; x: number; y: number; distance: number } | null = null;
     for (const point of geometry.points) {
       if (eligibleOnly && !point.eligible) continue;
+      if (selectedOnly && !selectedSystemIds.has(point.id)) continue;
       const screen = pointToScreen(point);
       const marker = getPointMarkerGeometry(
         point,
@@ -986,6 +1404,7 @@ export function SovereigntyPlannerMap({
         selectedSystemIds.has(point.id),
         viewport.zoom,
         getCachedMetricLabelWidth,
+        getAnsiblexDistanceLabel(point.id),
       );
       const hitDistance = getMarkerHitDistance(
         pointerX,
@@ -1002,12 +1421,80 @@ export function SovereigntyPlannerMap({
   }, [
     dataDisplay,
     geometry.points,
+    getAnsiblexDistanceLabel,
     getCachedMetricLabelWidth,
     pointToScreen,
     selectedSystemIds,
     showDataLabels,
     viewport.zoom,
   ]);
+
+  const findUpgradeIcon = useCallback((pointerX: number, pointerY: number) => {
+    if (!showUpgradeIcons) return null;
+    for (const point of geometry.points) {
+      const upgrades = plannedUpgradesBySystem[String(point.id)] ?? [];
+      if (upgrades.length === 0) continue;
+      const screen = pointToScreen(point);
+      const marker = getPointMarkerGeometry(
+        point,
+        dataDisplay,
+        showDataLabels,
+        selectedSystemIds.has(point.id),
+        viewport.zoom,
+        getCachedMetricLabelWidth,
+        getAnsiblexDistanceLabel(point.id),
+      );
+      const icons = getUpgradeIconGeometry(point.id, screen, marker, upgrades);
+      for (const icon of icons) {
+        if (
+          pointerX >= icon.left
+          && pointerX <= icon.left + icon.size
+          && pointerY >= icon.top
+          && pointerY <= icon.top + icon.size
+        ) {
+          return {
+            systemId: icon.systemId,
+            typeId: icon.typeId,
+            x: icon.left + icon.size / 2,
+            y: icon.top + icon.size / 2,
+          };
+        }
+      }
+    }
+    return null;
+  }, [
+    dataDisplay,
+    geometry.points,
+    getCachedMetricLabelWidth,
+    getAnsiblexDistanceLabel,
+    plannedUpgradesBySystem,
+    pointToScreen,
+    selectedSystemIds,
+    showDataLabels,
+    showUpgradeIcons,
+    viewport.zoom,
+  ]);
+
+  const findNearestAnsiblexLink = useCallback((pointerX: number, pointerY: number) => {
+    let nearest: { id: string; distance: number } | null = null;
+    for (const link of plannedLinks) {
+      const fromPoint = geometry.pointsById.get(link.from);
+      const toPoint = geometry.pointsById.get(link.to);
+      if (!fromPoint || !toPoint) continue;
+      const distance = getAnsiblexArcHitDistance(
+        pointerX,
+        pointerY,
+        pointToScreen(fromPoint),
+        pointToScreen(toPoint),
+        link.from,
+        link.to,
+      );
+      if (distance <= 6 && (!nearest || distance < nearest.distance)) {
+        nearest = { id: link.id, distance };
+      }
+    }
+    return nearest;
+  }, [geometry.pointsById, plannedLinks, pointToScreen]);
 
   const handlePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || (event.target as HTMLElement).closest('[data-map-control]')) return;
@@ -1026,6 +1513,7 @@ export function SovereigntyPlannerMap({
       lassoRef.current = lasso;
       setLassoPoints(lasso.points);
       setHovered(null);
+      setHoveredUpgrade(null);
       return;
     }
     dragRef.current = {
@@ -1038,6 +1526,8 @@ export function SovereigntyPlannerMap({
     };
     setIsPanning(true);
     setHovered(null);
+    setHoveredUpgrade(null);
+    setHoveredLinkId(null);
   }, [cancelViewportAnimation, territoryEditing, viewport.panX, viewport.panY]);
 
   const handlePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1077,9 +1567,39 @@ export function SovereigntyPlannerMap({
     const rect = event.currentTarget.getBoundingClientRect();
     const pointerX = event.clientX - rect.left;
     const pointerY = event.clientY - rect.top;
-    const nearest = findNearestSystem(pointerX, pointerY, false);
-    setHovered(nearest ? { id: nearest.id, x: nearest.x, y: nearest.y } : null);
-  }, [findNearestSystem]);
+    const upgradeIcon = placementMode === 'neutral' && !territoryEditing
+      ? findUpgradeIcon(pointerX, pointerY)
+      : null;
+    if (upgradeIcon) {
+      setHoveredUpgrade(upgradeIcon);
+      setHovered(null);
+      setHoveredLinkId(null);
+      return;
+    }
+    setHoveredUpgrade(null);
+    const nearest = (
+      placementMode !== 'neutral'
+        ? findNearestSystem(pointerX, pointerY, false, true)
+        : null
+    ) ?? findNearestSystem(pointerX, pointerY, false);
+    if (nearest) {
+      setHovered({ id: nearest.id, x: nearest.x, y: nearest.y });
+      setHoveredLinkId(null);
+    } else {
+      setHovered(null);
+      setHoveredLinkId(
+        placementMode === 'neutral'
+          ? findNearestAnsiblexLink(pointerX, pointerY)?.id ?? null
+          : null,
+      );
+    }
+  }, [
+    findNearestAnsiblexLink,
+    findNearestSystem,
+    findUpgradeIcon,
+    placementMode,
+    territoryEditing,
+  ]);
 
   const finishPointerInteraction = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const lasso = lassoRef.current;
@@ -1104,12 +1624,27 @@ export function SovereigntyPlannerMap({
     if (drag?.pointerId !== event.pointerId) return;
     if (!drag.moved) {
       const rect = event.currentTarget.getBoundingClientRect();
-      const nearest = findNearestSystem(
-        event.clientX - rect.left,
-        event.clientY - rect.top,
-        true,
+      const pointerX = event.clientX - rect.left;
+      const pointerY = event.clientY - rect.top;
+      const upgradeIcon = (
+        !territoryEditing && placementMode === 'neutral'
+          ? findUpgradeIcon(pointerX, pointerY)
+          : null
       );
-      if (territoryEditing && nearest) onToggleSystem(nearest.id);
+      const nearest = territoryEditing
+        ? findNearestSystem(pointerX, pointerY, true)
+        : (
+          placementMode !== 'neutral'
+            ? findNearestSystem(pointerX, pointerY, false, true)
+            : null
+        ) ?? findNearestSystem(pointerX, pointerY, false);
+      if (upgradeIcon) onPlanSystemClick(upgradeIcon.systemId);
+      else if (territoryEditing && nearest) onToggleSystem(nearest.id);
+      else if (!territoryEditing && nearest) onPlanSystemClick(nearest.id);
+      else if (!territoryEditing && placementMode === 'neutral') {
+        const link = findNearestAnsiblexLink(pointerX, pointerY);
+        if (link) onSelectLink(link.id);
+      }
     }
     dragRef.current = null;
     setIsPanning(false);
@@ -1118,9 +1653,14 @@ export function SovereigntyPlannerMap({
     }
   }, [
     findNearestSystem,
+    findNearestAnsiblexLink,
+    findUpgradeIcon,
     geometry.points,
     onLassoSelection,
     onToggleSystem,
+    onPlanSystemClick,
+    onSelectLink,
+    placementMode,
     pointToScreen,
     territoryEditing,
   ]);
@@ -1170,11 +1710,7 @@ export function SovereigntyPlannerMap({
   const hoveredSystem = hovered && graph?.systems[String(hovered.id)];
   const hoveredName = hovered ? graph?.namesById?.[String(hovered.id)] ?? String(hovered.id) : null;
   const hoveredSecurity = typeof hoveredSystem?.security === 'number' ? hoveredSystem.security : 0;
-  const hoveredSecurityIndex = hoveredSecurity <= 0
-    ? 0
-    : Math.min(10, Math.ceil(hoveredSecurity * 10));
-  const hoveredSecurityColor = SECURITY_COLORS[hoveredSecurityIndex] ?? SECURITY_COLORS[0];
-  const hoverTooltipWidth = Math.min(280, Math.max(176, (hoveredName?.length ?? 0) * 7 + 44));
+  const hoveredSecurityColor = getSovereigntySecurityColor(hoveredSecurity);
   const hoveredPoint = hovered
     ? geometry.points.find((point) => point.id === hovered.id)
     : null;
@@ -1186,9 +1722,52 @@ export function SovereigntyPlannerMap({
       selectedSystemIds.has(hoveredPoint.id),
       viewport.zoom,
       getCachedMetricLabelWidth,
+      getAnsiblexDistanceLabel(hoveredPoint.id),
     )
     : null;
-  const hoverTooltipHeight = 112;
+  const hoveredSystemId = hovered?.id ?? null;
+  const hoveredSummary = hoveredSystemId == null
+    ? null
+    : systemPlanSummaries[String(hoveredSystemId)] ?? null;
+  const hoveredPlacementBlock = hoveredSystemId == null
+    ? null
+    : placementBlockedReasons.get(hoveredSystemId) ?? (
+      placementMode !== 'neutral' && !selectedSystemIds.has(hoveredSystemId)
+        ? 'This system is outside the selected territory.'
+        : null
+    );
+  const hoveredUpgradeDefinition = hoveredUpgrade
+    ? upgradeDefinitionsById.get(hoveredUpgrade.typeId) ?? null
+    : null;
+  const hoveredUpgradeSystemName = hoveredUpgrade
+    ? graph?.namesById?.[String(hoveredUpgrade.systemId)] ?? String(hoveredUpgrade.systemId)
+    : null;
+  const upgradeTooltipWidth = Math.min(
+    300,
+    Math.max(224, (hoveredUpgradeDefinition?.name.length ?? 0) * 7 + 58),
+  );
+  const upgradeTooltipLeft = hoveredUpgrade
+    ? Math.max(
+      8,
+      Math.min(
+        Math.max(8, size.width - upgradeTooltipWidth - 8),
+        hoveredUpgrade.x + 12,
+      ),
+    )
+    : 8;
+  const upgradeTooltipTop = hoveredUpgrade
+    ? Math.max(8, Math.min(Math.max(8, size.height - 190), hoveredUpgrade.y + 12))
+    : 8;
+  const hoverTooltipWidth = Math.min(
+    300,
+    Math.max(
+      hoveredSummary ? 248 : 196,
+      (hoveredName?.length ?? 0) * 7 + 44,
+    ),
+  );
+  const hoverTooltipHeight = 112
+    + (hoveredSummary ? 52 : 0)
+    + (hoveredPlacementBlock ? 42 : 0);
   const hoverTooltipLeft = hovered
     ? Math.max(
       8,
@@ -1207,8 +1786,6 @@ export function SovereigntyPlannerMap({
       ),
     )
     : 8;
-  const hoveredSystemId = hovered?.id ?? null;
-
   useLayoutEffect(() => {
     const tooltip = hoverTooltipRef.current;
     if (
@@ -1236,12 +1813,20 @@ export function SovereigntyPlannerMap({
     && Math.abs(viewport.panX - fitTargetViewport.panX) < 0.1
     && Math.abs(viewport.panY - fitTargetViewport.panY) < 0.1
   );
+  const hoveredIsBlocked = hoveredSystemId != null && (
+    placementBlockedReasons.has(hoveredSystemId)
+    || !selectedSystemIds.has(hoveredSystemId)
+  );
   const cursorClass = territoryEditing && (isAltPressed || lassoPoints.length > 0)
     ? 'cursor-crosshair'
     : isPanning
       ? 'cursor-grabbing'
       : territoryEditing && hoveredSystem?.isSovereigntyEligible
         ? 'cursor-pointer'
+        : placementMode !== 'neutral' && hoveredSystem
+          ? hoveredIsBlocked ? 'cursor-not-allowed' : 'cursor-crosshair'
+          : placementMode === 'neutral' && (hoveredUpgrade || hoveredSystem || hoveredLinkId)
+            ? 'cursor-pointer'
         : 'cursor-grab';
 
   return (
@@ -1255,14 +1840,24 @@ export function SovereigntyPlannerMap({
         onPointerUp={finishPointerInteraction}
         onPointerCancel={cancelPointerInteraction}
         onPointerLeave={() => {
-          if (!dragRef.current && !lassoRef.current) setHovered(null);
+          if (!dragRef.current && !lassoRef.current) {
+            setHovered(null);
+            setHoveredUpgrade(null);
+            setHoveredLinkId(null);
+          }
         }}
         role="application"
         aria-label={lassoPoints.length > 0
           ? 'Sovereignty map. Draw around systems to change the territory selection. Press Escape to cancel.'
           : territoryEditing
             ? 'Sovereignty map. Click systems to change the territory selection, hold Alt or Option and drag to lasso, drag normally to pan, and use the mouse wheel or map controls to zoom.'
-            : 'Sovereignty map. Drag to pan and use the mouse wheel or map controls to zoom.'}
+            : placementMode === 'ansiblex'
+              ? pendingAnsiblexFrom == null
+                ? 'Sovereignty map. Click a system to choose the first Ansiblex endpoint.'
+                : 'Sovereignty map. Click a system to choose the second Ansiblex endpoint. Press Escape to cancel the first endpoint.'
+              : placementMode === 'upgrade'
+                ? 'Sovereignty map. Click systems to place the selected sovereignty upgrade.'
+                : 'Sovereignty map. Click systems or Ansiblex links to inspect them, drag to pan, and use the mouse wheel or map controls to zoom.'}
       >
         <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" aria-hidden="true" />
 
@@ -1334,14 +1929,18 @@ export function SovereigntyPlannerMap({
                 {hoveredSecurity.toFixed(1)}
               </span>
             </div>
-            <div className="mt-1.5 grid grid-cols-[auto_auto] gap-x-5 gap-y-0.5 border-t border-slate-200 pt-1.5 text-slate-500 dark:border-slate-700 dark:text-slate-400">
+            <div className="mt-1.5 grid grid-cols-[minmax(0,1fr)_auto] gap-x-5 gap-y-0.5 border-t border-slate-200 pt-1.5 text-slate-500 dark:border-slate-700 dark:text-slate-400">
               <span>Workforce</span>
               <span className="text-right font-medium tabular-nums text-slate-800 dark:text-slate-200">
-                {(hoveredSystem.workforce ?? 0).toLocaleString()}
+                {hoveredSummary
+                  ? `${formatMarkerValue(hoveredSummary.allocatedWorkforce)} / ${formatMarkerValue(hoveredSummary.totalWorkforce)}`
+                  : (hoveredSystem.workforce ?? 0).toLocaleString()}
               </span>
               <span>Power</span>
               <span className="text-right font-medium tabular-nums text-slate-800 dark:text-slate-200">
-                {(hoveredSystem.power ?? 0).toLocaleString()}
+                {hoveredSummary
+                  ? `${formatMarkerValue(hoveredSummary.allocatedPower)} / ${formatMarkerValue(hoveredSummary.totalPower)}`
+                  : (hoveredSystem.power ?? 0).toLocaleString()}
               </span>
               <span>Magmatic Gas</span>
               <span className="text-right font-medium tabular-nums text-slate-800 dark:text-slate-200">
@@ -1351,6 +1950,119 @@ export function SovereigntyPlannerMap({
               <span className="text-right font-medium tabular-nums text-slate-800 dark:text-slate-200">
                 {(hoveredSystem.superionicIce ?? 0).toLocaleString()}
               </span>
+              {hoveredSummary && (
+                <>
+                  <span>Upgrades</span>
+                  <span className="text-right font-medium tabular-nums text-slate-800 dark:text-slate-200">
+                    {hoveredSummary.upgradeCount}
+                  </span>
+                  <span>Workforce remaining</span>
+                  <span className={`text-right font-medium tabular-nums ${
+                    hoveredSummary.remainingWorkforce < 0
+                      ? 'text-red-600 dark:text-red-400'
+                      : 'text-slate-800 dark:text-slate-200'
+                  }`}>
+                    {formatMarkerValue(hoveredSummary.remainingWorkforce)}
+                  </span>
+                  <span>Power remaining</span>
+                  <span className={`text-right font-medium tabular-nums ${
+                    hoveredSummary.remainingPower < 0
+                      ? 'text-red-600 dark:text-red-400'
+                      : 'text-slate-800 dark:text-slate-200'
+                  }`}>
+                    {formatMarkerValue(hoveredSummary.remainingPower)}
+                  </span>
+                </>
+              )}
+            </div>
+            {hoveredPlacementBlock && (
+              <div className="mt-1.5 whitespace-normal border-t border-amber-200 pt-1.5 text-[11px] leading-4 text-amber-700 dark:border-amber-800 dark:text-amber-300">
+                {hoveredPlacementBlock}
+              </div>
+            )}
+          </div>
+        )}
+
+        {hoveredUpgrade && hoveredUpgradeDefinition && (
+          <div
+            className="pointer-events-none absolute z-30 rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs text-slate-900 shadow dark:border-gray-700 dark:bg-gray-900 dark:text-slate-100"
+            style={{
+              left: upgradeTooltipLeft,
+              top: upgradeTooltipTop,
+              width: upgradeTooltipWidth,
+            }}
+          >
+            <div className="flex items-center gap-2">
+              <img
+                src={getSovereigntyUpgradeIconUrl(hoveredUpgradeDefinition.typeId)}
+                alt=""
+                aria-hidden="true"
+                className="h-8 w-8 shrink-0 rounded object-contain"
+              />
+              <div className="min-w-0">
+                <div className="font-semibold">{hoveredUpgradeDefinition.name}</div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {hoveredUpgradeSystemName}
+                </div>
+              </div>
+            </div>
+            <div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-0.5 border-t border-slate-200 pt-1.5 text-slate-500 dark:border-slate-700 dark:text-slate-400">
+              {hoveredUpgradeDefinition.powerAllocation !== 0 && (
+                <>
+                  <span>Power allocation</span>
+                  <span className="text-right font-medium tabular-nums text-slate-800 dark:text-slate-200">
+                    {formatMarkerValue(hoveredUpgradeDefinition.powerAllocation)}
+                  </span>
+                </>
+              )}
+              {hoveredUpgradeDefinition.powerProduction !== 0 && (
+                <>
+                  <span>Power production</span>
+                  <span className="text-right font-medium tabular-nums text-emerald-700 dark:text-emerald-400">
+                    +{formatMarkerValue(hoveredUpgradeDefinition.powerProduction)}
+                  </span>
+                </>
+              )}
+              {hoveredUpgradeDefinition.workforceAllocation !== 0 && (
+                <>
+                  <span>Workforce allocation</span>
+                  <span className="text-right font-medium tabular-nums text-slate-800 dark:text-slate-200">
+                    {formatMarkerValue(hoveredUpgradeDefinition.workforceAllocation)}
+                  </span>
+                </>
+              )}
+              {hoveredUpgradeDefinition.workforceProduction !== 0 && (
+                <>
+                  <span>Workforce production</span>
+                  <span className="text-right font-medium tabular-nums text-emerald-700 dark:text-emerald-400">
+                    +{formatMarkerValue(hoveredUpgradeDefinition.workforceProduction)}
+                  </span>
+                </>
+              )}
+              {hoveredUpgradeDefinition.fuel && (
+                <>
+                  <span>
+                    {hoveredUpgradeDefinition.fuel.typeId === MAGMATIC_GAS_TYPE_ID
+                      ? 'Magma startup'
+                      : hoveredUpgradeDefinition.fuel.typeId === SUPERIONIC_ICE_TYPE_ID
+                        ? 'Ice startup'
+                        : 'Fuel startup'}
+                  </span>
+                  <span className="text-right font-medium tabular-nums text-slate-800 dark:text-slate-200">
+                    {formatMarkerValue(hoveredUpgradeDefinition.fuel.startupCost)}
+                  </span>
+                  <span>
+                    {hoveredUpgradeDefinition.fuel.typeId === MAGMATIC_GAS_TYPE_ID
+                      ? 'Magma / hour'
+                      : hoveredUpgradeDefinition.fuel.typeId === SUPERIONIC_ICE_TYPE_ID
+                        ? 'Ice / hour'
+                        : 'Fuel / hour'}
+                  </span>
+                  <span className="text-right font-medium tabular-nums text-slate-800 dark:text-slate-200">
+                    {formatMarkerValue(hoveredUpgradeDefinition.fuel.hourlyUpkeep)}
+                  </span>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -1361,8 +2073,90 @@ export function SovereigntyPlannerMap({
           </div>
         )}
 
-        <div data-map-control className="absolute bottom-3 left-3 z-10 rounded-md bg-white/80 px-2 py-1 text-[11px] text-slate-500 backdrop-blur dark:bg-slate-900/80 dark:text-slate-400">
-          {selectedSystemIds.size.toLocaleString()} selected · {geometry.points.length.toLocaleString()} systems · {Math.round(viewport.zoom * 100)}%
+        <div
+          data-map-control
+          className={`absolute bottom-3 left-3 z-10 rounded-md border border-slate-200 bg-white/90 p-2.5 text-[11px] shadow-sm backdrop-blur transition-[min-width] duration-200 ease-out dark:border-slate-700 dark:bg-slate-900/90 ${
+            isPlanTotalsExpanded ? 'min-w-48' : 'min-w-36'
+          }`}
+        >
+          <button
+            type="button"
+            onClick={() => setIsPlanTotalsExpanded((expanded) => !expanded)}
+            className="flex w-full items-center justify-between gap-3 text-xs font-semibold text-slate-800 hover:text-purple-700 dark:text-slate-100 dark:hover:text-purple-300"
+            aria-expanded={isPlanTotalsExpanded}
+            aria-controls="sovereignty-plan-totals-content"
+          >
+            <span>Plan totals</span>
+            <Icon
+              name="chevron-down"
+              size={11}
+              className={`transition-transform duration-200 ${isPlanTotalsExpanded ? '' : '-rotate-90'}`}
+            />
+          </button>
+          <div
+            id="sovereignty-plan-totals-content"
+            aria-hidden={!isPlanTotalsExpanded}
+            className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out ${
+              isPlanTotalsExpanded
+                ? 'grid-rows-[1fr] opacity-100'
+                : 'grid-rows-[0fr] opacity-0'
+            }`}
+          >
+            <div className="min-h-0 overflow-hidden">
+              <div className="pt-1.5">
+              <div className="grid grid-cols-[auto_auto] gap-x-4 gap-y-0.5 text-slate-600 dark:text-slate-300">
+                <span>Upgrades</span>
+                <span className="text-right font-semibold text-slate-800 dark:text-slate-100">
+                  {planSummary.upgradeCount.toLocaleString()}
+                </span>
+                <span>Ansiblex links</span>
+                <span className="text-right font-semibold text-slate-800 dark:text-slate-100">
+                  {planSummary.ansiblexCount.toLocaleString()}
+                </span>
+                <span>Workforce imports</span>
+                <span className="text-right font-semibold text-slate-800 dark:text-slate-100">
+                  {Math.round(planSummary.workforceImportRequired).toLocaleString()}
+                </span>
+                <span>Workforce surplus</span>
+                <span className="text-right font-semibold text-slate-800 dark:text-slate-100">
+                  {Math.round(planSummary.workforceSurplus).toLocaleString()}
+                </span>
+                <span>Magma startup</span>
+                <span className="text-right font-semibold text-slate-800 dark:text-slate-100">
+                  {Math.round(planSummary.magmaticGasStartup).toLocaleString()}
+                </span>
+                <span>Magma / hour</span>
+                <span className="text-right font-semibold text-slate-800 dark:text-slate-100">
+                  {Math.round(planSummary.magmaticGasHourly).toLocaleString()}
+                </span>
+                <span>Ice startup</span>
+                <span className="text-right font-semibold text-slate-800 dark:text-slate-100">
+                  {Math.round(planSummary.superionicIceStartup).toLocaleString()}
+                </span>
+                <span>Ice / hour</span>
+                <span className="text-right font-semibold text-slate-800 dark:text-slate-100">
+                  {Math.round(planSummary.superionicIceHourly).toLocaleString()}
+                </span>
+              </div>
+              {(planSummary.powerDeficitSystems > 0 || planSummary.workforceDeficitSystems > 0) && (
+                <div className="mt-1.5 border-t border-amber-300/70 pt-1.5 text-amber-700 dark:border-amber-700/70 dark:text-amber-300">
+                  {planSummary.powerDeficitSystems > 0 && (
+                    <div>
+                      {planSummary.powerDeficitSystems.toLocaleString()} power{' '}
+                      {planSummary.powerDeficitSystems === 1 ? 'warning' : 'warnings'}
+                    </div>
+                  )}
+                  {planSummary.workforceDeficitSystems > 0 && (
+                    <div>
+                      {planSummary.workforceDeficitSystems.toLocaleString()} workforce{' '}
+                      {planSummary.workforceDeficitSystems === 1 ? 'warning' : 'warnings'}
+                    </div>
+                  )}
+                </div>
+              )}
+              </div>
+            </div>
+          </div>
         </div>
         <div data-map-control className="absolute bottom-3 right-3 z-10 flex items-center gap-3 rounded-md bg-white/80 px-2 py-1 text-[11px] text-slate-500 backdrop-blur dark:bg-slate-900/80 dark:text-slate-400">
           <span className="inline-flex items-center gap-1.5">
