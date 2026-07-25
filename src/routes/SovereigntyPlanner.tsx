@@ -4,8 +4,12 @@ import {
   type AutocompleteItem,
 } from '../components/AutocompleteInput';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { Icon } from '../components/Icon';
 import { SegmentedSlider } from '../components/SegmentedSlider';
-import { SovereigntyPlannerMap } from '../components/SovereigntyPlannerMap';
+import {
+  SovereigntyPlannerMap,
+  type TerritoryEditTool,
+} from '../components/SovereigntyPlannerMap';
 import { SovereigntyUpgradePicker } from '../components/SovereigntyUpgradePicker';
 import type { GraphData } from '../lib/data';
 import { getSovereigntySecurityColor } from '../lib/security';
@@ -48,18 +52,28 @@ const INSPECTOR_TABS = [
   { label: 'Routing', value: 'routing' },
 ];
 
-function loadStoredSystemIds() {
-  if (typeof window === 'undefined') return new Set<number>();
+function loadStoredUiState() {
+  const emptyState = {
+    selectedSystemIds: new Set<number>(),
+    capitalSystemId: null as number | null,
+  };
+  if (typeof window === 'undefined') return emptyState;
   try {
     const parsed = JSON.parse(localStorage.getItem(SOVEREIGNTY_UI_STORAGE_KEY) ?? '');
-    if (!Array.isArray(parsed?.selectedSystemIds)) return new Set<number>();
-    return new Set<number>(
-      parsed.selectedSystemIds
+    if (!Array.isArray(parsed?.selectedSystemIds)) return emptyState;
+    const capitalSystemId = Number(parsed.capitalSystemId);
+    return {
+      selectedSystemIds: new Set<number>(
+        parsed.selectedSystemIds
         .map(Number)
         .filter((id: number) => Number.isInteger(id) && id > 0),
-    );
+      ),
+      capitalSystemId: Number.isInteger(capitalSystemId) && capitalSystemId > 0
+        ? capitalSystemId
+        : null,
+    };
   } catch {
-    return new Set<number>();
+    return emptyState;
   }
 }
 
@@ -104,10 +118,13 @@ export function SovereigntyPlanner() {
   const [graph, setGraph] = useState<GraphData | null>(() => (
     (window as AppWindow).appGraph ?? null
   ));
-  const storedSystemIdsRef = useRef(loadStoredSystemIds());
+  const storedUiStateRef = useRef(loadStoredUiState());
   const hasValidatedStoredSelectionRef = useRef(false);
   const [selectedSystemIds, setSelectedSystemIds] = useState<Set<number>>(
-    () => new Set(storedSystemIdsRef.current),
+    () => new Set(storedUiStateRef.current.selectedSystemIds),
+  );
+  const [capitalSystemId, setCapitalSystemId] = useState<number | null>(
+    storedUiStateRef.current.capitalSystemId,
   );
   const [plan, setPlan] = useState<SovereigntyPlan>(loadStoredPlan);
   const [definitions, setDefinitions] = useState<SovereigntyUpgradeDefinition[]>([]);
@@ -121,6 +138,7 @@ export function SovereigntyPlanner() {
   const [notice, setNotice] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [territoryEditing, setTerritoryEditing] = useState(false);
+  const [territoryEditTool, setTerritoryEditTool] = useState<TerritoryEditTool>('territory');
   const [fitSelectionRequest, setFitSelectionRequest] = useState(0);
   const [sovereigntyHolders, setSovereigntyHolders] = useState<SovereigntyHolder[]>([]);
   const [holderStatus, setHolderStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
@@ -179,22 +197,30 @@ export function SovereigntyPlanner() {
     if (!graph || hasValidatedStoredSelectionRef.current) return;
     hasValidatedStoredSelectionRef.current = true;
     const validated = new Set(
-      Array.from(storedSystemIdsRef.current).filter((id) => eligibleSystemIds.has(id)),
+      Array.from(storedUiStateRef.current.selectedSystemIds)
+        .filter((id) => eligibleSystemIds.has(id)),
     );
     setSelectedSystemIds(validated);
+    setCapitalSystemId((current) => (
+      current != null && validated.has(current) ? current : null
+    ));
     if (validated.size > 0) setFitSelectionRequest((request) => request + 1);
-    else setTerritoryEditing(true);
+    else {
+      setTerritoryEditTool('territory');
+      setTerritoryEditing(true);
+    }
   }, [eligibleSystemIds, graph]);
 
   useEffect(() => {
     try {
       localStorage.setItem(SOVEREIGNTY_UI_STORAGE_KEY, JSON.stringify({
         selectedSystemIds: Array.from(selectedSystemIds).sort((a, b) => a - b),
+        capitalSystemId,
       }));
     } catch {
       // Browser storage can be unavailable in private or restricted contexts.
     }
-  }, [selectedSystemIds]);
+  }, [capitalSystemId, selectedSystemIds]);
 
   useEffect(() => {
     try {
@@ -318,6 +344,9 @@ export function SovereigntyPlanner() {
       return;
     }
     setSelectedSystemIds(next);
+    setCapitalSystemId((current) => (
+      current != null && !next.has(current) ? null : current
+    ));
   }, [selectedSystemIds, systemHasPlan]);
 
   const applySmartGroupToggle = useCallback((systemIds: readonly number[], requestFit: boolean) => {
@@ -343,11 +372,17 @@ export function SovereigntyPlanner() {
   }, [applySmartGroupToggle, selectionIndex.systemIdsByKey]);
 
   const handleLassoSelection = useCallback((systemIds: number[]) => {
-    if (territoryEditing) applySmartGroupToggle(systemIds, false);
-  }, [applySmartGroupToggle, territoryEditing]);
+    if (territoryEditing && territoryEditTool === 'territory') {
+      applySmartGroupToggle(systemIds, false);
+    }
+  }, [applySmartGroupToggle, territoryEditTool, territoryEditing]);
 
   const toggleTerritorySystem = useCallback((systemId: number) => {
-    if (!territoryEditing || !eligibleSystemIds.has(systemId)) return;
+    if (
+      !territoryEditing
+      || territoryEditTool !== 'territory'
+      || !eligibleSystemIds.has(systemId)
+    ) return;
     const next = new Set(selectedSystemIds);
     if (next.has(systemId)) next.delete(systemId);
     else next.add(systemId);
@@ -356,6 +391,22 @@ export function SovereigntyPlanner() {
     eligibleSystemIds,
     requestSelectionChange,
     selectedSystemIds,
+    territoryEditTool,
+    territoryEditing,
+  ]);
+
+  const selectCapitalSystem = useCallback((systemId: number) => {
+    if (
+      !territoryEditing
+      || territoryEditTool !== 'capital'
+      || !eligibleSystemIds.has(systemId)
+      || !selectedSystemIds.has(systemId)
+    ) return;
+    setCapitalSystemId((current) => current === systemId ? null : systemId);
+  }, [
+    eligibleSystemIds,
+    selectedSystemIds,
+    territoryEditTool,
     territoryEditing,
   ]);
 
@@ -607,13 +658,20 @@ export function SovereigntyPlanner() {
   const selectedLink = selectedLinkId == null
     ? null
     : plan.ansiblexLinks.find((link) => link.id === selectedLinkId) ?? null;
+  const capitalSystemName = capitalSystemId == null
+    ? null
+    : graph?.namesById?.[String(capitalSystemId)] ?? String(capitalSystemId);
 
   const handleConfirm = useCallback(() => {
     if (!pendingConfirmation) return;
     if (pendingConfirmation.kind === 'territory') {
       const removed = new Set(pendingConfirmation.removedIds);
+      const nextSystemIds = new Set(pendingConfirmation.nextIds);
       setPlan((current) => removeSystemsFromPlan(current, removed));
-      setSelectedSystemIds(new Set(pendingConfirmation.nextIds));
+      setSelectedSystemIds(nextSystemIds);
+      setCapitalSystemId((current) => (
+        current != null && !nextSystemIds.has(current) ? null : current
+      ));
       setSelectedPlanSystemId((current) => (
         current != null && removed.has(current) ? null : current
       ));
@@ -694,30 +752,88 @@ export function SovereigntyPlanner() {
                   Done
                 </button>
               </div>
-              <div>
-                <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300">
-                  Add territory
-                </label>
-                <AutocompleteInput
-                  compact
-                  graph={graph}
-                  value={searchQuery}
-                  onChange={setSearchQuery}
-                  onSelect={handleAutocompleteSelect}
-                  items={selectionIndex.items}
-                  placeholder="System, region, alliance…"
-                />
-                {holderStatus === 'loading' && (
-                  <p className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
-                    Loading live sovereignty holders…
-                  </p>
-                )}
-                {holderStatus === 'error' && (
-                  <p className="mt-1.5 text-[11px] text-amber-700 dark:text-amber-400">
-                    Live alliance and corporation search is unavailable.
-                  </p>
-                )}
+              <div
+                className="grid grid-cols-2 rounded-md border border-slate-300 bg-slate-100 p-1 dark:border-slate-700 dark:bg-slate-900"
+                role="group"
+                aria-label="Territory editing tool"
+              >
+                <button
+                  type="button"
+                  aria-pressed={territoryEditTool === 'territory'}
+                  onClick={() => setTerritoryEditTool('territory')}
+                  className={`rounded px-2 py-1.5 text-xs font-medium transition ${
+                    territoryEditTool === 'territory'
+                      ? 'bg-white text-purple-700 shadow-sm dark:bg-slate-700 dark:text-purple-300'
+                      : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                  }`}
+                >
+                  Territory
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={territoryEditTool === 'capital'}
+                  onClick={() => {
+                    setTerritoryEditTool('capital');
+                    setSearchQuery('');
+                  }}
+                  className={`inline-flex items-center justify-center gap-1.5 rounded px-2 py-1.5 text-xs font-medium transition ${
+                    territoryEditTool === 'capital'
+                      ? 'bg-white text-purple-700 shadow-sm dark:bg-slate-700 dark:text-purple-300'
+                      : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                  }`}
+                >
+                  <Icon name="star" size={13} />
+                  Capital
+                </button>
               </div>
+
+              {territoryEditTool === 'territory' ? (
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300">
+                    Add territory
+                  </label>
+                  <AutocompleteInput
+                    compact
+                    graph={graph}
+                    value={searchQuery}
+                    onChange={setSearchQuery}
+                    onSelect={handleAutocompleteSelect}
+                    items={selectionIndex.items}
+                    placeholder="System, region, alliance…"
+                  />
+                  {holderStatus === 'loading' && (
+                    <p className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                      Loading live sovereignty holders…
+                    </p>
+                  )}
+                  {holderStatus === 'error' && (
+                    <p className="mt-1.5 text-[11px] text-amber-700 dark:text-amber-400">
+                      Live alliance and corporation search is unavailable.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="border-y border-slate-200 py-3 dark:border-slate-700">
+                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                    Capital system
+                  </div>
+                  <div className="mt-1 flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                      <Icon name={capitalSystemId == null ? 'star' : 'star-fill'} size={16} />
+                      <span className="truncate">{capitalSystemName ?? 'Not selected'}</span>
+                    </div>
+                    {capitalSystemId != null && (
+                      <button
+                        type="button"
+                        onClick={() => setCapitalSystemId(null)}
+                        className="shrink-0 text-xs font-medium text-purple-700 hover:underline dark:text-purple-300"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
               <div className="border-y border-slate-200 py-3 dark:border-slate-700">
                 <div className="text-xs text-slate-500 dark:text-slate-400">Selected territory</div>
                 <div className="mt-0.5 text-lg font-semibold text-slate-900 dark:text-slate-100">
@@ -725,22 +841,29 @@ export function SovereigntyPlanner() {
                 </div>
               </div>
               <div className="text-xs leading-4 text-slate-500 dark:text-slate-400">
-                Hold Alt or Option and drag on the map to lasso systems.
+                {territoryEditTool === 'territory'
+                  ? 'Hold Alt or Option and drag on the map to lasso systems.'
+                  : capitalSystemId == null
+                    ? 'Choose a system already inside your territory.'
+                    : 'Choose another system to move the capital, or click the current capital to clear it.'}
               </div>
-              <button
-                type="button"
-                onClick={() => requestSelectionChange(new Set())}
-                disabled={selectedSystemIds.size === 0}
-                className="mt-auto rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
-              >
-                Clear all territory
-              </button>
+              {territoryEditTool === 'territory' && (
+                <button
+                  type="button"
+                  onClick={() => requestSelectionChange(new Set())}
+                  disabled={selectedSystemIds.size === 0}
+                  className="mt-auto rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
+                >
+                  Clear all territory
+                </button>
+              )}
             </>
           ) : (
             <>
               <button
                 type="button"
                 onClick={() => {
+                  setTerritoryEditTool('territory');
                   setTerritoryEditing(true);
                   setActiveUpgradeTypeId(null);
                   setPendingAnsiblexFrom(null);
@@ -843,6 +966,9 @@ export function SovereigntyPlanner() {
           holdingAllianceIdsBySystemId={holdingAllianceIdsBySystemId}
           onToggleSystem={toggleTerritorySystem}
           territoryEditing={territoryEditing}
+          territoryEditTool={territoryEditTool}
+          capitalSystemId={capitalSystemId}
+          onCapitalSystemClick={selectCapitalSystem}
           onLassoSelection={handleLassoSelection}
           fitSelectionRequest={fitSelectionRequest}
           placementMode={placementMode}

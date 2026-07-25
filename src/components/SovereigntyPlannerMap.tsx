@@ -9,7 +9,10 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react';
 import type { GraphData, SystemNode } from '../lib/data';
-import { getSovereigntySecurityColor } from '../lib/security';
+import {
+  getSovereigntySecurityColor,
+  NULLSEC_SECURITY_COLOR,
+} from '../lib/security';
 import {
   ANSIBLEX_MAX_RANGE_LY,
   getAnsiblexDistanceLy,
@@ -27,6 +30,7 @@ import { Icon } from './Icon';
 
 type MapMode = 'schematic' | 'geographic';
 type MetricMapDataDisplay =
+  | 'security'
   | 'power'
   | 'workforce'
   | 'magmaticGas'
@@ -75,12 +79,17 @@ type LassoState = {
   points: Array<{ x: number; y: number }>;
 };
 type PlannerPlacementMode = 'neutral' | 'upgrade' | 'ansiblex';
+export type TerritoryEditTool = 'territory' | 'capital';
 type UpgradeIconGeometry = {
   systemId: number;
   typeId: number;
   left: number;
   top: number;
   size: number;
+};
+type CanvasImageEntry = {
+  image: HTMLImageElement;
+  status: 'loading' | 'loaded' | 'error';
 };
 
 const MIN_ZOOM = 0.5;
@@ -97,6 +106,7 @@ const MAGMATIC_GAS_TYPE_ID = 81143;
 const SUPERIONIC_ICE_TYPE_ID = 81144;
 const DATA_DISPLAY_OPTIONS = [
   { value: 'none', label: 'No data' },
+  { value: 'security', label: 'Security level' },
   { value: 'power', label: 'Power' },
   { value: 'workforce', label: 'Workforce' },
   { value: 'magmaticGas', label: 'Magmatic Gas' },
@@ -116,6 +126,7 @@ function clampZoom(value: number) {
 }
 
 function getMarkerValue(point: MapPoint, display: MapDataDisplay) {
+  if (display === 'security') return point.security;
   if (display === 'power') return point.power;
   if (display === 'workforce') return point.workforce;
   if (display === 'magmaticGas') return point.magmaticGas;
@@ -126,7 +137,8 @@ function getMarkerValue(point: MapPoint, display: MapDataDisplay) {
 
 function isMetricDataDisplay(display: MapDataDisplay): display is MetricMapDataDisplay {
   return (
-    display === 'power'
+    display === 'security'
+    || display === 'power'
     || display === 'workforce'
     || display === 'magmaticGas'
     || display === 'superionicIce'
@@ -136,6 +148,10 @@ function isMetricDataDisplay(display: MapDataDisplay): display is MetricMapDataD
 
 function formatMarkerValue(value: number) {
   return Math.round(value).toString();
+}
+
+function formatMapMarkerValue(value: number, display: MapDataDisplay) {
+  return display === 'security' ? value.toFixed(1) : formatMarkerValue(value);
 }
 
 function getUpgradeIconGeometry(
@@ -241,10 +257,41 @@ function getMetricMarkerColors(
   maximum: number,
   isDarkMode: boolean,
 ) {
+  if (display === 'security') {
+    const normalized = Math.max(0, Math.min(1, -value));
+    const channels = [1, 3, 5].map((startIndex) => {
+      const baseChannel = Number.parseInt(
+        NULLSEC_SECURITY_COLOR.slice(startIndex, startIndex + 2),
+        16,
+      );
+      const lightChannel = baseChannel + (255 - baseChannel) * 0.68;
+      const darkChannel = baseChannel * 0.8;
+      return Math.round(
+        lightChannel + (darkChannel - lightChannel) * normalized,
+      );
+    });
+    const [red, green, blue] = channels;
+    const toLinear = (channel: number) => {
+      const value = channel / 255;
+      return value <= 0.04045
+        ? value / 12.92
+        : Math.pow((value + 0.055) / 1.055, 2.4);
+    };
+    const relativeLuminance = (
+      0.2126 * toLinear(red)
+      + 0.7152 * toLinear(green)
+      + 0.0722 * toLinear(blue)
+    );
+    return {
+      fill: `rgb(${red} ${green} ${blue})`,
+      text: relativeLuminance >= 0.19 ? '#0f172a' : '#f8fafc',
+    };
+  }
   const normalized = maximum > 0
     ? Math.sqrt(Math.max(0, Math.min(1, value / maximum)))
     : 0;
   const color = {
+    security: { hue: 0, saturation: 0 },
     power: { hue: 142, saturation: 78 },
     workforce: { hue: 50, saturation: 88 },
     magmaticGas: { hue: 27, saturation: 92 },
@@ -294,7 +341,7 @@ function getPointMarkerGeometry(
     return { kind: 'circle', halfWidth: 18, halfHeight: 18 } satisfies MarkerGeometry;
   }
   if (selected && showDataLabels && value != null) {
-    const label = formatMarkerValue(value);
+    const label = formatMapMarkerValue(value, display);
     const width = Math.max(
       METRIC_PILL_HEIGHT,
       Math.ceil(measureLabel(label) + METRIC_PILL_HORIZONTAL_PADDING * 2),
@@ -338,6 +385,50 @@ function addMarkerPath(
   context.lineTo(leftCapX, y + halfHeight);
   context.arc(leftCapX, y, halfHeight, Math.PI / 2, Math.PI * 1.5);
   context.closePath();
+}
+
+function addCanvasStarPath(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  outerRadius: number,
+) {
+  const innerRadius = outerRadius * 0.43;
+  context.beginPath();
+  for (let index = 0; index < 10; index += 1) {
+    const radius = index % 2 === 0 ? outerRadius : innerRadius;
+    const angle = -Math.PI / 2 + index * Math.PI / 5;
+    const pointX = x + Math.cos(angle) * radius;
+    const pointY = y + Math.sin(angle) * radius;
+    if (index === 0) context.moveTo(pointX, pointY);
+    else context.lineTo(pointX, pointY);
+  }
+  context.closePath();
+}
+
+function drawCapitalStar(
+  context: CanvasRenderingContext2D,
+  entry: CanvasImageEntry | undefined,
+  x: number,
+  y: number,
+  size: number,
+  filled: boolean,
+  isDarkMode: boolean,
+) {
+  context.save();
+  context.globalAlpha = 1;
+  if (entry?.status === 'loaded') {
+    context.filter = isDarkMode ? 'none' : 'brightness(0)';
+    context.drawImage(entry.image, x - size / 2, y - size / 2, size, size);
+  } else {
+    addCanvasStarPath(context, x, y, size / 2);
+    context.fillStyle = isDarkMode ? '#f8fafc' : '#0f172a';
+    context.strokeStyle = context.fillStyle;
+    context.lineWidth = Math.max(1.2, size * 0.1);
+    if (filled) context.fill();
+    else context.stroke();
+  }
+  context.restore();
 }
 
 function getMarkerHitDistance(
@@ -554,6 +645,9 @@ type SovereigntyPlannerMapProps = {
   holdingAllianceIdsBySystemId: ReadonlyMap<number, number>;
   onToggleSystem: (systemId: number) => void;
   territoryEditing: boolean;
+  territoryEditTool: TerritoryEditTool;
+  capitalSystemId: number | null;
+  onCapitalSystemClick: (systemId: number) => void;
   onLassoSelection: (systemIds: number[]) => void;
   fitSelectionRequest: number;
   placementMode: PlannerPlacementMode;
@@ -575,6 +669,9 @@ export function SovereigntyPlannerMap({
   holdingAllianceIdsBySystemId,
   onToggleSystem,
   territoryEditing,
+  territoryEditTool,
+  capitalSystemId,
+  onCapitalSystemClick,
   onLassoSelection,
   fitSelectionRequest,
   placementMode,
@@ -604,12 +701,14 @@ export function SovereigntyPlannerMap({
     number,
     { image: HTMLImageElement; status: 'loading' | 'loaded' | 'error' }
   >());
+  const capitalIconCacheRef = useRef(new Map<'outline' | 'fill', CanvasImageEntry>());
   const metricLabelWidthCacheRef = useRef(new Map<string, number>());
   const lastFitSelectionRequestRef = useRef(0);
   const [mode, setMode] = useState<MapMode>('schematic');
   const [dataDisplay, setDataDisplay] = useState<MapDataDisplay>('none');
   const [allianceLogoRevision, setAllianceLogoRevision] = useState(0);
   const [upgradeIconRevision, setUpgradeIconRevision] = useState(0);
+  const [capitalIconRevision, setCapitalIconRevision] = useState(0);
   const [projectionMix, setProjectionMix] = useState(0);
   const [projectionLabelVisibility, setProjectionLabelVisibility] = useState<boolean | null>(null);
   const [viewport, setViewport] = useState<Viewport>(INITIAL_VIEWPORT);
@@ -692,6 +791,30 @@ export function SovereigntyPlannerMap({
     }
   }, [upgradeDefinitionsById]);
 
+  useEffect(() => {
+    const base = import.meta.env.BASE_URL || '/';
+    const icons = [
+      ['outline', `${base}icons/star.svg`],
+      ['fill', `${base}icons/star.fill.svg`],
+    ] as const;
+    for (const [kind, source] of icons) {
+      if (capitalIconCacheRef.current.has(kind)) continue;
+      const image = new Image();
+      image.decoding = 'async';
+      const entry: CanvasImageEntry = { image, status: 'loading' };
+      capitalIconCacheRef.current.set(kind, entry);
+      image.onload = () => {
+        entry.status = 'loaded';
+        setCapitalIconRevision((revision) => revision + 1);
+      };
+      image.onerror = () => {
+        entry.status = 'error';
+        setCapitalIconRevision((revision) => revision + 1);
+      };
+      image.src = source;
+    }
+  }, []);
+
   const geometry = useMemo(() => {
     const points: MapPoint[] = [];
     const pointsById = new Map<number, MapPoint>();
@@ -766,19 +889,21 @@ export function SovereigntyPlannerMap({
   }, [graph, holdingAllianceIdsBySystemId, plannedUpgradesBySystem, projectionMix]);
 
   const metricMaximums = useMemo(() => {
+    let security = 0;
     let power = 0;
     let workforce = 0;
     let magmaticGas = 0;
     let superionicIce = 0;
     let upgradeCount = 0;
     for (const point of geometry.points) {
+      security = Math.max(security, point.security);
       power = Math.max(power, point.power);
       workforce = Math.max(workforce, point.workforce);
       magmaticGas = Math.max(magmaticGas, point.magmaticGas);
       superionicIce = Math.max(superionicIce, point.superionicIce);
       upgradeCount = Math.max(upgradeCount, point.upgradeCount);
     }
-    return { power, workforce, magmaticGas, superionicIce, upgradeCount };
+    return { security, power, workforce, magmaticGas, superionicIce, upgradeCount };
   }, [geometry.points]);
 
   const baseTransform = useMemo(() => {
@@ -1000,8 +1125,26 @@ export function SovereigntyPlannerMap({
       const upgradeIconGeometry = plannedUpgrades.length > 0 && showUpgradeIcons
         ? getUpgradeIconGeometry(point.id, screen, marker, plannedUpgrades)
         : [];
-      let renderMarginX = Math.max(6, marker.halfWidth + 3);
-      let renderMarginY = Math.max(6, marker.halfHeight + 3);
+      const isCapital = point.id === capitalSystemId;
+      const isCapitalPreview = (
+        territoryEditing
+        && territoryEditTool === 'capital'
+        && hovered?.id === point.id
+        && selected
+        && !isCapital
+      );
+      const hasExpandedMarker = marker.halfWidth > 6 || marker.halfHeight > 6;
+      const showsCenteredCapitalStar = (
+        (isCapital || isCapitalPreview) && !hasExpandedMarker
+      );
+      let renderMarginX = Math.max(
+        isCapital || isCapitalPreview ? 10 : 6,
+        marker.halfWidth + (isCapital || isCapitalPreview ? 10 : 3),
+      );
+      let renderMarginY = Math.max(
+        isCapital || isCapitalPreview ? 10 : 6,
+        marker.halfHeight + (isCapital || isCapitalPreview ? 10 : 3),
+      );
       for (const icon of upgradeIconGeometry) {
         renderMarginX = Math.max(
           renderMarginX,
@@ -1059,8 +1202,10 @@ export function SovereigntyPlannerMap({
       context.fillStyle = ansiblexDistanceFill
         ?? metricColors?.fill
         ?? `hsl(${hue} 72% ${isDarkMode ? 62 : 42}%)`;
-      addMarkerPath(context, screen.x, screen.y, marker);
-      context.fill();
+      if (!showsCenteredCapitalStar) {
+        addMarkerPath(context, screen.x, screen.y, marker);
+        context.fill();
+      }
       const allianceLogoEntry = point.holdingAllianceId
         ? allianceLogoCacheRef.current.get(point.holdingAllianceId)
         : null;
@@ -1096,9 +1241,13 @@ export function SovereigntyPlannerMap({
         context.font = METRIC_LABEL_FONT;
         context.textAlign = 'center';
         context.textBaseline = 'middle';
-        context.fillText(formatMarkerValue(markerValue), screen.x, screen.y + 0.5);
+        context.fillText(
+          formatMapMarkerValue(markerValue, dataDisplay),
+          screen.x,
+          screen.y + 0.5,
+        );
       }
-      if (selected) {
+      if (selected && !showsCenteredCapitalStar) {
         context.strokeStyle = isDarkMode ? '#f8fafc' : '#0f172a';
         context.globalAlpha = territoryEditing ? 0.92 : 0.7;
         context.lineWidth = territoryEditing ? 1.2 : 0.9;
@@ -1118,6 +1267,25 @@ export function SovereigntyPlannerMap({
           addMarkerPath(context, screen.x, screen.y, marker, 7);
           context.stroke();
         }
+      }
+      if (isCapital || isCapitalPreview) {
+        const starSize = hasExpandedMarker ? 10 : 14;
+        const starX = hasExpandedMarker
+          ? screen.x + marker.halfWidth + 3
+          : screen.x;
+        const starY = hasExpandedMarker
+          ? screen.y - marker.halfHeight - 3
+          : screen.y;
+        const filled = isCapital;
+        drawCapitalStar(
+          context,
+          capitalIconCacheRef.current.get(filled ? 'fill' : 'outline'),
+          starX,
+          starY,
+          starSize,
+          filled,
+          isDarkMode,
+        );
       }
       if (upgradeIconGeometry.length > 0) {
         for (const icon of upgradeIconGeometry) {
@@ -1156,7 +1324,14 @@ export function SovereigntyPlannerMap({
       }
     }
 
-    if (hovered) {
+    if (
+      hovered
+      && !(
+        territoryEditing
+        && territoryEditTool === 'capital'
+        && selectedSystemIds.has(hovered.id)
+      )
+    ) {
       const point = geometry.points.find((candidate) => candidate.id === hovered.id);
       if (point) {
         const screen = pointToScreen(point);
@@ -1198,6 +1373,8 @@ export function SovereigntyPlannerMap({
   }, [
     allianceLogoRevision,
     ansiblexDistancesBySystemId,
+    capitalIconRevision,
+    capitalSystemId,
     geometry.edges,
     geometry.points,
     geometry.pointsById,
@@ -1219,6 +1396,7 @@ export function SovereigntyPlannerMap({
     size.height,
     size.width,
     territoryEditing,
+    territoryEditTool,
     plannedUpgradesBySystem,
     showUpgradeIcons,
     systemPlanSummaries,
@@ -1501,7 +1679,11 @@ export function SovereigntyPlannerMap({
     cancelViewportAnimation();
     event.currentTarget.setPointerCapture(event.pointerId);
     const rect = event.currentTarget.getBoundingClientRect();
-    if (territoryEditing && event.altKey) {
+    if (
+      territoryEditing
+      && territoryEditTool === 'territory'
+      && event.altKey
+    ) {
       const point = {
         x: event.clientX - rect.left,
         y: event.clientY - rect.top,
@@ -1528,7 +1710,13 @@ export function SovereigntyPlannerMap({
     setHovered(null);
     setHoveredUpgrade(null);
     setHoveredLinkId(null);
-  }, [cancelViewportAnimation, territoryEditing, viewport.panX, viewport.panY]);
+  }, [
+    cancelViewportAnimation,
+    territoryEditing,
+    territoryEditTool,
+    viewport.panX,
+    viewport.panY,
+  ]);
 
   const handlePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const lasso = lassoRef.current;
@@ -1632,13 +1820,20 @@ export function SovereigntyPlannerMap({
           : null
       );
       const nearest = territoryEditing
-        ? findNearestSystem(pointerX, pointerY, true)
+        ? territoryEditTool === 'capital'
+          ? findNearestSystem(pointerX, pointerY, true, true)
+          : findNearestSystem(pointerX, pointerY, true)
         : (
           placementMode !== 'neutral'
             ? findNearestSystem(pointerX, pointerY, false, true)
             : null
         ) ?? findNearestSystem(pointerX, pointerY, false);
       if (upgradeIcon) onPlanSystemClick(upgradeIcon.systemId);
+      else if (
+        territoryEditing
+        && territoryEditTool === 'capital'
+        && nearest
+      ) onCapitalSystemClick(nearest.id);
       else if (territoryEditing && nearest) onToggleSystem(nearest.id);
       else if (!territoryEditing && nearest) onPlanSystemClick(nearest.id);
       else if (!territoryEditing && placementMode === 'neutral') {
@@ -1656,6 +1851,7 @@ export function SovereigntyPlannerMap({
     findNearestAnsiblexLink,
     findUpgradeIcon,
     geometry.points,
+    onCapitalSystemClick,
     onLassoSelection,
     onToggleSystem,
     onPlanSystemClick,
@@ -1663,6 +1859,7 @@ export function SovereigntyPlannerMap({
     placementMode,
     pointToScreen,
     territoryEditing,
+    territoryEditTool,
   ]);
 
   const cancelPointerInteraction = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1680,7 +1877,7 @@ export function SovereigntyPlannerMap({
   }, []);
 
   useEffect(() => {
-    if (!territoryEditing) {
+    if (!territoryEditing || territoryEditTool !== 'territory') {
       setIsAltPressed(false);
       lassoRef.current = null;
       setLassoPoints([]);
@@ -1705,7 +1902,7 @@ export function SovereigntyPlannerMap({
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleWindowBlur);
     };
-  }, [territoryEditing]);
+  }, [territoryEditing, territoryEditTool]);
 
   const hoveredSystem = hovered && graph?.systems[String(hovered.id)];
   const hoveredName = hovered ? graph?.namesById?.[String(hovered.id)] ?? String(hovered.id) : null;
@@ -1731,11 +1928,23 @@ export function SovereigntyPlannerMap({
     : systemPlanSummaries[String(hoveredSystemId)] ?? null;
   const hoveredPlacementBlock = hoveredSystemId == null
     ? null
-    : placementBlockedReasons.get(hoveredSystemId) ?? (
-      placementMode !== 'neutral' && !selectedSystemIds.has(hoveredSystemId)
+    : (
+      territoryEditing
+      && territoryEditTool === 'capital'
+      && !hoveredSystem?.isSovereigntyEligible
+    )
+      ? 'Only sovereignty-eligible systems can be selected as the capital.'
+    : (
+      territoryEditing
+      && territoryEditTool === 'capital'
+      && !selectedSystemIds.has(hoveredSystemId)
+    )
+      ? 'Add this system to the selected territory before making it the capital.'
+      : placementBlockedReasons.get(hoveredSystemId) ?? (
+        placementMode !== 'neutral' && !selectedSystemIds.has(hoveredSystemId)
         ? 'This system is outside the selected territory.'
         : null
-    );
+      );
   const hoveredUpgradeDefinition = hoveredUpgrade
     ? upgradeDefinitionsById.get(hoveredUpgrade.typeId) ?? null
     : null;
@@ -1817,10 +2026,15 @@ export function SovereigntyPlannerMap({
     placementBlockedReasons.has(hoveredSystemId)
     || !selectedSystemIds.has(hoveredSystemId)
   );
+  const hoveredIsCapitalEligible = hoveredSystemId != null
+    && selectedSystemIds.has(hoveredSystemId)
+    && Boolean(hoveredSystem?.isSovereigntyEligible);
   const cursorClass = territoryEditing && (isAltPressed || lassoPoints.length > 0)
     ? 'cursor-crosshair'
     : isPanning
       ? 'cursor-grabbing'
+      : territoryEditing && territoryEditTool === 'capital' && hoveredSystem
+        ? hoveredIsCapitalEligible ? 'cursor-pointer' : 'cursor-not-allowed'
       : territoryEditing && hoveredSystem?.isSovereigntyEligible
         ? 'cursor-pointer'
         : placementMode !== 'neutral' && hoveredSystem
@@ -1850,7 +2064,9 @@ export function SovereigntyPlannerMap({
         aria-label={lassoPoints.length > 0
           ? 'Sovereignty map. Draw around systems to change the territory selection. Press Escape to cancel.'
           : territoryEditing
-            ? 'Sovereignty map. Click systems to change the territory selection, hold Alt or Option and drag to lasso, drag normally to pan, and use the mouse wheel or map controls to zoom.'
+            ? territoryEditTool === 'capital'
+              ? 'Sovereignty map. Click a selected-territory system to set or clear the capital, drag to pan, and use the mouse wheel or map controls to zoom.'
+              : 'Sovereignty map. Click systems to change the territory selection, hold Alt or Option and drag to lasso, drag normally to pan, and use the mouse wheel or map controls to zoom.'
             : placementMode === 'ansiblex'
               ? pendingAnsiblexFrom == null
                 ? 'Sovereignty map. Click a system to choose the first Ansiblex endpoint.'

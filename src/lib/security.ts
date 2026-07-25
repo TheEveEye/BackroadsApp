@@ -1,5 +1,7 @@
+export const NULLSEC_SECURITY_COLOR = '#833862';
+
 const SECURITY_COLORS = [
-  '#833862',
+  NULLSEC_SECURITY_COLOR,
   '#692623',
   '#AC2822',
   '#BD4E26',
