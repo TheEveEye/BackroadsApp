@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { getItineraryIds, getRouteSummaryIds, mergeWaypointRoute, type RouteOption } from '../lib/bridgeRoutes';
+import { BRIDGE_COUNTS, getItineraryIds, getRouteSummaryIds, mergeWaypointRoute, normalizeBridgeCount, type RouteOption } from '../lib/bridgeRoutes';
 import { ansiblexZoneSummary, getAnsiblexRouteZones, normalizeMaxAnsiblexZone } from '../lib/ansiblex';
 import { useAnsiblexPlanner } from '../lib/useAnsiblexPlanner';
 import { AnsiblexZoneSlider, AnsiblexZoneBadges } from '../components/AnsiblexZoneControls';
@@ -346,7 +346,7 @@ export function BridgePlanner() {
             titanBridgeFirstJump: typeof parsed.titanBridgeFirstJump === 'boolean' ? parsed.titanBridgeFirstJump : defaults.titanBridgeFirstJump,
             bridgeIntoDestination: typeof parsed.bridgeIntoDestination === 'boolean' ? parsed.bridgeIntoDestination : defaults.bridgeIntoDestination,
             bridgeFromStaging: typeof parsed.bridgeFromStaging === 'boolean' ? parsed.bridgeFromStaging : defaults.bridgeFromStaging,
-            bridgeCount: Number.isFinite(parsed.bridgeCount) ? Math.max(1, Math.min(2, Number(parsed.bridgeCount))) : defaults.bridgeCount,
+            bridgeCount: normalizeBridgeCount(parsed.bridgeCount),
             bridgeContinuous: typeof parsed.bridgeContinuous === 'boolean' ? parsed.bridgeContinuous : defaults.bridgeContinuous,
             bridgeOnlyChain: typeof parsed.bridgeOnlyChain === 'boolean' ? parsed.bridgeOnlyChain : defaults.bridgeOnlyChain,
             allowAnsiblex: typeof parsed.allowAnsiblex === 'boolean'
@@ -816,11 +816,11 @@ export function BridgePlanner() {
 
         const routes = state.bridgeOnlyChain
           ? combineWaypointRoutes(state.segmentRoutes, state.waypointIds || [], state.limit)
-          : combineWaypointRoutesWithBridgeBudget(state.segmentRoutes, state.waypointIds || [], state.limit, state.totalBridgeBudget || 1);
+          : combineWaypointRoutesWithBridgeBudget(state.segmentRoutes, state.waypointIds || [], state.limit, state.totalBridgeBudget ?? 1);
         const message = routes.length === 0
           ? state.bridgeOnlyChain
             ? 'No routes found through the selected waypoints.'
-            : `No routes found through the selected waypoints using ${state.totalBridgeBudget || 1} total bridge${state.totalBridgeBudget === 1 ? '' : 's'}.`
+            : `No routes found through the selected waypoints using ${state.totalBridgeBudget ?? 1} total bridge${state.totalBridgeBudget === 1 ? '' : 's'}.`
           : null;
         setRouteDisplayContext(state.displayContext);
         setRouteResult({ routes, message, loading: false, baselineJumps: combinedBaselineJumps });
@@ -997,7 +997,7 @@ export function BridgePlanner() {
         waypointIds,
         displayContext,
         bridgeOnlyChain: !!settings.bridgeOnlyChain,
-        totalBridgeBudget: Math.max(1, Math.min(2, settings.bridgeCount ?? 1)),
+        totalBridgeBudget: normalizeBridgeCount(settings.bridgeCount),
       };
       for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
         workers[segmentIndex % workers.length]?.postMessage({
@@ -1005,7 +1005,7 @@ export function BridgePlanner() {
           mode: 'waypoint-segment',
           segmentIndex,
           segmentCount,
-          totalBridgeBudget: Math.max(1, Math.min(2, settings.bridgeCount ?? 1)),
+          totalBridgeBudget: normalizeBridgeCount(settings.bridgeCount),
           stagingId: stopIds[segmentIndex],
           destinationId: stopIds[segmentIndex + 1],
         });
@@ -1522,6 +1522,7 @@ export function BridgePlanner() {
                         type="checkbox"
                         className="accent-blue-600"
                         checked={!!settings.bridgeIntoDestination}
+                        disabled={settings.bridgeCount === 0}
                         onChange={(e) => setSettings({
                           ...settings,
                           bridgeIntoDestination: e.target.checked,
@@ -1535,6 +1536,7 @@ export function BridgePlanner() {
                         type="checkbox"
                         className="accent-blue-600"
                         checked={!!settings.bridgeFromStaging}
+                        disabled={settings.bridgeCount === 0}
                         onChange={(e) => setSettings({
                           ...settings,
                           bridgeFromStaging: e.target.checked,
@@ -1549,24 +1551,24 @@ export function BridgePlanner() {
                         className="rounded border border-gray-300 dark:border-gray-700 bg-white/80 dark:bg-gray-900 px-2 py-1 text-xs"
                         value={settings.bridgeCount}
                         onChange={(e) => {
-                          const nextCount = Math.max(1, Math.min(2, Number(e.target.value)));
+                          const nextCount = normalizeBridgeCount(Number(e.target.value));
                           setSettings({
                             ...settings,
                             bridgeCount: nextCount,
-                            bridgeContinuous: nextCount === 2 ? settings.bridgeContinuous : false,
-                            bridgeIntoDestination: nextCount === 1 && settings.bridgeFromStaging ? false : settings.bridgeIntoDestination,
-                            bridgeFromStaging: nextCount === 1 && settings.bridgeIntoDestination ? false : settings.bridgeFromStaging,
+                            bridgeContinuous: nextCount >= 2 ? settings.bridgeContinuous : false,
+                            bridgeIntoDestination: nextCount === 0 || (nextCount === 1 && settings.bridgeFromStaging) ? false : settings.bridgeIntoDestination,
+                            bridgeFromStaging: nextCount === 0 || (nextCount === 1 && settings.bridgeIntoDestination) ? false : settings.bridgeFromStaging,
                           });
                         }}
                       >
-                        {[1, 2].map((n) => (
+                        {BRIDGE_COUNTS.map((n) => (
                           <option key={n} value={n}>{n}</option>
                         ))}
                       </select>
                     </label>
                   </>
                 )}
-                {settings.bridgeCount === 2 && !isBridgeOnlyMode && (
+                {settings.bridgeCount >= 2 && !isBridgeOnlyMode && (
                   <label className="inline-flex items-center gap-2">
                     <input
                       type="checkbox"
@@ -1774,7 +1776,7 @@ export function BridgePlanner() {
                   const gateDetails = route.bridgeLegs
                     .map((leg, legIdx) => leg.approachJumps > 0 ? `${leg.approachJumps}j to park${route.bridgeLegs.length > 1 ? ` ${legIdx + 1}` : ''}` : null)
                     .filter((value): value is string => value != null);
-                  if (route.postBridgeJumps > 0) gateDetails.push(`${route.postBridgeJumps}j after`);
+                  if (route.postBridgeJumps > 0) gateDetails.push(`${route.postBridgeJumps}j${route.totalBridges > 0 ? ' after' : ' by gates / Ansiblex'}`);
                   const routeBridgeLy = getRouteBridgeLy(route);
                   const routeIsotopes = isBridgeOnlyMode
                     ? calculateRouteIsotopes(route, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf)

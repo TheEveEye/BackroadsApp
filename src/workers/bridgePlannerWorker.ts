@@ -1,4 +1,4 @@
-import { mergeWaypointRoute, type RouteOption, type RouteBridgeLeg as BridgeLeg, type RouteStep } from '../lib/bridgeRoutes';
+import { mergeWaypointRoute, normalizeBridgeCount, type RouteOption, type RouteBridgeLeg as BridgeLeg, type RouteStep } from '../lib/bridgeRoutes';
 type SystemNode = {
   systemId: number;
   regionId: number;
@@ -876,6 +876,123 @@ function computeBridgeOnlyRoutes(
   return { routes, message: null, baselineJumps };
 }
 
+type BridgeLandingCost = { id: number; x: number; y: number; z: number; jumps: number };
+type BridgeSuffixLayer = {
+  byParking: Map<number, { endpointId: number; bridgeMeters: number; cost: number }>;
+  travel: ReturnType<typeof computeBestOneBridgeCosts> | null;
+};
+
+function computeThreeBridgeRoutes(
+  payload: ComputeRequest,
+  parkingSystems: typeof systemsList,
+  finalLandings: BridgeLandingCost[],
+  stagingPrev: PreviousSteps,
+  destinationPrev: PreviousSteps,
+  stagingDist: Map<number, number>,
+  blacklist: Set<number>,
+  activeCynoBeacons: Set<number>,
+  baselineJumps: number | null,
+  onPartial?: (routes: RouteOption[], baselineJumps: number | null) => void,
+  profile?: RouteProfile | null,
+) {
+  const maxMetersSq = Math.pow(payload.bridgeRange * LY, 2);
+  const limit = Math.max(1, Math.min(25, payload.routesToShow || 5));
+  const allParking = systemsList.filter((system) => !isExcludedSystem(system.id, payload.settings, blacklist) && !isForbiddenSystem(system));
+  const allLandings = systemsList.filter((system) => isValidBridgeLandingSystem(system, payload.settings,
+    blacklist, activeCynoBeacons, !!payload.settings.limitToCynoBeacons));
+  const bestLanding = (parking: typeof systemsList[number], landings: BridgeLandingCost[]) => {
+    let best: { endpointId: number; bridgeMeters: number; cost: number } | null = null;
+    let bestDistanceSq = Infinity;
+    for (const landing of landings) {
+      if (landing.id === parking.id) continue;
+      const distanceSq = Math.pow(parking.x - landing.x, 2) + Math.pow(parking.y - landing.y, 2) + Math.pow(parking.z - landing.z, 2);
+      if (distanceSq > maxMetersSq) continue;
+      if (!best || landing.jumps < best.cost || (landing.jumps === best.cost && distanceSq < bestDistanceSq)) {
+        best = { endpointId: landing.id, bridgeMeters: Math.sqrt(distanceSq), cost: landing.jumps };
+        bestDistanceSq = distanceSq;
+      }
+    }
+    return best;
+  };
+
+  // Work backwards: the final bridge, then the final two bridges. Each layer's
+  // incoming travel tree gives the best continuation from a preceding landing.
+  const layers: BridgeSuffixLayer[] = [];
+  let landings = finalLandings;
+  measureProfile(profile, 'three-bridge setup', () => {
+    for (let remainingBridges = 1; remainingBridges <= 2; remainingBridges++) {
+      const byParking: BridgeSuffixLayer['byParking'] = new Map();
+      for (const parking of allParking) {
+        const best = bestLanding(parking, landings);
+        if (best) byParking.set(parking.id, best);
+      }
+      const travel = payload.settings.bridgeContinuous ? null : computeBestOneBridgeCosts(
+        [...byParking].map(([parkingId, info]) => ({ parkingId, endpointId: info.endpointId, baseCost: info.cost })), payload.settings,
+      );
+      layers.push({ byParking, travel });
+      landings = allLandings.flatMap((system) => {
+        const jumps = travel ? travel.dist.get(system.id) : byParking.get(system.id)?.cost;
+        return jumps == null ? [] : [{ ...system, jumps }];
+      });
+    }
+  });
+
+  const compare = (a: RouteOption, b: RouteOption) => {
+    if (a.totalJumps !== b.totalJumps) return a.totalJumps - b.totalJumps;
+    for (let i = 0; i < 3; i++) {
+      const difference = a.bridgeLegs[i].approachJumps - b.bridgeLegs[i].approachJumps;
+      if (difference) return difference;
+    }
+    if (a.postBridgeJumps !== b.postBridgeJumps) return a.postBridgeJumps - b.postBridgeJumps;
+    for (let i = 0; i < 3; i++) {
+      const difference = a.bridgeLegs[i].bridgeLy - b.bridgeLegs[i].bridgeLy;
+      if (difference) return difference;
+    }
+    return a.key.localeCompare(b.key);
+  };
+  const routes: RouteOption[] = [];
+  let lastEmit = 0;
+  measureProfile(profile, 'three-bridge scan', () => {
+    for (const parking of parkingSystems) {
+      const first = bestLanding(parking, landings);
+      const approachPath = buildPath(stagingPrev, payload.stagingId, parking.id);
+      if (!first || !approachPath) continue;
+      const bridgeLegs: BridgeLeg[] = [{ parkingId: parking.id, endpointId: first.endpointId,
+        approachPath, approachJumps: approachPath.length - 1, bridgeLy: first.bridgeMeters / LY }];
+      const steps: RouteStep[] = [...stepsForPath(approachPath, stagingPrev),
+        { kind: 'jump', fromId: parking.id, toId: first.endpointId }];
+      let endpointId = first.endpointId;
+      for (let i = layers.length - 1; i >= 0; i--) {
+        const layer = layers[i];
+        const parkingId = layer.travel ? layer.travel.sourceParking.get(endpointId) : endpointId;
+        const info = parkingId == null ? null : layer.byParking.get(parkingId);
+        if (parkingId == null || !info) break;
+        const midPath = layer.travel ? buildPathToSource(layer.travel.prev, endpointId, parkingId) : [endpointId];
+        if (!midPath) break;
+        bridgeLegs.push({ parkingId, endpointId: info.endpointId, approachPath: midPath,
+          approachJumps: midPath.length - 1, bridgeLy: info.bridgeMeters / LY });
+        if (layer.travel) steps.push(...stepsForPath(midPath, layer.travel.prev, true));
+        steps.push({ kind: 'jump', fromId: parkingId, toId: info.endpointId });
+        endpointId = info.endpointId;
+      }
+      if (bridgeLegs.length !== 3) continue;
+      const destinationPath = buildPath(destinationPrev, payload.destinationId, endpointId)?.reverse();
+      if (!destinationPath) continue;
+      steps.push(...stepsForPath(destinationPath, destinationPrev, true));
+      const route: RouteOption = {
+        key: bridgeLegs.flatMap((leg) => [leg.parkingId, leg.endpointId]).join('-'),
+        bridgeLegs, postBridgePaths: [destinationPath], postBridgeJumps: destinationPath.length - 1,
+        totalJumps: (stagingDist.get(parking.id) ?? 0) + first.cost, totalBridges: 3, steps,
+      };
+      if (insertCandidate(routes, route, limit, compare) && onPartial && (routes.length === 1 || nowMs() - lastEmit >= 80)) {
+        lastEmit = nowMs();
+        onPartial([...routes], baselineJumps);
+      }
+    }
+  });
+  return { routes, message: routes.length ? null : 'No reachable three-bridge routes found.', baselineJumps };
+}
+
 function computePairRoutes(
   payload: ComputeRequest,
   onPartial?: (routes: RouteOption[], baselineJumps: number | null) => void,
@@ -895,6 +1012,16 @@ function computePairRoutes(
   }
   if (payload.settings.blacklistEnabled && blacklist.has(payload.stagingId)) {
     return { routes: [], message: 'Staging system is blacklisted.', baselineJumps: null };
+  }
+  const bridgeCount = normalizeBridgeCount(payload.settings.bridgeCount);
+  if (!payload.settings.bridgeOnlyChain && bridgeCount === 0) {
+    const { dist, prev } = computeTravelTree(payload.stagingId, payload.settings, MAX_TRAVEL_JUMPS);
+    const baselineJumps = dist.get(payload.destinationId) ?? null;
+    const path = baselineJumps == null ? null : buildPath(prev, payload.stagingId, payload.destinationId);
+    const route = path ? buildGateOnlyRoute(path, `gate-${payload.stagingId}-${payload.destinationId}`, prev) : null;
+    // A gate-only path is unique; emit it from just one worker shard.
+    const routes = route && (payload.mode !== 'pair-shard' || getShardInfo(payload).shardIndex === 0) ? [route] : [];
+    return { routes, message: route ? null : 'No gate or Ansiblex route found.', baselineJumps };
   }
   if (payload.settings.bridgeFromStaging && isForbiddenSystem(stagingNode)) {
     return { routes: [], message: 'Starting system is in highsec or Pochven.', baselineJumps: null };
@@ -967,8 +1094,12 @@ function computePairRoutes(
   }
 
   const limit = Math.max(1, Math.min(25, payload.routesToShow || 5));
-  const bridgeCount = Math.max(1, Math.min(2, payload.settings.bridgeCount ?? 1));
   const parkingSystems = shardByIndex(getEligibleParkingSystems(payload, blacklist, stagingDist), payload);
+
+  if (bridgeCount === 3) {
+    return computeThreeBridgeRoutes(payload, parkingSystems, endpointList, stagingPrev, destinationPrev,
+      stagingDist, blacklist, activeCynoBeacons, baselineJumps, onPartial, profile);
+  }
 
   if (bridgeCount === 1) {
     const best: Candidate[] = [];
@@ -1303,7 +1434,7 @@ function buildWaypointSegmentSettings(
     ...settings,
     bridgeOnlyChain: false,
     bridgeCount,
-    bridgeContinuous: bridgeCount === 2 ? !!settings.bridgeContinuous : false,
+    bridgeContinuous: bridgeCount >= 2 ? !!settings.bridgeContinuous : false,
     bridgeFromStaging: bridgeCount > 0 && isFirstSegment ? !!settings.bridgeFromStaging : false,
     bridgeIntoDestination: bridgeCount > 0 && isLastSegment ? !!settings.bridgeIntoDestination : false,
   };
@@ -1330,7 +1461,7 @@ function buildWaypointSegmentRouteOptions(
   const gateRoute = gatePath ? buildGateOnlyRoute(gatePath, `gate-${segmentIndex}-${fromId}-${toId}`, gatePrev) : null;
   if (gateRoute) routes.push(gateRoute);
 
-  const maxSegmentBridges = Math.max(0, Math.min(totalBridgeBudget, 2));
+  const maxSegmentBridges = normalizeBridgeCount(totalBridgeBudget);
   for (let bridgeCount = 1; bridgeCount <= maxSegmentBridges; bridgeCount++) {
     const segmentResult = computePairRoutes({
       ...payload,
@@ -1344,7 +1475,7 @@ function buildWaypointSegmentRouteOptions(
   }
 
   return {
-    routes: reduceWaypointRoutes(routes, Math.max(25, payload.routesToShow || 5) * 3),
+    routes: reduceWaypointRoutes(routes, Math.max(25, payload.routesToShow || 5) * (maxSegmentBridges + 1)),
     baselineJumps,
     message: routes.length === 0 ? 'No gate or bridge route found for this leg.' : null,
   };
@@ -1375,7 +1506,7 @@ function computeWaypointSegment(payload: ComputeRequest, profile?: RouteProfile 
     payload.destinationId,
     segmentIndex,
     segmentCount,
-    Math.max(1, Math.min(2, payload.totalBridgeBudget ?? payload.settings.bridgeCount ?? 1)),
+    normalizeBridgeCount(payload.totalBridgeBudget ?? payload.settings.bridgeCount),
     profile
   );
 }
@@ -1448,7 +1579,7 @@ export function computeRoutes(
   const segmentCount = stopIds.length - 1;
   const segmentRouteLists: RouteOption[][] = [];
   let combinedBaselineJumps: number | null = 0;
-  const totalBridgeBudget = Math.max(1, Math.min(2, payload.settings.bridgeCount ?? 1));
+  const totalBridgeBudget = normalizeBridgeCount(payload.settings.bridgeCount);
 
   for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
     const fromId = stopIds[segmentIndex];

@@ -1,3 +1,9 @@
+export const BRIDGE_COUNTS = [0, 1, 2, 3] as const;
+
+export function normalizeBridgeCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(3, Math.trunc(value))) : 1;
+}
+
 export type RouteStep = {
   kind: 'stargate' | 'ansiblex' | 'jump';
   fromId: number;
