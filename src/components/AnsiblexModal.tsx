@@ -5,8 +5,9 @@ import { Icon } from './Icon';
 import { AutocompleteInput } from './AutocompleteInput';
 import { ConfirmDialog } from './ConfirmDialog';
 import { ModalShell } from './ModalShell';
+import { importAnsiblexPlan, normalizeAnsiblexLinks, type AnsiblexLink } from '../lib/ansiblex';
 
-export function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ from: number; to: number; enabled?: boolean }>; onChange: (v: Array<{ from: number; to: number; enabled?: boolean }>) => void; onClose: () => void }) {
+export function AnsiblexModal({ value, onChange, onClose, allowDirectionControl = false }: { value: AnsiblexLink[]; onChange: (v: AnsiblexLink[]) => void; onClose: () => void; allowDirectionControl?: boolean }) {
   const LY = 9.4607e15; // meters per lightyear
   const [fromQuery, setFromQuery] = useState('');
   const [toQuery, setToQuery] = useState('');
@@ -88,11 +89,13 @@ export function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ fro
       // First try JSON array import
       try {
         const parsed = JSON.parse(text);
+        if (allowDirectionControl && parsed?.format === 'backroads-ansiblex') {
+          setList(importAnsiblexPlan(text).links);
+          return;
+        }
         if (Array.isArray(parsed)) {
-          const cleaned = parsed
-            .map((b: any) => ({ from: Number(b.from), to: Number(b.to), enabled: true }))
-            .filter((b: any) => Number.isFinite(b.from) && Number.isFinite(b.to));
-          if (cleaned.length > 0) {
+          const cleaned = normalizeAnsiblexLinks(parsed);
+          if (cleaned.length > 0 || parsed.length === 0) {
             setList(cleaned);
             return;
           }
@@ -224,7 +227,8 @@ export function AnsiblexModal({ value, onChange, onClose }: { value: Array<{ fro
           {list.map((b, idx) => (
             <li key={idx} className="py-2 flex items-center gap-2">
               <input type="checkbox" className="accent-blue-600" checked={b.enabled !== false} onChange={(e)=> setList(ls => ls.map((x,i)=> i===idx ? { ...x, enabled: e.target.checked } : x))} />
-              <span className="text-sm">{getName(b.from)} <span className="text-gray-500">⇄</span> {getName(b.to)}</span>
+              <span className="text-sm">{getName(b.from)} <span className="text-gray-500">{b.bidirectional === false ? '→' : '⇄'}</span> {getName(b.to)}</span>
+              {allowDirectionControl && <label className="text-xs inline-flex items-center gap-1"><input type="checkbox" checked={b.bidirectional !== false} onChange={(event) => setList((items) => items.map((item, i) => i === idx ? { ...item, bidirectional: event.target.checked } : item))} />Both ways</label>}
               <span className="ml-auto" />
               <button className="ml-2 mr-2 text-xs text-red-600 hover:underline" onClick={() => setList(ls => ls.filter((_,i)=> i!==idx))}>Remove</button>
             </li>

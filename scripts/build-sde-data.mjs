@@ -4,6 +4,8 @@ import { dirname, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { finished } from 'node:stream/promises';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { buildAnsiblexRules } from './ansiblex-data.mjs';
 
 const DEFAULT_SDE_URL = 'https://developers.eveonline.com/static-data/eve-online-static-data-latest-jsonl.zip';
 const DEFAULT_CACHE_PATH = '.cache/eve-online-static-data-latest-jsonl.zip';
@@ -24,6 +26,7 @@ Options:
   --observatories <path>   Optional JSON or text list of Jove Observatory system IDs/names.
   --no-preserve            Do not preserve hasObservatory flags from existing output.
   --force-download         Re-download even when the cache file exists.
+  --ansiblex-only          Only regenerate Ansiblex rules and ship costs.
   --help                   Show this help.
 `);
 }
@@ -37,6 +40,7 @@ function parseArgs(argv) {
     observatoriesPath: null,
     preserveExisting: true,
     forceDownload: false,
+    ansiblexOnly: false,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -64,6 +68,8 @@ function parseArgs(argv) {
       args.preserveExisting = false;
     } else if (arg === '--force-download') {
       args.forceDownload = true;
+    } else if (arg === '--ansiblex-only') {
+      args.ansiblexOnly = true;
     } else {
       throw new Error(`Unknown option: ${arg}`);
     }
@@ -270,6 +276,18 @@ async function main() {
     ? resolve(args.zipPath)
     : await downloadSde(args.url, args.cachePath, args.forceDownload);
 
+  const ansiblexTemplate = JSON.parse(readFileSync(fileURLToPath(new URL('../public/data/ansiblex_rules.json', import.meta.url)), 'utf8'));
+  const typeText = unzipEntry(zipPath, 'types.jsonl', 256);
+  const allTypes = parseJsonl(typeText, 'types.jsonl');
+  const sdeMeta = parseJsonl(unzipEntry(zipPath, '_sde.jsonl'), '_sde.jsonl')[0];
+  const ansiblexRules = buildAnsiblexRules(ansiblexTemplate, allTypes,
+    parseJsonl(unzipEntry(zipPath, 'typeDogma.jsonl', 256), 'typeDogma.jsonl'), sdeMeta);
+  writeJson(resolve(outDir, 'ansiblex_rules.json'), ansiblexRules);
+  if (args.ansiblexOnly) {
+    console.log(`Wrote Ansiblex rules from SDE build ${sdeMeta?.buildNumber ?? 'unknown'}`);
+    return;
+  }
+
   const solarSystems = parseJsonl(unzipEntry(zipPath, 'mapSolarSystems.jsonl'), 'mapSolarSystems.jsonl');
   const planetResources = parseJsonl(unzipEntry(zipPath, 'planetResources.jsonl'), 'planetResources.jsonl');
   const stargates = parseJsonl(unzipEntry(zipPath, 'mapStargates.jsonl'), 'mapStargates.jsonl');
@@ -281,11 +299,10 @@ async function main() {
   );
   const sovereigntyTypeIds = new Set(sovereigntyUpgrades.map((row) => Number(row._key)));
   const sovereigntyTypes = parseJsonlForKeys(
-    unzipEntry(zipPath, 'types.jsonl', 256),
+    typeText,
     'types.jsonl',
     sovereigntyTypeIds,
   );
-  const sdeMeta = parseJsonl(unzipEntry(zipPath, '_sde.jsonl'), '_sde.jsonl')[0];
 
   const systems = {};
   const namesById = {};

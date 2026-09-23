@@ -9,3 +9,37 @@
   color-scheme: light dark;
 }
 body { @apply m-0 min-w-[320px] min-h-screen bg-neutral-50 dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100; }
+
+.ansiblex-zone-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  background: transparent;
+}
+.ansiblex-zone-slider::-moz-range-track {
+  height: 6px;
+  background: transparent;
+}
+.ansiblex-zone-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: -7px;
+  border: 3px solid var(--ansi-color);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 6px #0004;
+  transition: box-shadow 150ms ease;
+}
+.ansiblex-zone-slider::-moz-range-thumb {
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
+  border: 3px solid var(--ansi-color);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 6px #0004;
+}
+.ansiblex-zone-slider:focus-visible {
+  outline: 2px solid var(--ansi-color);
+  outline-offset: 3px;
+  border-radius: 8px;
+}

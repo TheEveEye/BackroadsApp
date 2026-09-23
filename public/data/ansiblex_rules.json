@@ -1,0 +1,419 @@
+{
+  "rulesDate": "2026-09-22",
+  "source": {
+    "kind": "esi",
+    "url": "https://esi.evetech.net/universe/types/",
+    "retrievedAt": "2026-09-23T08:26:38.190Z",
+    "sdeBuild": null,
+    "notes": "Initial catalog checked against live type dogma; build:data replaces this with SDE provenance."
+  },
+  "capacityTj": 1250,
+  "zones": [
+    {
+      "maxLy": 5,
+      "multiplier": 0
+    },
+    {
+      "maxLy": 10,
+      "multiplier": 2
+    },
+    {
+      "maxLy": 15,
+      "multiplier": 6
+    },
+    {
+      "maxLy": 20,
+      "multiplier": 9
+    },
+    {
+      "maxLy": null,
+      "multiplier": 15
+    }
+  ],
+  "classes": [
+    {
+      "id": "324",
+      "name": "Assault Frigate",
+      "groupId": 324,
+      "eligible": true,
+      "baseCostTj": 7,
+      "sampleTypeId": 2834
+    },
+    {
+      "id": "1201",
+      "name": "Attack Battlecruiser",
+      "groupId": 1201,
+      "eligible": true,
+      "baseCostTj": 14,
+      "sampleTypeId": 4302
+    },
+    {
+      "id": "27",
+      "name": "Battleship",
+      "groupId": 27,
+      "eligible": true,
+      "baseCostTj": 16.5,
+      "sampleTypeId": 638
+    },
+    {
+      "id": "898",
+      "name": "Black Ops",
+      "groupId": 898,
+      "eligible": true,
+      "baseCostTj": 18,
+      "sampleTypeId": 22428
+    },
+    {
+      "id": "1202",
+      "name": "Blockade Runner",
+      "groupId": 1202,
+      "eligible": true,
+      "baseCostTj": 7,
+      "sampleTypeId": 12729
+    },
+    {
+      "id": "29",
+      "name": "Capsule",
+      "groupId": 29,
+      "eligible": true,
+      "baseCostTj": 1,
+      "sampleTypeId": 670
+    },
+    {
+      "id": "547",
+      "name": "Carrier",
+      "groupId": 547,
+      "eligible": false,
+      "baseCostTj": null,
+      "sampleTypeId": 23757
+    },
+    {
+      "id": "419",
+      "name": "Combat Battlecruiser",
+      "groupId": 419,
+      "eligible": true,
+      "baseCostTj": 14.5,
+      "sampleTypeId": 3756
+    },
+    {
+      "id": "906",
+      "name": "Combat Recon Ship",
+      "groupId": 906,
+      "eligible": true,
+      "baseCostTj": 11.5,
+      "sampleTypeId": 11959
+    },
+    {
+      "id": "5120",
+      "name": "Command Carrier",
+      "groupId": 5120,
+      "eligible": false,
+      "baseCostTj": null,
+      "sampleTypeId": 92822
+    },
+    {
+      "id": "1534",
+      "name": "Command Destroyer",
+      "groupId": 1534,
+      "eligible": true,
+      "baseCostTj": 9,
+      "sampleTypeId": 37480
+    },
+    {
+      "id": "540",
+      "name": "Command Ship",
+      "groupId": 540,
+      "eligible": true,
+      "baseCostTj": 16.5,
+      "sampleTypeId": 22442
+    },
+    {
+      "id": "237",
+      "name": "Corvette",
+      "groupId": 237,
+      "eligible": true,
+      "baseCostTj": 1,
+      "sampleTypeId": 588
+    },
+    {
+      "id": "830",
+      "name": "Covert Ops",
+      "groupId": 830,
+      "eligible": true,
+      "baseCostTj": 5,
+      "sampleTypeId": 11172
+    },
+    {
+      "id": "26",
+      "name": "Cruiser",
+      "groupId": 26,
+      "eligible": true,
+      "baseCostTj": 10,
+      "sampleTypeId": 620
+    },
+    {
+      "id": "380",
+      "name": "Deep Space Transport",
+      "groupId": 380,
+      "eligible": true,
+      "baseCostTj": 7,
+      "sampleTypeId": 12731
+    },
+    {
+      "id": "420",
+      "name": "Destroyer",
+      "groupId": 420,
+      "eligible": true,
+      "baseCostTj": 6,
+      "sampleTypeId": 16236
+    },
+    {
+      "id": "485",
+      "name": "Dreadnought",
+      "groupId": 485,
+      "eligible": false,
+      "baseCostTj": null,
+      "sampleTypeId": 19720
+    },
+    {
+      "id": "893",
+      "name": "Electronic Attack Ship",
+      "groupId": 893,
+      "eligible": true,
+      "baseCostTj": 9,
+      "sampleTypeId": 11174
+    },
+    {
+      "id": "543",
+      "name": "Exhumer",
+      "groupId": 543,
+      "eligible": true,
+      "baseCostTj": 1,
+      "sampleTypeId": 22544
+    },
+    {
+      "id": "4902",
+      "name": "Expedition Command Ship",
+      "groupId": 4902,
+      "eligible": true,
+      "baseCostTj": 15,
+      "sampleTypeId": 89607
+    },
+    {
+      "id": "1283",
+      "name": "Expedition Frigate",
+      "groupId": 1283,
+      "eligible": true,
+      "baseCostTj": 1,
+      "sampleTypeId": 33697
+    },
+    {
+      "id": "1972",
+      "name": "Flag Cruiser",
+      "groupId": 1972,
+      "eligible": true,
+      "baseCostTj": 12,
+      "sampleTypeId": 45534
+    },
+    {
+      "id": "1538",
+      "name": "Force Auxiliary",
+      "groupId": 1538,
+      "eligible": false,
+      "baseCostTj": null,
+      "sampleTypeId": 37604
+    },
+    {
+      "id": "833",
+      "name": "Force Recon Ship",
+      "groupId": 833,
+      "eligible": true,
+      "baseCostTj": 11.5,
+      "sampleTypeId": 11957
+    },
+    {
+      "id": "513",
+      "name": "Freighter",
+      "groupId": 513,
+      "eligible": true,
+      "baseCostTj": 1,
+      "sampleTypeId": 20183
+    },
+    {
+      "id": "25",
+      "name": "Frigate",
+      "groupId": 25,
+      "eligible": true,
+      "baseCostTj": 4,
+      "sampleTypeId": 582
+    },
+    {
+      "id": "28",
+      "name": "Hauler",
+      "groupId": 28,
+      "eligible": true,
+      "baseCostTj": 1,
+      "sampleTypeId": 648
+    },
+    {
+      "id": "358",
+      "name": "Heavy Assault Cruiser",
+      "groupId": 358,
+      "eligible": true,
+      "baseCostTj": 11.5,
+      "sampleTypeId": 2836
+    },
+    {
+      "id": "894",
+      "name": "Heavy Interdiction Cruiser",
+      "groupId": 894,
+      "eligible": true,
+      "baseCostTj": 10.5,
+      "sampleTypeId": 11995
+    },
+    {
+      "id": "941",
+      "name": "Industrial Command Ship",
+      "groupId": 941,
+      "eligible": true,
+      "baseCostTj": 10,
+      "sampleTypeId": 28606
+    },
+    {
+      "id": "831",
+      "name": "Interceptor",
+      "groupId": 831,
+      "eligible": true,
+      "baseCostTj": 8,
+      "sampleTypeId": 11176
+    },
+    {
+      "id": "541",
+      "name": "Interdictor",
+      "groupId": 541,
+      "eligible": true,
+      "baseCostTj": 8.5,
+      "sampleTypeId": 22452
+    },
+    {
+      "id": "902",
+      "name": "Jump Freighter",
+      "groupId": 902,
+      "eligible": true,
+      "baseCostTj": 1,
+      "sampleTypeId": 28844
+    },
+    {
+      "id": "4594",
+      "name": "Lancer Dreadnought",
+      "groupId": 4594,
+      "eligible": false,
+      "baseCostTj": null,
+      "sampleTypeId": 77281
+    },
+    {
+      "id": "832",
+      "name": "Logistics",
+      "groupId": 832,
+      "eligible": true,
+      "baseCostTj": 12.5,
+      "sampleTypeId": 11978
+    },
+    {
+      "id": "1527",
+      "name": "Logistics Frigate",
+      "groupId": 1527,
+      "eligible": true,
+      "baseCostTj": 9,
+      "sampleTypeId": 37457
+    },
+    {
+      "id": "900",
+      "name": "Marauder",
+      "groupId": 900,
+      "eligible": true,
+      "baseCostTj": 19,
+      "sampleTypeId": 28659
+    },
+    {
+      "id": "463",
+      "name": "Mining Barge",
+      "groupId": 463,
+      "eligible": true,
+      "baseCostTj": 1,
+      "sampleTypeId": 17476
+    },
+    {
+      "id": "1022",
+      "name": "Prototype Exploration Ship",
+      "groupId": 1022,
+      "eligible": true,
+      "baseCostTj": 1,
+      "sampleTypeId": 2078
+    },
+    {
+      "id": "883",
+      "name": "Rorqual",
+      "groupId": 883,
+      "eligible": true,
+      "baseCostTj": 19,
+      "sampleTypeId": 28352
+    },
+    {
+      "id": "31",
+      "name": "Shuttle",
+      "groupId": 31,
+      "eligible": true,
+      "baseCostTj": 1,
+      "sampleTypeId": 672
+    },
+    {
+      "id": "5087",
+      "name": "Special Edition Yachts",
+      "groupId": 5087,
+      "eligible": true,
+      "baseCostTj": 1,
+      "sampleTypeId": 635
+    },
+    {
+      "id": "834",
+      "name": "Stealth Bomber",
+      "groupId": 834,
+      "eligible": true,
+      "baseCostTj": 11,
+      "sampleTypeId": 11377
+    },
+    {
+      "id": "963",
+      "name": "Strategic Cruiser",
+      "groupId": 963,
+      "eligible": true,
+      "baseCostTj": 13,
+      "sampleTypeId": 29984
+    },
+    {
+      "id": "659",
+      "name": "Supercarrier",
+      "groupId": 659,
+      "eligible": false,
+      "baseCostTj": null,
+      "sampleTypeId": 3514
+    },
+    {
+      "id": "1305",
+      "name": "Tactical Destroyer",
+      "groupId": 1305,
+      "eligible": true,
+      "baseCostTj": 9,
+      "sampleTypeId": 34317
+    },
+    {
+      "id": "30",
+      "name": "Titan",
+      "groupId": 30,
+      "eligible": false,
+      "baseCostTj": null,
+      "sampleTypeId": 671
+    }
+  ]
+}

@@ -4,6 +4,7 @@ export const LY_IN_METERS = 9.4607e15;
 
 export type ProjectedPoint = { px: number; py: number };
 export type MapBounds = { minX: number; maxX: number; minY: number; maxY: number };
+export type MapViewport = { zoom: number; pan: { x: number; y: number } };
 
 type AnsiblexLink = {
   from: number;
@@ -65,6 +66,22 @@ export function centerFromBounds(bounds: MapBounds | null): { cx: number; cy: nu
   return {
     cx: (bounds.minX + bounds.maxX) / 2,
     cy: (bounds.minY + bounds.maxY) / 2,
+  };
+}
+
+/** Express the current view in a new frame without moving any point on screen. */
+export function rebaseMapViewport(
+  viewport: MapViewport, from: MapBounds, to: MapBounds, width: number, height: number, pad: number,
+): MapViewport {
+  const fromCenter = centerFromBounds(from);
+  const toCenter = centerFromBounds(to);
+  const scale = fitBoundsScale(from, width, height, pad) * viewport.zoom;
+  return {
+    zoom: scale / fitBoundsScale(to, width, height, pad),
+    pan: {
+      x: viewport.pan.x + (toCenter.cx - fromCenter.cx) * scale,
+      y: viewport.pan.y + (toCenter.cy - fromCenter.cy) * scale,
+    },
   };
 }
 

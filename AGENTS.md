@@ -28,7 +28,7 @@
 - Prefer descriptive inline constants over magic numbers (e.g., map sizes, ranges).
 
 ## Testing Guidelines
-- No automated test framework is configured.
+- `npm test` runs Vitest tests for Ansiblex rules, zone filtering and geometry, directed routing, import/export, and ESI handling.
 - Validate manually via `npm run dev` and spot-check key flows (routing, map rendering, worker responses).
 
 ## Commit & Pull Request Guidelines
@@ -40,5 +40,6 @@
 - Icons resolve via `src/components/Icon.tsx` from `public/icons/`.
 - Ship images and cyno beacon map markers resolve from `public/eve/`.
 - Bridge planner settings persist in `localStorage` under the shared `br.settings.v1` key, with fallback list keys for Ansiblex and cyno beacons.
+- Ansiblex zone preferences use `br.bridgePlanner.ansiblex.v1`; preserve them separately from shared settings. Older settings default to Zone 5 and a visible zone overlay. The removed Advanced fleet and ownership overrides are ignored when loading planner preferences.
 - Cyno beacon imports support the tabular alliance-format clipboard input as well as JSON list import.
 - Web workers live under `src/workers/` and are loaded via Vite `new URL(...)` syntax.

@@ -1,0 +1,13 @@
+[
+  { "from": 30004428, "to": 30004475, "enabled": true, "bidirectional": true },
+  { "from": 30004857, "to": 30004845, "enabled": true, "bidirectional": true },
+  { "from": 30004808, "to": 30004820, "enabled": true, "bidirectional": true },
+  { "from": 30004811, "to": 30002584, "enabled": true, "bidirectional": true },
+  { "from": 30004866, "to": 30004870, "enabled": true, "bidirectional": true },
+  { "from": 30004807, "to": 30004832, "enabled": true, "bidirectional": true },
+  { "from": 30004844, "to": 30004833, "enabled": true, "bidirectional": true },
+  { "from": 30004843, "to": 30004859, "enabled": true, "bidirectional": true },
+  { "from": 30004849, "to": 30004842, "enabled": true, "bidirectional": true },
+  { "from": 30004839, "to": 30004809, "enabled": true, "bidirectional": true },
+  { "from": 30004825, "to": 30004806, "enabled": true, "bidirectional": true }
+]
