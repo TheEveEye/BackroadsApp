@@ -2044,7 +2044,7 @@ export function SovereigntyPlannerMap({
         : 'cursor-grab';
 
   return (
-    <section className="flex h-full min-h-[520px] flex-col rounded-lg border border-gray-200 bg-white/50 p-4 dark:border-gray-700 dark:bg-black/20">
+    <section className="flex h-full min-h-[320px] flex-col rounded-lg border border-gray-200 bg-white/50 p-4 dark:border-gray-700 dark:bg-black/20 md:min-h-[520px] lg:min-h-0">
       <div
         ref={containerRef}
         className={`relative min-h-0 w-full flex-1 overflow-hidden rounded-md touch-none select-none ${cursorClass}`}

@@ -21,6 +21,7 @@ function loadFooterCollapsed() {
 
 export function Layout() {
   const location = useLocation();
+  const isSovereigntyPlanner = location.pathname.startsWith('/sovereignty-planner');
   const baseUrl = import.meta.env.BASE_URL || '/';
   const [footerCollapsed, setFooterCollapsed] = useState(loadFooterCollapsed);
   // Dynamic titles per route
@@ -65,7 +66,7 @@ export function Layout() {
   }, [footerCollapsed]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-b from-slate-50 to-white dark:from-gray-950 dark:to-black">
+    <div className={`min-h-screen ${isSovereigntyPlanner ? 'lg:h-dvh lg:overflow-hidden' : ''} flex flex-col bg-gradient-to-b from-slate-50 to-white dark:from-gray-950 dark:to-black`}>
       <header className="sticky top-0 z-40 backdrop-blur supports-[backdrop-filter]:bg-white/60 bg-white/80 dark:bg-black/40 border-b border-slate-200/70 dark:border-slate-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-col gap-3 sm:grid sm:grid-cols-[1fr_auto_1fr] sm:items-center">
           <Link to="/" className="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-semibold text-lg sm:justify-self-start">
@@ -120,7 +121,9 @@ export function Layout() {
           </div>
         </div>
       </header>
-      <main className="flex min-h-0 w-full max-w-screen-2xl flex-1 flex-col mx-auto px-4 sm:px-6 py-6">
+      <main className={`flex min-h-0 w-full max-w-screen-2xl flex-1 flex-col mx-auto px-4 sm:px-6 py-6 ${
+        isSovereigntyPlanner ? 'lg:overflow-hidden' : ''
+      }`}>
         <Outlet />
       </main>
       {footerCollapsed ? (

@@ -1,6 +1,8 @@
 import type { GraphData, SystemNode } from './data';
 
 export const SOVEREIGNTY_PLAN_STORAGE_KEY = 'br.sovereigntyPlanner.plan.v1';
+export const SOVEREIGNTY_PLAN_FILE_FORMAT = 'backroads-sovereignty-plan';
+export const SOVEREIGNTY_PLAN_FILE_VERSION = 1;
 export const ADVANCED_LOGISTICS_NETWORK_TYPE_ID = 81621;
 export const ANSIBLEX_MAX_RANGE_LY = 5;
 export const METERS_PER_LIGHT_YEAR = 9.4607e15;
@@ -34,6 +36,12 @@ export type SovereigntyUpgradeDefinition = {
   fuel?: SovereigntyUpgradeFuel;
 };
 
+export type SovereigntyUpgradeResourceLine = {
+  label: string;
+  amount: number;
+  production?: boolean;
+};
+
 export type PlannedSystemUpgrade = {
   typeId: number;
 };
@@ -47,6 +55,15 @@ export type PlannedAnsiblexLink = {
 export type SovereigntyPlan = {
   upgradesBySystem: Record<string, PlannedSystemUpgrade[]>;
   ansiblexLinks: PlannedAnsiblexLink[];
+};
+
+export type SovereigntyPlanFile = {
+  format: typeof SOVEREIGNTY_PLAN_FILE_FORMAT;
+  version: typeof SOVEREIGNTY_PLAN_FILE_VERSION;
+  exportedAt: string;
+  territorySystemIds: number[];
+  capitalSystemId: number | null;
+  plan: SovereigntyPlan;
 };
 
 export type SystemResourceSummary = {
@@ -85,6 +102,250 @@ export type SovereigntyPlanSummary = {
 
 export function emptySovereigntyPlan(): SovereigntyPlan {
   return { upgradesBySystem: {}, ansiblexLinks: [] };
+}
+
+export function getSovereigntyUpgradeResourceLines(
+  definition: SovereigntyUpgradeDefinition,
+): SovereigntyUpgradeResourceLine[] {
+  const rows: SovereigntyUpgradeResourceLine[] = [];
+  if (definition.powerAllocation !== 0) {
+    rows.push({ label: 'Power allocation', amount: definition.powerAllocation });
+  }
+  if (definition.powerProduction !== 0) {
+    rows.push({
+      label: 'Power production',
+      amount: definition.powerProduction,
+      production: true,
+    });
+  }
+  if (definition.workforceAllocation !== 0) {
+    rows.push({
+      label: 'Workforce allocation',
+      amount: definition.workforceAllocation,
+    });
+  }
+  if (definition.workforceProduction !== 0) {
+    rows.push({
+      label: 'Workforce production',
+      amount: definition.workforceProduction,
+      production: true,
+    });
+  }
+  if (definition.fuel) {
+    const fuelName = definition.fuel.typeId === 81143
+      ? 'Magmatic Gas'
+      : definition.fuel.typeId === 81144
+        ? 'Superionic Ice'
+        : `Fuel ${definition.fuel.typeId}`;
+    if (definition.fuel.startupCost !== 0) {
+      rows.push({
+        label: `${fuelName} startup`,
+        amount: definition.fuel.startupCost,
+      });
+    }
+    if (definition.fuel.hourlyUpkeep !== 0) {
+      rows.push({
+        label: `${fuelName} / hour`,
+        amount: definition.fuel.hourlyUpkeep,
+      });
+    }
+  }
+  return rows;
+}
+
+export function createSovereigntyPlanFile(
+  plan: SovereigntyPlan,
+  territorySystemIds: ReadonlySet<number>,
+  capitalSystemId: number | null,
+): SovereigntyPlanFile {
+  return {
+    format: SOVEREIGNTY_PLAN_FILE_FORMAT,
+    version: SOVEREIGNTY_PLAN_FILE_VERSION,
+    exportedAt: new Date().toISOString(),
+    territorySystemIds: Array.from(territorySystemIds).sort((a, b) => a - b),
+    capitalSystemId,
+    plan,
+  };
+}
+
+export function parseSovereigntyPlanFile(value: unknown): SovereigntyPlanFile {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('This file does not contain a sovereignty plan.');
+  }
+  const candidate = value as Partial<SovereigntyPlanFile>;
+  if (candidate.format !== SOVEREIGNTY_PLAN_FILE_FORMAT) {
+    throw new Error('This is not a Backroads sovereignty plan file.');
+  }
+  if (candidate.version !== SOVEREIGNTY_PLAN_FILE_VERSION) {
+    throw new Error(`Sovereignty plan file version ${String(candidate.version)} is not supported.`);
+  }
+  if (!Array.isArray(candidate.territorySystemIds)) {
+    throw new Error('The sovereignty plan has an invalid territory list.');
+  }
+  if (!candidate.plan || typeof candidate.plan !== 'object' || Array.isArray(candidate.plan)) {
+    throw new Error('The sovereignty plan data is missing.');
+  }
+  const rawPlan = candidate.plan as Partial<SovereigntyPlan>;
+  if (
+    !rawPlan.upgradesBySystem
+    || typeof rawPlan.upgradesBySystem !== 'object'
+    || Array.isArray(rawPlan.upgradesBySystem)
+    || !Array.isArray(rawPlan.ansiblexLinks)
+  ) {
+    throw new Error('The sovereignty plan data is invalid.');
+  }
+
+  const territorySystemIds = candidate.territorySystemIds;
+  if (territorySystemIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+    throw new Error('The sovereignty plan contains an invalid territory system.');
+  }
+  for (const [systemId, upgrades] of Object.entries(rawPlan.upgradesBySystem)) {
+    if (
+      !Number.isSafeInteger(Number(systemId))
+      || Number(systemId) <= 0
+      || String(Number(systemId)) !== systemId
+      || !Array.isArray(upgrades)
+    ) {
+      throw new Error('The sovereignty plan contains invalid system upgrades.');
+    }
+    const seenTypeIds = new Set<number>();
+    for (const upgrade of upgrades) {
+      const typeId = (upgrade as PlannedSystemUpgrade)?.typeId;
+      if (
+        !upgrade
+        || typeof upgrade !== 'object'
+        || Array.isArray(upgrade)
+        || !Number.isSafeInteger(typeId)
+        || typeId <= 0
+        || seenTypeIds.has(typeId)
+      ) {
+        throw new Error('The sovereignty plan contains an invalid or duplicate upgrade.');
+      }
+      seenTypeIds.add(typeId);
+    }
+  }
+  const seenLinkIds = new Set<string>();
+  for (const link of rawPlan.ansiblexLinks) {
+    const from = (link as PlannedAnsiblexLink)?.from;
+    const to = (link as PlannedAnsiblexLink)?.to;
+    const id = canonicalAnsiblexId(from, to);
+    if (
+      !link
+      || typeof link !== 'object'
+      || Array.isArray(link)
+      || !Number.isSafeInteger(from)
+      || !Number.isSafeInteger(to)
+      || from <= 0
+      || to <= 0
+      || from === to
+      || seenLinkIds.has(id)
+    ) {
+      throw new Error('The sovereignty plan contains an invalid or duplicate Ansiblex link.');
+    }
+    seenLinkIds.add(id);
+  }
+
+  const capitalSystemId = candidate.capitalSystemId == null
+    ? null
+    : candidate.capitalSystemId;
+  if (
+    capitalSystemId != null
+    && (!Number.isSafeInteger(capitalSystemId) || capitalSystemId <= 0)
+  ) {
+    throw new Error('The sovereignty plan contains an invalid capital system.');
+  }
+
+  return {
+    format: SOVEREIGNTY_PLAN_FILE_FORMAT,
+    version: SOVEREIGNTY_PLAN_FILE_VERSION,
+    exportedAt: typeof candidate.exportedAt === 'string' ? candidate.exportedAt : '',
+    territorySystemIds: Array.from(new Set(territorySystemIds)).sort((a, b) => a - b),
+    capitalSystemId,
+    plan: normalizeSovereigntyPlan(candidate.plan),
+  };
+}
+
+// Resource deficits remain valid planning states, including after removing a generator.
+export function validateSovereigntyPlanFile(
+  file: SovereigntyPlanFile,
+  graph: GraphData,
+  definitionsById: ReadonlyMap<number, SovereigntyUpgradeDefinition>,
+): void {
+  const territorySystemIds = new Set(file.territorySystemIds);
+  const getSystemName = (systemId: number) => (
+    graph.namesById?.[String(systemId)] ?? String(systemId)
+  );
+
+  for (const systemId of territorySystemIds) {
+    const system = graph.systems[String(systemId)];
+    if (!system?.isSovereigntyEligible) {
+      throw new Error(`${getSystemName(systemId)} is not a valid sovereignty system.`);
+    }
+  }
+  if (
+    file.capitalSystemId != null
+    && !territorySystemIds.has(file.capitalSystemId)
+  ) {
+    throw new Error('The capital system is outside the imported territory.');
+  }
+
+  const endpointSystemIds = new Set<number>();
+  for (const link of file.plan.ansiblexLinks) {
+    if (
+      !territorySystemIds.has(link.from)
+      || !territorySystemIds.has(link.to)
+    ) {
+      throw new Error('An imported Ansiblex endpoint is outside the territory.');
+    }
+    if (endpointSystemIds.has(link.from) || endpointSystemIds.has(link.to)) {
+      throw new Error('A system is used by more than one imported Ansiblex link.');
+    }
+    if (getAnsiblexDistanceLy(graph, link.from, link.to) > ANSIBLEX_MAX_RANGE_LY) {
+      throw new Error(
+        `${getSystemName(link.from)} and ${getSystemName(link.to)} exceed the Ansiblex range limit.`,
+      );
+    }
+    endpointSystemIds.add(link.from);
+    endpointSystemIds.add(link.to);
+  }
+
+  for (const [systemIdValue, upgrades] of Object.entries(file.plan.upgradesBySystem)) {
+    const systemId = Number(systemIdValue);
+    if (!territorySystemIds.has(systemId)) {
+      throw new Error(`${getSystemName(systemId)} has upgrades but is outside the territory.`);
+    }
+    const exclusivityGroups = new Set<string>();
+    for (const upgrade of upgrades) {
+      const definition = definitionsById.get(upgrade.typeId);
+      if (!definition) {
+        throw new Error(`Upgrade type ${upgrade.typeId} is not available in this SDE.`);
+      }
+      if (
+        definition.typeId === ADVANCED_LOGISTICS_NETWORK_TYPE_ID
+        && !endpointSystemIds.has(systemId)
+      ) {
+        throw new Error(`${getSystemName(systemId)} has an Ansiblex upgrade without a link.`);
+      }
+      if (
+        definition.mutuallyExclusiveGroup
+        && exclusivityGroups.has(definition.mutuallyExclusiveGroup)
+      ) {
+        throw new Error(`${getSystemName(systemId)} contains conflicting upgrades.`);
+      }
+      if (definition.mutuallyExclusiveGroup) {
+        exclusivityGroups.add(definition.mutuallyExclusiveGroup);
+      }
+    }
+  }
+
+  for (const systemId of endpointSystemIds) {
+    const hasAnsiblexUpgrade = (
+      file.plan.upgradesBySystem[String(systemId)] ?? []
+    ).some((upgrade) => upgrade.typeId === ADVANCED_LOGISTICS_NETWORK_TYPE_ID);
+    if (!hasAnsiblexUpgrade) {
+      throw new Error(`${getSystemName(systemId)} is missing its Ansiblex endpoint upgrade.`);
+    }
+  }
 }
 
 export function getSovereigntyUpgradeIconUrl(typeId: number) {

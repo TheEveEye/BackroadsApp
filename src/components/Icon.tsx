@@ -15,6 +15,8 @@ const NAME_TO_STEM: Record<string, string> = {
   'reverse-route': 'arrow.left.arrow.right',
   refresh: 'arrow.trianglehead.2.counterclockwise',
   scope: 'scope',
+  'set-destination': 'dot.scope',
+  'append-route': 'plus.circle',
   star: 'star',
   'star-fill': 'star.fill',
 };

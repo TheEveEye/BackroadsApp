@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from 'react';
 import {
   AutocompleteInput,
   type AutocompleteItem,
@@ -21,15 +28,19 @@ import {
   calculateSovereigntyPlan,
   calculateSystemResources,
   canonicalAnsiblexId,
+  createSovereigntyPlanFile,
   emptySovereigntyPlan,
   getAnsiblexDistanceLy,
   getPlacementPowerBlockReason,
   getSovereigntyUpgradeIconUrl,
+  getSovereigntyUpgradeResourceLines,
   indexUpgradeDefinitions,
   loadSovereigntyUpgradeDefinitions,
   normalizeSovereigntyPlan,
+  parseSovereigntyPlanFile,
   removeSystemsFromPlan,
   type SovereigntyPlan,
+  validateSovereigntyPlanFile,
   type SovereigntyUpgradeDefinition,
 } from '../lib/sovereigntyPlan';
 
@@ -41,9 +52,16 @@ type PendingConfirmation =
   | { kind: 'territory'; nextIds: number[]; removedIds: number[] }
   | { kind: 'replace'; systemId: number; currentTypeId: number; nextTypeId: number }
   | { kind: 'remove-link'; linkId: string }
+  | { kind: 'import'; workspace: ImportedSovereigntyWorkspace }
   | { kind: 'clear-plan' };
 
 type InspectorTab = 'system' | 'workforce' | 'routing';
+type ImportedSovereigntyWorkspace = {
+  territorySystemIds: Set<number>;
+  capitalSystemId: number | null;
+  plan: SovereigntyPlan;
+  fileName: string;
+};
 
 const SOVEREIGNTY_UI_STORAGE_KEY = 'br.sovereigntyPlanner.ui.v1';
 const INSPECTOR_TABS = [
@@ -118,6 +136,7 @@ export function SovereigntyPlanner() {
   const [graph, setGraph] = useState<GraphData | null>(() => (
     (window as AppWindow).appGraph ?? null
   ));
+  const importInputRef = useRef<HTMLInputElement | null>(null);
   const storedUiStateRef = useRef(loadStoredUiState());
   const hasValidatedStoredSelectionRef = useRef(false);
   const [selectedSystemIds, setSelectedSystemIds] = useState<Set<number>>(
@@ -174,6 +193,12 @@ export function SovereigntyPlanner() {
   const activeDefinition = activeUpgradeTypeId == null
     ? null
     : definitionsById.get(activeUpgradeTypeId) ?? null;
+  const activeUpgradeResourceRows = useMemo(
+    () => activeDefinition
+      ? getSovereigntyUpgradeResourceLines(activeDefinition)
+      : [],
+    [activeDefinition],
+  );
   const placementMode = activeDefinition?.typeId === ADVANCED_LOGISTICS_NETWORK_TYPE_ID
     ? 'ansiblex'
     : activeDefinition
@@ -229,6 +254,96 @@ export function SovereigntyPlanner() {
       // Browser storage can be unavailable in private or restricted contexts.
     }
   }, [plan]);
+
+  const applyImportedWorkspace = useCallback((
+    workspace: ImportedSovereigntyWorkspace,
+  ) => {
+    setSelectedSystemIds(new Set(workspace.territorySystemIds));
+    setCapitalSystemId(workspace.capitalSystemId);
+    setPlan(workspace.plan);
+    setActiveUpgradeTypeId(null);
+    setPendingAnsiblexFrom(null);
+    setSelectedPlanSystemId(null);
+    setSelectedLinkId(null);
+    setInspectorTab('system');
+    setTerritoryEditTool('territory');
+    setTerritoryEditing(workspace.territorySystemIds.size === 0);
+    if (workspace.territorySystemIds.size > 0) {
+      setFitSelectionRequest((request) => request + 1);
+    }
+    setNotice(`Imported ${workspace.fileName}.`);
+  }, []);
+
+  const exportPlanFile = useCallback(() => {
+    const file = createSovereigntyPlanFile(
+      plan,
+      selectedSystemIds,
+      capitalSystemId,
+    );
+    const blob = new Blob([`${JSON.stringify(file, null, 2)}\n`], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `backroads-sovereignty-plan-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+    setNotice('Sovereignty plan exported.');
+  }, [capitalSystemId, plan, selectedSystemIds]);
+
+  const importPlanFile = useCallback(async (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+    if (!graph || definitionStatus !== 'ready') {
+      setNotice('The map and upgrade catalogue must finish loading before importing.');
+      input.value = '';
+      return;
+    }
+    try {
+      const parsed = parseSovereigntyPlanFile(JSON.parse(await file.text()));
+      validateSovereigntyPlanFile(parsed, graph, definitionsById);
+      const workspace: ImportedSovereigntyWorkspace = {
+        territorySystemIds: new Set(parsed.territorySystemIds),
+        capitalSystemId: parsed.capitalSystemId,
+        plan: parsed.plan,
+        fileName: file.name,
+      };
+      const hasCurrentWorkspace = (
+        selectedSystemIds.size > 0
+        || capitalSystemId != null
+        || plan.ansiblexLinks.length > 0
+        || Object.keys(plan.upgradesBySystem).length > 0
+      );
+      if (hasCurrentWorkspace) {
+        setPendingConfirmation({ kind: 'import', workspace });
+      } else {
+        applyImportedWorkspace(workspace);
+      }
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? `Could not import plan: ${error.message}`
+          : 'Could not import the selected sovereignty plan.',
+      );
+    } finally {
+      input.value = '';
+    }
+  }, [
+    applyImportedWorkspace,
+    capitalSystemId,
+    definitionStatus,
+    definitionsById,
+    graph,
+    plan.ansiblexLinks.length,
+    plan.upgradesBySystem,
+    selectedSystemIds,
+  ]);
 
   useEffect(() => {
     if (!graph || eligibleSystemIds.size === 0) return;
@@ -684,6 +799,8 @@ export function SovereigntyPlanner() {
       );
     } else if (pendingConfirmation.kind === 'remove-link') {
       removeLink(pendingConfirmation.linkId);
+    } else if (pendingConfirmation.kind === 'import') {
+      applyImportedWorkspace(pendingConfirmation.workspace);
     } else {
       setPlan(emptySovereigntyPlan());
       setSelectedPlanSystemId(null);
@@ -691,7 +808,7 @@ export function SovereigntyPlanner() {
       setPendingAnsiblexFrom(null);
     }
     setPendingConfirmation(null);
-  }, [addUpgrade, pendingConfirmation, removeLink]);
+  }, [addUpgrade, applyImportedWorkspace, pendingConfirmation, removeLink]);
 
   const confirmationCopy = useMemo(() => {
     if (!pendingConfirmation) return null;
@@ -716,6 +833,16 @@ export function SovereigntyPlanner() {
         confirmLabel: 'Remove link',
       };
     }
+    if (pendingConfirmation.kind === 'import') {
+      const importedUpgradeCount = Object.values(
+        pendingConfirmation.workspace.plan.upgradesBySystem,
+      ).reduce((total, upgrades) => total + upgrades.length, 0);
+      return {
+        title: 'Replace current sovereignty plan?',
+        message: `Import ${pendingConfirmation.workspace.fileName} with ${pendingConfirmation.workspace.territorySystemIds.size.toLocaleString()} systems, ${importedUpgradeCount.toLocaleString()} upgrades, and ${pendingConfirmation.workspace.plan.ansiblexLinks.length.toLocaleString()} Ansiblex links? This replaces the current territory and plan.`,
+        confirmLabel: 'Import plan',
+      };
+    }
     return {
       title: 'Clear sovereignty plan?',
       message: 'All planned upgrades and Ansiblex links will be removed. Your selected territory will remain.',
@@ -725,7 +852,7 @@ export function SovereigntyPlanner() {
 
   return (
     <>
-      <div className="grid min-h-[540px] flex-1 gap-4 md:grid-cols-[18rem_minmax(0,1fr)] lg:grid-cols-[18rem_minmax(0,1fr)_18rem]">
+      <div className="grid min-h-0 flex-1 gap-4 md:grid-cols-[18rem_minmax(0,1fr)] lg:grid-cols-[18rem_minmax(0,1fr)_18rem] lg:overflow-hidden">
         <aside
           className="flex min-h-32 flex-col gap-4 overflow-y-auto rounded-lg border border-gray-200 bg-white/50 p-4 dark:border-gray-700 dark:bg-black/20 md:min-h-0"
           aria-label="Sovereignty planner toolbar"
@@ -938,26 +1065,83 @@ export function SovereigntyPlanner() {
                       Cancel
                     </button>
                   </div>
+                  {activeUpgradeResourceRows.length > 0 ? (
+                    <div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 border-t border-purple-200 pt-2 text-[11px] dark:border-purple-900/70">
+                      {activeUpgradeResourceRows.map((row) => (
+                        <div key={row.label} className="contents">
+                          <span className="min-w-0 text-slate-500 dark:text-slate-400">
+                            {row.label}
+                          </span>
+                          <span className={`text-right font-medium tabular-nums ${
+                            row.production
+                              ? 'text-emerald-700 dark:text-emerald-400'
+                              : 'text-slate-800 dark:text-slate-200'
+                          }`}>
+                            {row.production ? '+' : ''}
+                            {formatNumber(row.amount)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="mt-2 border-t border-purple-200 pt-2 text-[11px] text-slate-500 dark:border-purple-900/70 dark:text-slate-400">
+                      No power, workforce, or fuel costs.
+                    </div>
+                  )}
                 </div>
-              )}
-
-              {notice && (
-                <div className="border-l-2 border-amber-500 py-1 pl-3 text-xs leading-4 text-amber-700 dark:text-amber-300">
-                  {notice}
-                </div>
-              )}
-
-              {(planSummary.upgradeCount > 0 || planSummary.ansiblexCount > 0) && (
-                <button
-                  type="button"
-                  onClick={() => setPendingConfirmation({ kind: 'clear-plan' })}
-                  className="mt-auto w-full rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
-                >
-                  Clear plan
-                </button>
               )}
             </>
           )}
+          {notice && (
+            <div className="border-l-2 border-amber-500 py-1 pl-3 text-xs leading-4 text-amber-700 dark:text-amber-300">
+              {notice}
+            </div>
+          )}
+
+          <div className="mt-auto space-y-3 border-t border-slate-200 pt-3 dark:border-slate-700">
+            <div>
+              <div className="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300">
+                Plan file
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => importInputRef.current?.click()}
+                  disabled={!graph || definitionStatus !== 'ready'}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-md border border-gray-300 px-2 py-2 text-xs font-medium text-slate-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-700 dark:text-slate-300 dark:hover:bg-gray-800"
+                >
+                  <Icon name="import" size={15} />
+                  Import
+                </button>
+                <button
+                  type="button"
+                  onClick={exportPlanFile}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-md border border-gray-300 px-2 py-2 text-xs font-medium text-slate-700 hover:bg-gray-50 dark:border-gray-700 dark:text-slate-300 dark:hover:bg-gray-800"
+                >
+                  <Icon name="export" size={15} />
+                  Export
+                </button>
+              </div>
+              <input
+                ref={importInputRef}
+                type="file"
+                accept="application/json,.json"
+                onChange={importPlanFile}
+                className="hidden"
+                aria-label="Import sovereignty plan file"
+              />
+            </div>
+
+            {(planSummary.upgradeCount > 0 || planSummary.ansiblexCount > 0) && (
+              <button
+                type="button"
+                onClick={() => setPendingConfirmation({ kind: 'clear-plan' })}
+                className="w-full rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
+              >
+                Clear plan
+              </button>
+            )}
+          </div>
         </aside>
 
         <SovereigntyPlannerMap
