@@ -2,16 +2,33 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
 import { loadData, type GraphData } from './lib/data';
 import { bfsObservatories, type ObservatoryHit } from './lib/graph';
-import { Results } from './components/Results';
+import { Results, type DestinationMode } from './components/Results';
 import { MapView } from './components/MapView';
 import { SearchForm } from './components/SearchForm';
 import { Icon } from './components/Icon';
 import { AnsiblexModal as SharedAnsiblexModal } from './components/AnsiblexModal';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { useAuth } from './components/AuthProvider';
+
+const ESI_WAYPOINT_SCOPE = 'esi-ui.write_waypoint.v1';
+const ESI_WAYPOINT_URL = 'https://esi.evetech.net/latest/ui/autopilot/waypoint/';
+const ESI_COMPATIBILITY_DATE = '2025-09-30';
+
+function hasScope(scopes: string | undefined, scope: string) {
+  return (scopes ?? '').split(/\s+/).includes(scope);
+}
+
+async function getEsiErrorMessage(response: Response) {
+  const data = await response.json().catch(() => null) as { error?: unknown; message?: unknown } | null;
+  if (typeof data?.error === 'string' && data.error.trim()) return data.error;
+  if (typeof data?.message === 'string' && data.message.trim()) return data.message;
+  return `EVE ESI request failed (${response.status}).`;
+}
 
 function App() {
   const SETTINGS_STORAGE_KEY = 'br.settings.v1';
   const UI_STORAGE_KEY = 'br.ui.v1';
+  const { session, getAccessToken } = useAuth();
   const [graph, setGraph] = useState<GraphData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -97,13 +114,64 @@ function App() {
 
   // Toasts (top-rightish)
   const toastSeq = useRef(1);
-  const [toasts, setToasts] = useState<Array<{ id: number; msg: string; type: 'warn' | 'info' | 'success'; visible: boolean }>>([]);
-  const pushToast = (msg: string, type: 'warn' | 'info' | 'success' = 'info') => {
+  const [toasts, setToasts] = useState<Array<{ id: number; msg: string; type: 'warn' | 'info' | 'success' | 'error'; visible: boolean }>>([]);
+  const pushToast = (msg: string, type: 'warn' | 'info' | 'success' | 'error' = 'info') => {
     const id = toastSeq.current++;
     setToasts((ts) => [...ts, { id, msg, type, visible: false }]);
     requestAnimationFrame(() => setToasts((ts) => ts.map(t => t.id === id ? { ...t, visible: true } : t)));
     setTimeout(() => setToasts((ts) => ts.map(t => t.id === id ? { ...t, visible: false } : t)), 3500);
     setTimeout(() => setToasts((ts) => ts.filter(t => t.id !== id)), 4000);
+  };
+
+  const [pendingDestination, setPendingDestination] = useState<{ systemId: number; mode: DestinationMode } | null>(null);
+  const destinationRequestInFlightRef = useRef(false);
+
+  const setInGameDestination = async (systemId: number, mode: DestinationMode) => {
+    if (destinationRequestInFlightRef.current) return;
+    const systemName = graph?.namesById?.[String(systemId)] ?? String(systemId);
+    if (!session || session.characterId <= 0) {
+      pushToast('Log in with EVE Online to set an in-game destination.', 'error');
+      return;
+    }
+    if (!hasScope(session.scopes, ESI_WAYPOINT_SCOPE)) {
+      pushToast('Log out and log in again to grant in-game waypoint access.', 'error');
+      return;
+    }
+
+    destinationRequestInFlightRef.current = true;
+    setPendingDestination({ systemId, mode });
+    try {
+      const accessToken = await getAccessToken();
+      if (!accessToken) throw new Error('Log in again to grant in-game waypoint access.');
+
+      const url = new URL(ESI_WAYPOINT_URL);
+      url.searchParams.set('add_to_beginning', 'false');
+      url.searchParams.set('clear_other_waypoints', String(mode === 'replace'));
+      url.searchParams.set('datasource', 'tranquility');
+      url.searchParams.set('destination_id', String(systemId));
+
+      const response = await fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+          'X-Compatibility-Date': ESI_COMPATIBILITY_DATE,
+        },
+      });
+      if (!response.ok) throw new Error(await getEsiErrorMessage(response));
+
+      pushToast(
+        mode === 'append'
+          ? `Appended ${systemName} to your in-game route.`
+          : `Set ${systemName} as your in-game destination.`,
+        'success',
+      );
+    } catch (err: unknown) {
+      pushToast(err instanceof Error ? err.message : 'Failed to update the in-game route.', 'error');
+    } finally {
+      destinationRequestInFlightRef.current = false;
+      setPendingDestination(null);
+    }
   };
 
   // Open modal when SearchForm dispatches event
@@ -221,9 +289,9 @@ function App() {
             {toasts.map(t => (
               <div
                 key={t.id}
-                className={`pointer-events-auto mb-2 px-3 py-2 rounded-md border shadow flex items-center gap-2 transition-all duration-300 transform ${t.visible ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2'} ${t.type === 'warn' ? 'bg-amber-100 border-amber-300 text-amber-900' : t.type === 'success' ? 'bg-green-100 border-green-300 text-green-900' : 'bg-blue-100 border-blue-300 text-blue-900'}`}
+                className={`pointer-events-auto mb-2 px-3 py-2 rounded-md border shadow flex items-center gap-2 transition-all duration-300 transform ${t.visible ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2'} ${t.type === 'warn' ? 'bg-amber-100 border-amber-300 text-amber-900' : t.type === 'success' ? 'bg-green-100 border-green-300 text-green-900' : t.type === 'error' ? 'bg-red-100 border-red-300 text-red-900' : 'bg-blue-100 border-blue-300 text-blue-900'}`}
               >
-                <Icon name={t.type === 'warn' ? 'warn' : 'export'} size={16} color={t.type === 'warn' ? '#b45309' : t.type === 'success' ? '#166534' : '#1d4ed8'} />
+                <Icon name={t.type === 'warn' || t.type === 'error' ? 'warn' : 'export'} size={16} color={t.type === 'warn' ? '#b45309' : t.type === 'success' ? '#166534' : t.type === 'error' ? '#b91c1c' : '#1d4ed8'} />
                 <span className="text-sm">{t.msg}</span>
               </div>
             ))}
@@ -248,8 +316,15 @@ function App() {
           {loading && <p>Loading data…</p>}
           {error && <p className="text-red-600">{error} — ensure systems_index.json is present under public/data/</p>}
 
-          {!loading && !error && startId != null && (
-            <Results results={results} namesById={graph?.namesById || {}} lyRadius={lyRadius} graph={graph} />
+          {!loading && !error && startId != null && graph && (
+            <Results
+              results={results}
+              namesById={graph.namesById || {}}
+              lyRadius={lyRadius}
+              graph={graph}
+              onSetDestination={setInGameDestination}
+              pendingDestination={pendingDestination}
+            />
           )}
         </section>
         <section className="md:sticky md:top-20 md:self-start">

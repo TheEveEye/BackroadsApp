@@ -1,4 +1,4 @@
-export type ToolKey = 'observatories' | 'scanner' | 'bridgePlanner';
+export type ToolKey = 'observatories' | 'scanner' | 'bridgePlanner' | 'sovereigntyPlanner';
 
 export type EveSession = {
   characterId: number;
@@ -36,12 +36,14 @@ export const TOOL_LABELS: Record<ToolKey, string> = {
   observatories: 'Observatory Finder',
   scanner: 'Drifter Scanner',
   bridgePlanner: 'Bridge Planner',
+  sovereigntyPlanner: 'Sovereignty Planner',
 };
 
 const TOOL_ENV_PREFIX: Record<ToolKey, string> = {
   observatories: 'OBSERVATORIES',
   scanner: 'SCANNER',
   bridgePlanner: 'BRIDGE_PLANNER',
+  sovereigntyPlanner: 'SOVEREIGNTY_PLANNER',
 };
 
 const parseIdList = (value?: string): number[] => {

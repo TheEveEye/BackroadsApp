@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { BRIDGE_COUNTS, getItineraryIds, getRouteSummaryIds, mergeWaypointRoute, normalizeBridgeCount, type RouteOption } from '../lib/bridgeRoutes';
+import { ansiblexZoneSummary, getAnsiblexRouteZones, normalizeMaxAnsiblexZone } from '../lib/ansiblex';
+import { useAnsiblexPlanner } from '../lib/useAnsiblexPlanner';
+import { AnsiblexZoneSlider, AnsiblexZoneBadges } from '../components/AnsiblexZoneControls';
 import type { GraphData } from '../lib/data';
 import { resolveQueryToId } from '../lib/graph';
 import { AutocompleteInput } from '../components/AutocompleteInput';
@@ -37,24 +41,6 @@ type RouteStopDragState = {
   currentY: number;
   rowTops: number[];
   rowHeights: number[];
-};
-
-type RouteBridgeLeg = {
-  parkingId: number;
-  endpointId: number;
-  approachPath: number[];
-  approachJumps: number;
-  bridgeLy: number;
-};
-
-type RouteOption = {
-  key: string;
-  bridgeLegs: RouteBridgeLeg[];
-  postBridgePaths: number[][];
-  postBridgeJumps: number;
-  totalJumps: number;
-  totalBridges: number;
-  waypointIds?: number[];
 };
 
 type RouteDisplayContext = {
@@ -192,30 +178,8 @@ function getRouteBridgeLy(route: RouteOption) {
   return route.bridgeLegs.reduce((sum, leg) => sum + leg.bridgeLy, 0);
 }
 
-function pushUnique(ids: number[], id: number) {
-  if (ids[ids.length - 1] !== id) ids.push(id);
-}
-
-function getBridgeSequence(route: RouteOption) {
-  const ids: number[] = [];
-  for (const leg of route.bridgeLegs) {
-    pushUnique(ids, leg.parkingId);
-    pushUnique(ids, leg.endpointId);
-  }
-  return ids;
-}
-
 function getAllRouteIds(route: RouteOption) {
-  const ids: number[] = [];
-  for (const leg of route.bridgeLegs) {
-    for (const id of leg.approachPath) pushUnique(ids, id);
-    pushUnique(ids, leg.parkingId);
-    pushUnique(ids, leg.endpointId);
-  }
-  for (const path of route.postBridgePaths) {
-    for (const id of path) pushUnique(ids, id);
-  }
-  return ids;
+  return getItineraryIds(route);
 }
 
 function normalizeRouteStops(stops: string[] | undefined | null) {
@@ -258,19 +222,7 @@ function buildTrivialRoute(id: number, key: string): RouteOption {
     postBridgeJumps: 0,
     totalJumps: 0,
     totalBridges: 0,
-  };
-}
-
-function mergeWaypointRoute(prefix: RouteOption, route: RouteOption, waypointIds: number[]) {
-  const key = prefix.key === 'root' ? route.key : `${prefix.key}__${route.key}`;
-  return {
-    key,
-    bridgeLegs: [...prefix.bridgeLegs, ...route.bridgeLegs],
-    postBridgePaths: [...prefix.postBridgePaths, ...route.postBridgePaths].filter((path) => path.length > 0 && path[0] !== -1),
-    postBridgeJumps: prefix.postBridgeJumps + route.postBridgeJumps,
-    totalJumps: prefix.totalJumps + route.totalJumps,
-    totalBridges: prefix.totalBridges + route.totalBridges,
-    waypointIds,
+    steps: [],
   };
 }
 
@@ -407,7 +359,7 @@ export function BridgePlanner() {
             titanBridgeFirstJump: typeof parsed.titanBridgeFirstJump === 'boolean' ? parsed.titanBridgeFirstJump : defaults.titanBridgeFirstJump,
             bridgeIntoDestination: typeof parsed.bridgeIntoDestination === 'boolean' ? parsed.bridgeIntoDestination : defaults.bridgeIntoDestination,
             bridgeFromStaging: typeof parsed.bridgeFromStaging === 'boolean' ? parsed.bridgeFromStaging : defaults.bridgeFromStaging,
-            bridgeCount: Number.isFinite(parsed.bridgeCount) ? Math.max(1, Math.min(2, Number(parsed.bridgeCount))) : defaults.bridgeCount,
+            bridgeCount: normalizeBridgeCount(parsed.bridgeCount),
             bridgeContinuous: typeof parsed.bridgeContinuous === 'boolean' ? parsed.bridgeContinuous : defaults.bridgeContinuous,
             bridgeOnlyChain: typeof parsed.bridgeOnlyChain === 'boolean' ? parsed.bridgeOnlyChain : defaults.bridgeOnlyChain,
             allowAnsiblex: typeof parsed.allowAnsiblex === 'boolean'
@@ -573,6 +525,8 @@ export function BridgePlanner() {
   const routeStops = useMemo(() => normalizeRouteStops(planner.routeStops), [planner.routeStops]);
   const travelMode: TravelMode = settings.bridgeOnlyChain ? 'bridge-only' : 'bridge-gate';
   const isBridgeOnlyMode = travelMode === 'bridge-only';
+  const ansiblex = useAnsiblexPlanner(!!settings.allowAnsiblex && !isBridgeOnlyMode, graph, settings.ansiblexes ?? [], planner.presetShipClass, session?.allianceId ?? null);
+
   const [dragState, setDragState] = useState<RouteStopDragState | null>(null);
   const [isRouteStopDropping, setIsRouteStopDropping] = useState(false);
   const dragStateRef = useRef<RouteStopDragState | null>(null);
@@ -878,11 +832,11 @@ export function BridgePlanner() {
 
         const routes = state.bridgeOnlyChain
           ? combineWaypointRoutes(state.segmentRoutes, state.waypointIds || [], state.limit)
-          : combineWaypointRoutesWithBridgeBudget(state.segmentRoutes, state.waypointIds || [], state.limit, state.totalBridgeBudget || 1);
+          : combineWaypointRoutesWithBridgeBudget(state.segmentRoutes, state.waypointIds || [], state.limit, state.totalBridgeBudget ?? 1);
         const message = routes.length === 0
           ? state.bridgeOnlyChain
             ? 'No routes found through the selected waypoints.'
-            : `No routes found through the selected waypoints using ${state.totalBridgeBudget || 1} total bridge${state.totalBridgeBudget === 1 ? '' : 's'}.`
+            : `No routes found through the selected waypoints using ${state.totalBridgeBudget ?? 1} total bridge${state.totalBridgeBudget === 1 ? '' : 's'}.`
           : null;
         setRouteDisplayContext(state.displayContext);
         setRouteResult({ routes, message, loading: false, baselineJumps: combinedBaselineJumps });
@@ -1022,7 +976,7 @@ export function BridgePlanner() {
       bridgeContinuous: settings.bridgeContinuous,
       bridgeOnlyChain: settings.bridgeOnlyChain,
       allowAnsiblex: settings.allowAnsiblex,
-      ansiblexes: settings.ansiblexes,
+      ansiblexes: ansiblex.allowedLinks,
       limitToCynoBeacons: settings.limitToCynoBeacons,
       cynoBeacons: settings.cynoBeacons,
       blacklistEnabled: settings.blacklistEnabled,
@@ -1059,7 +1013,7 @@ export function BridgePlanner() {
         waypointIds,
         displayContext,
         bridgeOnlyChain: !!settings.bridgeOnlyChain,
-        totalBridgeBudget: Math.max(1, Math.min(2, settings.bridgeCount ?? 1)),
+        totalBridgeBudget: normalizeBridgeCount(settings.bridgeCount),
       };
       for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
         workers[segmentIndex % workers.length]?.postMessage({
@@ -1067,7 +1021,7 @@ export function BridgePlanner() {
           mode: 'waypoint-segment',
           segmentIndex,
           segmentCount,
-          totalBridgeBudget: Math.max(1, Math.min(2, settings.bridgeCount ?? 1)),
+          totalBridgeBudget: normalizeBridgeCount(settings.bridgeCount),
           stagingId: stopIds[segmentIndex],
           destinationId: stopIds[segmentIndex + 1],
         });
@@ -1112,7 +1066,7 @@ export function BridgePlanner() {
     settings.bridgeContinuous,
     settings.bridgeOnlyChain,
     settings.allowAnsiblex,
-    settings.ansiblexes,
+    ansiblex.allowedLinks,
     settings.limitToCynoBeacons,
     settings.cynoBeacons,
     settings.blacklistEnabled,
@@ -1177,54 +1131,64 @@ export function BridgePlanner() {
   };
 
   const routesForCopy = useMemo(() => routeResult.routes.slice(0, 10), [routeResult.routes]);
+  const ansiblexRouteZones = useMemo(() => new Map(routeResult.routes.map((route) => [route.key,
+    getAnsiblexRouteZones(route.steps, ansiblex.edges),
+  ])), [routeResult.routes, ansiblex.edges]);
+
   const eveLinksMarkup = useMemo(() => {
     if (!graph || routesForCopy.length === 0) return '';
     const namesById = graph.namesById || {};
     const lines = routesForCopy.map((route) => {
-      const chain = getBridgeSequence(route)
+      const chain = getItineraryIds(route)
         .map((id) => `<a href="showinfo:5//${id}">${namesById[String(id)] ?? String(id)}</a>`)
         .join(' - ');
       const isotopes = isBridgeOnlyMode
         ? calculateRouteIsotopes(route, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf)
         : null;
-      const fuelText = isotopes != null ? `, ${formatIsotopes(isotopes)} isotopes` : '';
+      const zones = ansiblexRouteZones.get(route.key);
+      const zoneText = zones?.count ? `; ${ansiblexZoneSummary(zones)}` : '';
+      const fuelText = (isotopes != null ? `, ${formatIsotopes(isotopes)} isotopes` : '') + zoneText;
       return `${chain} (${route.totalJumps}j, ${route.totalBridges}b${fuelText})`;
     });
     const body = lines.join('<br>');
     return `<font size="13" color="#bfffffff"></font><font size="13" color="#ffffffff"><loc>${body}</loc></font>`;
-  }, [graph, routesForCopy, isBridgeOnlyMode, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf]);
+  }, [graph, routesForCopy, isBridgeOnlyMode, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf, ansiblexRouteZones]);
   const plainTextRoutes = useMemo(() => {
     if (!graph || routesForCopy.length === 0) return '';
     const namesById = graph.namesById || {};
     const lines = routesForCopy.map((route) => {
-      const chain = getBridgeSequence(route)
+      const chain = getItineraryIds(route)
         .map((id) => namesById[String(id)] ?? String(id))
         .join(' - ');
       const isotopes = isBridgeOnlyMode
         ? calculateRouteIsotopes(route, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf)
         : null;
-      const fuelText = isotopes != null ? `, ${formatIsotopes(isotopes)} isotopes` : '';
+      const zones = ansiblexRouteZones.get(route.key);
+      const zoneText = zones?.count ? `; ${ansiblexZoneSummary(zones)}` : '';
+      const fuelText = (isotopes != null ? `, ${formatIsotopes(isotopes)} isotopes` : '') + zoneText;
       return `${chain} (${route.totalJumps}j, ${route.totalBridges}b${fuelText})`;
     });
     return lines.join('\n');
-  }, [graph, routesForCopy, isBridgeOnlyMode, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf]);
+  }, [graph, routesForCopy, isBridgeOnlyMode, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf, ansiblexRouteZones]);
   const buildRouteCopyPayload = useMemo(() => {
     if (!graph) return () => ({ eve: '', plain: '' });
     const namesById = graph.namesById || {};
     return (route: RouteOption) => {
-      const ids = getBridgeSequence(route);
+      const ids = getItineraryIds(route);
       let eveLine = ids.map((id) => `<a href="showinfo:5//${id}">${namesById[String(id)] ?? String(id)}</a>`).join(' - ');
       let plainLine = ids.map((id) => namesById[String(id)] ?? String(id)).join(' - ');
       const isotopes = isBridgeOnlyMode
         ? calculateRouteIsotopes(route, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf)
         : null;
-      const fuelText = isotopes != null ? `, ${formatIsotopes(isotopes)} isotopes` : '';
+      const zones = ansiblexRouteZones.get(route.key);
+      const zoneText = zones?.count ? `; ${ansiblexZoneSummary(zones)}` : '';
+      const fuelText = (isotopes != null ? `, ${formatIsotopes(isotopes)} isotopes` : '') + zoneText;
       eveLine += ` (${route.totalJumps}j, ${route.totalBridges}b${fuelText})`;
       plainLine += ` (${route.totalJumps}j, ${route.totalBridges}b${fuelText})`;
       const eve = `<font size="13" color="#bfffffff"></font><font size="13" color="#ffffffff"><loc>${eveLine}</loc></font>`;
       return { eve, plain: plainLine };
     };
-  }, [graph, isBridgeOnlyMode, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf]);
+  }, [graph, isBridgeOnlyMode, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf, ansiblexRouteZones]);
 
   const fitNodeIds = useMemo(() => {
     if (routeResult.routes.length === 0) return [] as number[];
@@ -1574,6 +1538,7 @@ export function BridgePlanner() {
                         type="checkbox"
                         className="accent-blue-600"
                         checked={!!settings.bridgeIntoDestination}
+                        disabled={settings.bridgeCount === 0}
                         onChange={(e) => setSettings({
                           ...settings,
                           bridgeIntoDestination: e.target.checked,
@@ -1587,6 +1552,7 @@ export function BridgePlanner() {
                         type="checkbox"
                         className="accent-blue-600"
                         checked={!!settings.bridgeFromStaging}
+                        disabled={settings.bridgeCount === 0}
                         onChange={(e) => setSettings({
                           ...settings,
                           bridgeFromStaging: e.target.checked,
@@ -1601,24 +1567,24 @@ export function BridgePlanner() {
                         className="rounded border border-gray-300 dark:border-gray-700 bg-white/80 dark:bg-gray-900 px-2 py-1 text-xs"
                         value={settings.bridgeCount}
                         onChange={(e) => {
-                          const nextCount = Math.max(1, Math.min(2, Number(e.target.value)));
+                          const nextCount = normalizeBridgeCount(Number(e.target.value));
                           setSettings({
                             ...settings,
                             bridgeCount: nextCount,
-                            bridgeContinuous: nextCount === 2 ? settings.bridgeContinuous : false,
-                            bridgeIntoDestination: nextCount === 1 && settings.bridgeFromStaging ? false : settings.bridgeIntoDestination,
-                            bridgeFromStaging: nextCount === 1 && settings.bridgeIntoDestination ? false : settings.bridgeFromStaging,
+                            bridgeContinuous: nextCount >= 2 ? settings.bridgeContinuous : false,
+                            bridgeIntoDestination: nextCount === 0 || (nextCount === 1 && settings.bridgeFromStaging) ? false : settings.bridgeIntoDestination,
+                            bridgeFromStaging: nextCount === 0 || (nextCount === 1 && settings.bridgeIntoDestination) ? false : settings.bridgeFromStaging,
                           });
                         }}
                       >
-                        {[1, 2].map((n) => (
+                        {BRIDGE_COUNTS.map((n) => (
                           <option key={n} value={n}>{n}</option>
                         ))}
                       </select>
                     </label>
                   </>
                 )}
-                {settings.bridgeCount === 2 && !isBridgeOnlyMode && (
+                {settings.bridgeCount >= 2 && !isBridgeOnlyMode && (
                   <label className="inline-flex items-center gap-2">
                     <input
                       type="checkbox"
@@ -1671,25 +1637,12 @@ export function BridgePlanner() {
                   </>
                 )}
                 {!isBridgeOnlyMode && (
-                  <>
-                    <label className="inline-flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        className="accent-blue-600"
-                        checked={!!settings.allowAnsiblex}
-                        onChange={(e) => setSettings({ ...settings, allowAnsiblex: e.target.checked })}
-                      />
-                      <span>Allow Ansiblex jump bridges</span>
-                    </label>
-                    <button
-                      type="button"
-                      className="px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 inline-flex items-center justify-center gap-1 leading-none"
-                      onClick={() => setShowAnsiblexModal(true)}
-                    >
-                      <Icon name="gear" size={16} />
-                      <span className="inline-block align-middle">Configure…</span>
-                    </button>
-                  </>
+                  <AnsiblexZoneSlider value={settings.allowAnsiblex ? ansiblex.state.maxZone : 0}
+                    onConfigure={() => setShowAnsiblexModal(true)}
+                    onChange={(zone) => {
+                      setSettings((current) => ({ ...current, allowAnsiblex: zone > 0 }));
+                      if (zone > 0) ansiblex.setState((current) => ({ ...current, maxZone: normalizeMaxAnsiblexZone(zone) }));
+                    }} />
                 )}
                 <label className="inline-flex items-center gap-2">
                   <input
@@ -1829,7 +1782,7 @@ export function BridgePlanner() {
 
                   const isSelected = selectedRoute?.key === route.key;
                   const routeTravelMinutes = isBridgeOnlyMode ? jumpTimersResult.routeTravelMinutesByKey[route.key] ?? null : null;
-                  const chainIds = getBridgeSequence(route);
+                  const chainIds = getRouteSummaryIds(route);
                   const displayChainIds = displayStagingId != null && chainIds[0] !== displayStagingId ? [displayStagingId, ...chainIds] : chainIds;
                   const stopChainIds = [
                     displayStagingId,
@@ -1839,7 +1792,7 @@ export function BridgePlanner() {
                   const gateDetails = route.bridgeLegs
                     .map((leg, legIdx) => leg.approachJumps > 0 ? `${leg.approachJumps}j to park${route.bridgeLegs.length > 1 ? ` ${legIdx + 1}` : ''}` : null)
                     .filter((value): value is string => value != null);
-                  if (route.postBridgeJumps > 0) gateDetails.push(`${route.postBridgeJumps}j after`);
+                  if (route.postBridgeJumps > 0) gateDetails.push(`${route.postBridgeJumps}j${route.totalBridges > 0 ? ' after' : ' by gates / Ansiblex'}`);
                   const routeBridgeLy = getRouteBridgeLy(route);
                   const routeIsotopes = isBridgeOnlyMode
                     ? calculateRouteIsotopes(route, selectedFuelPerLy, planner.presetJfc, planner.presetShipClass, planner.presetJf)
@@ -1960,6 +1913,7 @@ export function BridgePlanner() {
                       </div>
                       <div className="mt-1 flex items-center justify-between gap-3 text-xs text-slate-600 dark:text-slate-300 pointer-events-none">
                         <span className="min-w-0">
+                          <AnsiblexZoneBadges summary={ansiblexRouteZones.get(route.key)} />
                           {routeBridgeLy.toFixed(2)} ly
                           {routeTravelMinutes != null ? ` • ${formatTimerMinutes(routeTravelMinutes)}` : ''}
                           {isBridgeOnlyMode && routeTravelMinutes == null && jumpTimersResult.loading ? ' • calculating…' : ''}
@@ -1986,14 +1940,25 @@ export function BridgePlanner() {
               stagingId={displayStagingId}
               destinationId={displayDestinationId}
               bridgeLegs={selectedRoute?.bridgeLegs ?? null}
-              postBridgePaths={selectedRoute?.postBridgePaths ?? null}
+              itinerary={selectedRoute?.steps ?? []}
+              ansiblexEdges={ansiblex.edges}
+              routeContextKey={JSON.stringify([displayStagingId, ...(routeDisplayContext?.waypointIds ?? waypointIds), displayDestinationId, travelMode])}
+              zoneOverlay={!isBridgeOnlyMode && settings.allowAnsiblex ? {
+                visible: ansiblex.state.showZoneOverlay,
+                capitalId: ansiblex.mapReference.capitalId,
+                allianceName: ansiblex.mapReference.allianceId == null ? null : ansiblex.snapshot?.allianceNames?.[String(ansiblex.mapReference.allianceId)] ?? `Alliance ${ansiblex.mapReference.allianceId}`,
+                referenceLabel: ansiblex.mapReference.cached ? `${ansiblex.mapReference.source} · Cached ${Math.max(0, Math.floor((ansiblex.now - (ansiblex.snapshot?.fetchedAt ?? ansiblex.now)) / 60_000))}m ago` : ansiblex.mapReference.source,
+                rules: ansiblex.rules,
+                maxZone: ansiblex.state.maxZone,
+              } : null}
+              onShowZonesChange={(visible) => ansiblex.setState((state) => ({ ...state, showZoneOverlay: visible }))}
               fitNodeIds={fitNodeIds}
               bridgeRange={planner.bridgeRange}
               settings={{
                 excludeZarzakh: settings.excludeZarzakh,
                 sameRegionOnly: settings.sameRegionOnly,
                 allowAnsiblex: settings.allowAnsiblex,
-                ansiblexes: settings.ansiblexes,
+                ansiblexes: ansiblex.allowedLinks,
                 cynoBeacons: settings.cynoBeacons,
               }}
               statusMessage={routeResult.message}
@@ -2226,6 +2191,7 @@ export function BridgePlanner() {
 
       {showAnsiblexModal && (
         <SharedAnsiblexModal
+          allowDirectionControl
           onClose={() => setShowAnsiblexModal(false)}
           value={settings.ansiblexes || []}
           onChange={(list) => setSettings(s => ({ ...s, ansiblexes: list }))}

@@ -3,7 +3,14 @@ export type SystemNode = {
   constellationId: number;
   regionId: number;
   position: { x: number; y: number; z: number };
+  position2D?: { x: number; y: number };
   security?: number;
+  power: number;
+  workforce: number;
+  magmaticGas: number;
+  superionicIce: number;
+  npcFactionId?: number;
+  isSovereigntyEligible: boolean;
   adjacentSystems: number[];
   hasObservatory: boolean;
   isRegional: boolean;
@@ -11,6 +18,7 @@ export type SystemNode = {
 
 export type GraphData = {
   regionsById?: Record<string, string>;
+  constellationsById?: Record<string, string>;
   systems: Record<string, SystemNode>;
   namesById?: Record<string, string>;
   idsByName?: Record<string, number>;
@@ -24,9 +32,10 @@ export async function loadData(): Promise<GraphData> {
 
   let namesById: Record<string, string> | undefined;
   let regionsById: Record<string, string> | undefined;
+  let constellationsById: Record<string, string> | undefined;
   let idsByName: Record<string, number> | undefined;
   try {
-  const namesResp = await fetch(`${base}data/system_names.json`);
+    const namesResp = await fetch(`${base}data/system_names.json`);
     if (namesResp.ok) {
       const names = (await namesResp.json()) as {
         byId: Record<string, string>;
@@ -52,19 +61,29 @@ export async function loadData(): Promise<GraphData> {
       }
       idsByName = map;
     }
-  } catch (_) {
+  } catch {
+    // optional
+  }
+
+  try {
+    const constellationsResp = await fetch(`${base}data/constellation_names.json`);
+    if (constellationsResp.ok) {
+      const constellations = (await constellationsResp.json()) as { byId: Record<string, string> };
+      constellationsById = constellations.byId;
+    }
+  } catch {
     // optional
   }
 
   
   try {
-  const regionsResp = await fetch(`${base}data/region_names.json`);
+    const regionsResp = await fetch(`${base}data/region_names.json`);
     if (regionsResp.ok) {
       const regions = (await regionsResp.json()) as { byId: Record<string, string> };
       regionsById = regions.byId;
     }
-  } catch (_) {
+  } catch {
     // optional
   }
-  return { systems, namesById, idsByName, regionsById };
+  return { systems, namesById, idsByName, regionsById, constellationsById };
 }

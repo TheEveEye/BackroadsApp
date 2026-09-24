@@ -1,15 +1,23 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { GraphData } from '../lib/data';
+import type { RouteStep } from '../lib/bridgeRoutes';
+import type { ResolvedAnsiblexEdge } from '../lib/ansiblex';
+import {
+  ANSIBLEX_ZONE_COLORS, ANSIBLEX_ZONES, classifyAnsiblexSystems,
+  getAnsiblexZoneBounds, getAnsiblexZoneGeometry, groupAnsiblexZoneCells, zoneRangeLabel,
+  type AnsiblexZoneOverlay, type SystemZone,
+} from '../lib/ansiblexZones';
 import { findPathTo } from '../lib/graph';
 import { Icon } from './Icon';
 import {
   LY_IN_METERS,
+  type MapBounds,
   boundsFromIds,
-  buildAnsiblexSet,
   buildProjectedSystemMap,
   centerFromBounds,
   fitBoundsScale,
   project2D,
+  rebaseMapViewport,
   segmentIntersectsRect,
 } from './map/shared';
 
@@ -46,7 +54,11 @@ type BridgePlannerMapProps = {
     approachJumps: number;
     bridgeLy: number;
   }> | null;
-  postBridgePaths: number[][] | null;
+  itinerary: RouteStep[];
+  ansiblexEdges: ResolvedAnsiblexEdge[];
+  zoneOverlay: AnsiblexZoneOverlay | null;
+  onShowZonesChange: (visible: boolean) => void;
+  routeContextKey: string;
   fitNodeIds?: number[] | null;
   bridgeRange: number;
   settings: {
@@ -61,6 +73,8 @@ type BridgePlannerMapProps = {
   onSystemDoubleClick?: (id: number) => void;
 };
 
+type MapFrame = { bounds: MapBounds; mode: 'route' | 'zones'; capitalId: number | null };
+
 type Viewport = { zoom: number; pan: { x: number; y: number } };
 type ProjectedSystem = { id: number; px: number; py: number; regionId?: number; security?: number };
 type GateEdge = { x1: number; y1: number; x2: number; y2: number; interRegion: boolean };
@@ -69,6 +83,7 @@ type CynoBeaconMarker = { id: number; px: number; py: number; enabled: boolean }
 
 const secColors = ['#833862','#692623','#AC2822','#BD4E26','#CC722C','#F5FD93','#90E56A','#82D8A8','#73CBF3','#5698E5','#4173DB'];
 const fontFamily = 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif';
+const FIT_ANIMATION_DURATION_MS = 240;
 
 function securityColor(value: number) {
   const idx = value <= 0 ? 0 : Math.min(10, Math.ceil(value * 10));
@@ -139,7 +154,11 @@ export function BridgePlannerMap({
   stagingId,
   destinationId,
   bridgeLegs,
-  postBridgePaths,
+  itinerary,
+  ansiblexEdges,
+  zoneOverlay,
+  onShowZonesChange,
+  routeContextKey,
   fitNodeIds,
   bridgeRange,
   settings,
@@ -148,8 +167,8 @@ export function BridgePlannerMap({
   onSystemDoubleClick,
 }: BridgePlannerMapProps) {
   const base = import.meta.env?.BASE_URL || '/';
+  const [frame, setFrame] = useState<MapFrame | null>(null);
   const [zoomControl, setZoomControl] = useState(1);
-  const [resetDisabled, setResetDisabled] = useState(true);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [hoveredId, setHoveredId] = useState<number | null>(null);
   const [isPanning, setIsPanning] = useState(false);
@@ -160,12 +179,11 @@ export function BridgePlannerMap({
   const selectedPopupRef = useRef<HTMLDivElement | null>(null);
   const labelRefs = useRef<Map<number, HTMLSpanElement>>(new Map());
   const hoverLabelRef = useRef<HTMLSpanElement | null>(null);
-  const resetAnimationFrameRef = useRef<number | null>(null);
   const drawAnimationFrameRef = useRef<number | null>(null);
+  const fitAnimationFrameRef = useRef<number | null>(null);
   const drawFrameRef = useRef<() => void>(() => {});
   const viewportRef = useRef<Viewport>({ zoom: 1, pan: { x: 0, y: 0 } });
   const zoomControlRef = useRef(1);
-  const resetDisabledRef = useRef(true);
   const hoveredIdRef = useRef<number | null>(null);
   const beaconImageRef = useRef<HTMLImageElement | null>(null);
   const measureCtxRef = useRef<CanvasRenderingContext2D | null>(null);
@@ -178,35 +196,14 @@ export function BridgePlannerMap({
     moved: boolean;
   } | null>(null);
   const suppressClickRef = useRef(false);
-  const viewportResetKeyRef = useRef<string | null>(null);
+  const framedRouteContextRef = useRef<string | null>(null);
   const hasBase = !!graph && stagingId != null && destinationId != null;
-  const hasRoute = hasBase && Array.isArray(bridgeLegs) && bridgeLegs.length > 0;
+  const hasRoute = hasBase && itinerary.length > 0;
 
   const w = 800;
   const h = 600;
   const pad = 70;
-  const approachPaths = useMemo(
-    () => (bridgeLegs ?? []).map((leg) => leg.approachPath).filter((path) => path.length > 1),
-    [bridgeLegs],
-  );
-
-  const nodeIds = useMemo(() => {
-    if (!hasRoute || !bridgeLegs) return [] as number[];
-    const ids = new Set<number>();
-    if (stagingId != null) ids.add(stagingId);
-    if (destinationId != null) ids.add(destinationId);
-    for (const leg of bridgeLegs) {
-      for (const id of leg.approachPath) ids.add(id);
-      ids.add(leg.parkingId);
-      ids.add(leg.endpointId);
-    }
-    if (postBridgePaths) {
-      for (const path of postBridgePaths) {
-        for (const id of path) ids.add(id);
-      }
-    }
-    return Array.from(ids.values());
-  }, [bridgeLegs, destinationId, hasRoute, postBridgePaths, stagingId]);
+  const nodeIds = useMemo(() => [...new Set(itinerary.flatMap((step) => [step.fromId, step.toId]))], [itinerary]);
 
   const routeProjected = useMemo(() => {
     if (!hasRoute || !graph) return new Map<number, { px: number; py: number }>();
@@ -228,16 +225,31 @@ export function BridgePlannerMap({
     return boundsFromIds(graph, nodeIds);
   }, [graph, nodeIds, fitNodeIds]);
 
-  const bounds = fitBounds ?? selectedBounds;
-
-  const viewportResetKey = useMemo(() => {
-    const fitIds = (fitNodeIds ?? []).filter((id) => Number.isFinite(id)).slice().sort((a, b) => a - b);
-    return JSON.stringify({
-      stagingId,
-      destinationId,
-      fitIds,
+  const routeBounds = fitBounds ?? selectedBounds;
+  const capitalId = zoneOverlay?.capitalId ?? null;
+  const zoneRules = zoneOverlay?.rules ?? null;
+  const maxZone = zoneOverlay?.maxZone ?? 5;
+  const zoneBounds = useMemo(() => getAnsiblexZoneBounds(graph, capitalId), [graph, capitalId]);
+  const zoneGeometry = useMemo(() => graph ? getAnsiblexZoneGeometry(graph) : null, [graph]);
+  const systemZones = useMemo(() => graph && zoneRules
+    ? classifyAnsiblexSystems(graph, capitalId, zoneRules) : new Map<number, SystemZone>(), [graph, capitalId, zoneRules]);
+  // A single fill per zone shares cell boundaries without drawing an internal grid.
+  // Neither the viewport nor the zone ceiling changes the cached paths.
+  const zonePaths = useMemo(() => {
+    if (!zoneGeometry) return [];
+    return [...groupAnsiblexZoneCells(zoneGeometry, systemZones)].map(([zone, cells]) => {
+      const path = new Path2D();
+      for (const { polygon } of cells) {
+        path.moveTo(polygon[0][0], polygon[0][1]);
+        for (let i = 1; i < polygon.length; i++) path.lineTo(polygon[i][0], polygon[i][1]);
+        path.closePath();
+      }
+      return { zone, path };
     });
-  }, [destinationId, fitNodeIds, stagingId]);
+  }, [zoneGeometry, systemZones]);
+  const showZones = !!zoneOverlay?.visible && !!zoneBounds && !!zoneRules;
+  const bounds = frame?.bounds ?? zoneBounds ?? routeBounds;
+  const canRender = !!graph && !!bounds;
 
   const baseScale = useMemo(() => {
     return fitBoundsScale(bounds, w, h, pad);
@@ -291,51 +303,29 @@ export function BridgePlannerMap({
     return { projectedAll, systems, edges };
   }, [graph]);
 
-  const ansiSet = useMemo(
-    () => buildAnsiblexSet(settings.allowAnsiblex, settings.ansiblexes, { defaultBidirectional: true }),
-    [settings.allowAnsiblex, settings.ansiblexes],
-  );
-
-  const routeSegments = useMemo(() => {
-    if (approachPaths.length === 0) return [] as RouteSegment[];
-    const segs: RouteSegment[] = [];
-    for (const path of approachPaths) {
-      for (let i = 0; i < path.length - 1; i++) {
-        const from = path[i];
-        const to = path[i + 1];
-        const type = ansiSet.has(`${from}->${to}`) ? 'ansi' : 'gate';
-        segs.push({ from, to, type });
-      }
-    }
-    return segs;
-  }, [ansiSet, approachPaths]);
-
-  const postBridgeSegments = useMemo(() => {
-    if (!postBridgePaths || postBridgePaths.length === 0) return [] as RouteSegment[];
-    const segs: RouteSegment[] = [];
-    for (const path of postBridgePaths) {
-      if (path.length < 2) continue;
-      for (let i = 0; i < path.length - 1; i++) {
-        const from = path[i];
-        const to = path[i + 1];
-        const type = ansiSet.has(`${from}->${to}`) ? 'ansi' : 'gate';
-        segs.push({ from, to, type });
-      }
-    }
-    return segs;
-  }, [postBridgePaths, ansiSet]);
+  const routeSegments = useMemo<RouteSegment[]>(() => itinerary
+    .filter((step) => step.kind !== 'jump')
+    .map((step) => ({ from: step.fromId, to: step.toId, type: step.kind === 'ansiblex' ? 'ansi' : 'gate' })), [itinerary]);
+  const unknownZoneEdges = useMemo(() => new Set(ansiblexEdges
+    .filter((edge) => edge.zone == null)
+    .map((edge) => `${edge.from}->${edge.to}`)), [ansiblexEdges]);
+  const itineraryAnsiblexes = useMemo(() => itinerary.filter((step) => step.kind === 'ansiblex')
+    .map((step) => ansiblexEdges.find((edge) => edge.from === step.fromId && edge.to === step.toId))
+    .filter((edge): edge is ResolvedAnsiblexEdge => !!edge), [itinerary, ansiblexEdges]);
 
   const labelIds = useMemo(() => {
-    if (!hasRoute) return [] as number[];
     const ids = new Set<number>();
-    if (stagingId != null) ids.add(stagingId);
-    if (destinationId != null) ids.add(destinationId);
-    for (const leg of bridgeLegs ?? []) {
-      ids.add(leg.parkingId);
-      ids.add(leg.endpointId);
+    if (showZones && capitalId != null) ids.add(capitalId);
+    if (hasRoute) {
+      if (stagingId != null) ids.add(stagingId);
+      if (destinationId != null) ids.add(destinationId);
+      for (const leg of bridgeLegs ?? []) {
+        ids.add(leg.parkingId);
+        ids.add(leg.endpointId);
+      }
     }
     return Array.from(ids.values());
-  }, [bridgeLegs, destinationId, hasRoute, stagingId]);
+  }, [bridgeLegs, destinationId, hasRoute, stagingId, showZones, capitalId]);
 
   const focusNodeColors = useMemo(() => {
     const colors = new Map<number, string>();
@@ -397,11 +387,11 @@ export function BridgePlannerMap({
   }, []);
 
   const selected = useMemo(() => {
-    if (!graph || stagingId == null || startPos == null || selectedId == null) return null;
+    if (!graph || selectedId == null) return null;
     const system = graph.systems[String(selectedId)];
     const projected = graphGeometry.projectedAll.get(selectedId) || routeProjected.get(selectedId);
     if (!system || !projected) return null;
-    const route = findPathTo({
+    const route = stagingId == null ? null : findPathTo({
       startId: stagingId,
       targetId: selectedId,
       maxJumps: 200,
@@ -414,8 +404,8 @@ export function BridgePlannerMap({
       },
       lyRadius: bridgeRange,
     });
-    const jumps = route.path ? route.path.length - 1 : null;
-    const ly = Math.hypot(
+    const jumps = route?.path ? route.path.length - 1 : null;
+    const ly = startPos == null ? null : Math.hypot(
       system.position.x - startPos.x,
       system.position.y - startPos.y,
       system.position.z - startPos.z,
@@ -425,8 +415,8 @@ export function BridgePlannerMap({
     const secColor = securityColor(sVal);
     const secLabel = sVal.toFixed(1);
     const regionName = graph.regionsById?.[String(system.regionId)] ?? String(system.regionId);
-    const line = `${name} ${secLabel} • ${regionName} • ${jumps == null ? 'unreachable' : `${jumps}j`} • ${ly.toFixed(2)}ly`;
-    const approxWidth = Math.max(40, Math.min(800, Math.ceil(measureText(line) + 18)));
+    const line = `${name} ${secLabel} • ${regionName} • ${jumps == null ? 'unreachable' : `${jumps}j`} • ${ly?.toFixed(2) ?? '?'}ly`;
+    const approxWidth = Math.max(240, Math.min(800, Math.ceil(measureText(line) + 18)));
     const approxHeight = 32;
     return { projected, name, regionName, jumps, ly, secColor, secLabel, approxWidth, approxHeight };
   }, [
@@ -480,7 +470,7 @@ export function BridgePlannerMap({
   }, []);
 
   const findNearestSystem = useCallback((screenX: number, screenY: number) => {
-    if (!hasRoute) return null;
+    if (!canRender) return null;
     const viewport = viewportRef.current;
     const scale = baseScale * viewport.zoom;
     if (scale <= 0) return null;
@@ -497,7 +487,7 @@ export function BridgePlannerMap({
       }
     }
     return nearestId;
-  }, [baseScale, graphGeometry.systems, hasRoute, worldToScreen]);
+  }, [baseScale, graphGeometry.systems, canRender, worldToScreen]);
 
   const scheduleDraw = useCallback(() => {
     if (drawAnimationFrameRef.current != null || typeof window === 'undefined') return;
@@ -507,22 +497,14 @@ export function BridgePlannerMap({
     });
   }, []);
 
-  const syncResetDisabled = useCallback((viewport: Viewport) => {
-    const disabled = viewport.zoom === 1 && viewport.pan.x === 0 && viewport.pan.y === 0;
-    if (disabled === resetDisabledRef.current) return;
-    resetDisabledRef.current = disabled;
-    setResetDisabled(disabled);
-  }, []);
-
   const commitViewport = useCallback((viewport: Viewport, options?: { syncZoomControl?: boolean }) => {
     viewportRef.current = viewport;
-    syncResetDisabled(viewport);
     if (options?.syncZoomControl && Math.abs(zoomControlRef.current - viewport.zoom) > 0.0001) {
       zoomControlRef.current = viewport.zoom;
       setZoomControl(viewport.zoom);
     }
     scheduleDraw();
-  }, [scheduleDraw, syncResetDisabled]);
+  }, [scheduleDraw]);
 
   const consumeSuppressedClick = useCallback(() => {
     if (!suppressClickRef.current) return false;
@@ -531,41 +513,10 @@ export function BridgePlannerMap({
   }, []);
 
   const cancelViewportAnimation = useCallback(() => {
-    if (resetAnimationFrameRef.current == null || typeof window === 'undefined') return;
-    window.cancelAnimationFrame(resetAnimationFrameRef.current);
-    resetAnimationFrameRef.current = null;
+    if (fitAnimationFrameRef.current == null) return;
+    window.cancelAnimationFrame(fitAnimationFrameRef.current);
+    fitAnimationFrameRef.current = null;
   }, []);
-
-  const resetViewport = useCallback(() => {
-    const startZoom = viewportRef.current.zoom;
-    const startPan = viewportRef.current.pan;
-    if (startZoom === 1 && startPan.x === 0 && startPan.y === 0) return;
-    cancelViewportAnimation();
-    const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    const durationMs = 240;
-    const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
-
-    const tick = (now: number) => {
-      const elapsed = now - startedAt;
-      const t = Math.min(1, elapsed / durationMs);
-      const eased = easeOutCubic(t);
-      commitViewport({
-        zoom: startZoom + (1 - startZoom) * eased,
-        pan: {
-          x: startPan.x * (1 - eased),
-          y: startPan.y * (1 - eased),
-        },
-      }, { syncZoomControl: true });
-      if (t < 1) {
-        resetAnimationFrameRef.current = window.requestAnimationFrame(tick);
-      } else {
-        resetAnimationFrameRef.current = null;
-        commitViewport({ zoom: 1, pan: { x: 0, y: 0 } }, { syncZoomControl: true });
-      }
-    };
-
-    resetAnimationFrameRef.current = window.requestAnimationFrame(tick);
-  }, [cancelViewportAnimation, commitViewport]);
 
   const handleZoomChange = useCallback((nextZoom: number) => {
     cancelViewportAnimation();
@@ -584,19 +535,44 @@ export function BridgePlannerMap({
     }, { syncZoomControl: true });
   }, [cancelViewportAnimation, commitViewport]);
 
+  const fitMap = useCallback((nextBounds: MapBounds, mode: MapFrame['mode']) => {
+    cancelViewportAnimation();
+    const start = frame && bounds ? rebaseMapViewport(viewportRef.current, bounds, nextBounds, w, h, pad) : null;
+    setFrame({ bounds: nextBounds, mode, capitalId });
+    if (!start || window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      || (Math.abs(start.zoom - 1) < 0.0001 && Math.abs(start.pan.x) < 0.01 && Math.abs(start.pan.y) < 0.01)) {
+      commitViewport({ zoom: 1, pan: { x: 0, y: 0 } }, { syncZoomControl: true });
+      return;
+    }
+    // Switch frames with an equivalent transform, then ease into the new bounds.
+    commitViewport(start, { syncZoomControl: true });
+    const startedAt = performance.now();
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / FIT_ANIMATION_DURATION_MS);
+      const remaining = Math.pow(1 - progress, 3);
+      commitViewport({
+        zoom: 1 + (start.zoom - 1) * remaining,
+        pan: { x: start.pan.x * remaining, y: start.pan.y * remaining },
+      }, { syncZoomControl: true });
+      fitAnimationFrameRef.current = progress < 1 ? window.requestAnimationFrame(tick) : null;
+    };
+    fitAnimationFrameRef.current = window.requestAnimationFrame(tick);
+  }, [bounds, cancelViewportAnimation, capitalId, commitViewport, frame]);
+
+  const fitTarget = hasRoute && routeBounds ? { bounds: routeBounds, mode: 'route' as const }
+    : zoneBounds ? { bounds: zoneBounds, mode: 'zones' as const } : null;
+
   useEffect(() => {
-    if (!hasBase) {
-      viewportResetKeyRef.current = null;
-      return;
+    // Freeze the world frame across route results and zone filtering. Only a new
+    // journey, a new capital while viewing zones, or an explicit fit reframes it.
+    if (zoneBounds && (!frame || (frame.mode === 'zones' && frame.capitalId !== capitalId))) {
+      if (hasRoute) framedRouteContextRef.current = routeContextKey;
+      fitMap(zoneBounds, 'zones');
+    } else if (hasRoute && routeBounds && framedRouteContextRef.current !== routeContextKey) {
+      framedRouteContextRef.current = routeContextKey;
+      fitMap(routeBounds, 'route');
     }
-    if (viewportResetKeyRef.current == null) {
-      viewportResetKeyRef.current = viewportResetKey;
-      return;
-    }
-    if (viewportResetKeyRef.current === viewportResetKey) return;
-    viewportResetKeyRef.current = viewportResetKey;
-    resetViewport();
-  }, [hasBase, resetViewport, viewportResetKey]);
+  }, [capitalId, fitMap, frame, hasRoute, routeBounds, routeContextKey, zoneBounds]);
 
   const handlePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
@@ -653,7 +629,7 @@ export function BridgePlannerMap({
     if (!rect || rect.width <= 0 || rect.height <= 0) return;
     const backgroundCtx = prepareCanvas(backgroundCanvasRef.current);
     const overlayCtx = prepareCanvas(overlayCanvasRef.current);
-    if (!backgroundCtx || !overlayCtx || !hasRoute) return;
+    if (!backgroundCtx || !overlayCtx || !canRender) return;
 
     const viewport = viewportRef.current;
     const scale = baseScale * viewport.zoom;
@@ -676,6 +652,18 @@ export function BridgePlannerMap({
       ctx.stroke();
     };
 
+    if (showZones) {
+      backgroundCtx.save();
+      backgroundCtx.translate(w / 2 + viewport.pan.x - center.cx * scale, h / 2 + viewport.pan.y - center.cy * scale);
+      backgroundCtx.scale(scale * LY_IN_METERS, scale * LY_IN_METERS);
+      for (const { zone, path } of zonePaths) {
+        backgroundCtx.fillStyle = ANSIBLEX_ZONE_COLORS[zone];
+        backgroundCtx.globalAlpha = zone <= maxZone ? (isDarkMode ? 0.2 : 0.17) : 0.045;
+        backgroundCtx.fill(path);
+      }
+      backgroundCtx.restore();
+    }
+
     backgroundCtx.save();
     backgroundCtx.lineWidth = 1;
     backgroundCtx.lineCap = 'round';
@@ -689,10 +677,12 @@ export function BridgePlannerMap({
     drawLinePath(backgroundCtx, graphGeometry.edges, true);
     backgroundCtx.setLineDash([]);
     backgroundCtx.globalAlpha = 1;
-    backgroundCtx.fillStyle = isDarkMode ? '#64748b' : '#cbd5e1';
     for (const system of graphGeometry.systems) {
       if (system.px < xMin || system.px > xMax || system.py < yMin || system.py > yMax) continue;
       const pt = worldToScreen(system, viewport);
+      const zone = showZones ? systemZones.get(system.id)?.zone : null;
+      backgroundCtx.fillStyle = zone ? ANSIBLEX_ZONE_COLORS[zone] : isDarkMode ? '#64748b' : '#94a3b8';
+      backgroundCtx.globalAlpha = zone && zone > maxZone ? 0.35 : 0.9;
       backgroundCtx.beginPath();
       backgroundCtx.arc(pt.x, pt.y, 2.5, 0, Math.PI * 2);
       backgroundCtx.fill();
@@ -728,30 +718,12 @@ export function BridgePlannerMap({
       const b = screenFor(seg.to);
       if (!a || !b) continue;
       overlayCtx.setLineDash([]);
-      overlayCtx.strokeStyle = seg.type === 'ansi' ? '#22c55e' : '#facc15';
+      const unknownZone = unknownZoneEdges.has(`${seg.from}->${seg.to}`);
+      overlayCtx.strokeStyle = seg.type === 'ansi' ? unknownZone ? '#f59e0b' : '#22c55e' : '#facc15';
       overlayCtx.lineWidth = 2.5;
       overlayCtx.globalAlpha = seg.type === 'ansi' ? 0.9 : 0.95;
       if (seg.type === 'ansi') {
         drawQuadraticArc(overlayCtx, a, b, 0.25, 26, 140);
-      } else {
-        if (!segmentIntersectsRect(a.x, a.y, b.x, b.y, 0, 0, w, h)) continue;
-        overlayCtx.beginPath();
-        overlayCtx.moveTo(a.x, a.y);
-        overlayCtx.lineTo(b.x, b.y);
-        overlayCtx.stroke();
-      }
-    }
-
-    for (const seg of postBridgeSegments) {
-      const a = screenFor(seg.from);
-      const b = screenFor(seg.to);
-      if (!a || !b) continue;
-      overlayCtx.setLineDash([4, 4]);
-      overlayCtx.strokeStyle = seg.type === 'ansi' ? '#22c55e' : '#facc15';
-      overlayCtx.lineWidth = 2;
-      overlayCtx.globalAlpha = 0.6;
-      if (seg.type === 'ansi') {
-        drawQuadraticArc(overlayCtx, a, b, 0.22, 22, 130);
       } else {
         if (!segmentIntersectsRect(a.x, a.y, b.x, b.y, 0, 0, w, h)) continue;
         overlayCtx.beginPath();
@@ -785,9 +757,30 @@ export function BridgePlannerMap({
       overlayCtx.fill();
     }
 
+    if (showZones && capitalId != null) {
+      const pt = screenFor(capitalId);
+      if (pt) {
+        overlayCtx.fillStyle = '#fbbf24';
+        overlayCtx.strokeStyle = isDarkMode ? '#0f172a' : '#ffffff';
+        overlayCtx.lineWidth = 2;
+        overlayCtx.beginPath();
+        for (let i = 0; i < 10; i++) {
+          const angle = -Math.PI / 2 + i * Math.PI / 5;
+          const radius = i % 2 === 0 ? 10 : 4.5;
+          const x = pt.x + Math.cos(angle) * radius;
+          const y = pt.y + Math.sin(angle) * radius;
+          if (i === 0) overlayCtx.moveTo(x, y);
+          else overlayCtx.lineTo(x, y);
+        }
+        overlayCtx.closePath();
+        overlayCtx.fill();
+        overlayCtx.stroke();
+      }
+    }
+
     const positionTextElement = (element: HTMLElement, x: number, y: number) => {
-      const cssX = Math.round(x * rect.width / w);
-      const cssY = Math.round(y * rect.height / h);
+      const cssX = Math.max(4, Math.min(rect.width - element.offsetWidth - 4, Math.round(x * rect.width / w)));
+      const cssY = Math.max(4, Math.min(rect.height - element.offsetHeight - 4, Math.round(y * rect.height / h)));
       element.style.left = `${cssX}px`;
       element.style.top = `${cssY}px`;
       element.style.display = 'block';
@@ -821,8 +814,8 @@ export function BridgePlannerMap({
       const pt = worldToScreen(selected.projected, viewport);
       const cssX = (pt.x + 10) * rect.width / w;
       const cssY = Math.round(pt.y - 12) * rect.height / h;
-      popup.style.left = `${Math.round(cssX)}px`;
-      popup.style.top = `${Math.round(cssY)}px`;
+      popup.style.left = `${Math.max(4, Math.min(rect.width - popup.offsetWidth - 4, Math.round(cssX)))}px`;
+      popup.style.top = `${Math.max(4, Math.min(rect.height - popup.offsetHeight - 4, Math.round(cssY)))}px`;
       popup.style.transform = 'none';
     }
   }, [
@@ -836,11 +829,16 @@ export function BridgePlannerMap({
     graphGeometry.projectedAll,
     graphGeometry.systems,
     h,
-    hasRoute,
+    canRender,
+    showZones,
+    capitalId,
+    maxZone,
+    systemZones,
+    zonePaths,
     hoveredId,
     isDarkMode,
     labelIds,
-    postBridgeSegments,
+    unknownZoneEdges,
     prepareCanvas,
     routeProjected,
     routeSegments,
@@ -857,11 +855,13 @@ export function BridgePlannerMap({
 
   useEffect(() => {
     return () => {
+      cancelViewportAnimation();
       if (drawAnimationFrameRef.current != null) {
         window.cancelAnimationFrame(drawAnimationFrameRef.current);
+        drawAnimationFrameRef.current = null;
       }
     };
-  }, []);
+  }, [cancelViewportAnimation]);
 
   useEffect(() => {
     const image = new Image();
@@ -879,7 +879,7 @@ export function BridgePlannerMap({
     const observer = new ResizeObserver(() => scheduleDraw());
     observer.observe(container);
     return () => observer.disconnect();
-  }, [scheduleDraw]);
+  }, [scheduleDraw, canRender]);
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
@@ -923,8 +923,6 @@ export function BridgePlannerMap({
     };
   }, [commitViewport]);
 
-  useEffect(() => () => cancelViewportAnimation(), [cancelViewportAnimation]);
-
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
     const media = window.matchMedia('(prefers-color-scheme: dark)');
@@ -938,38 +936,35 @@ export function BridgePlannerMap({
     return () => media.removeListener(update);
   }, []);
 
-  if (!hasBase) {
-    return (
-      <section className="bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
-        <h2 className="text-xl font-medium mb-2">Map</h2>
-        <p className="text-sm text-slate-600 dark:text-slate-300">Select a destination and staging system to preview the route.</p>
-      </section>
-    );
-  }
-
-  if (!hasRoute) {
-    return (
-      <section className="bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
-        <h2 className="text-xl font-medium mb-2">Map</h2>
-        <p className="text-sm text-slate-600 dark:text-slate-300">{statusMessage || 'No route to display yet.'}</p>
-        {baselineJumps != null && (
-          <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
-            Direct route: {baselineJumps}j without bridge
-          </p>
-        )}
-      </section>
-    );
-  }
+  const capitalName = capitalId == null ? null : nameFor(capitalId);
+  const selectedZone = selectedId == null ? null : systemZones.get(selectedId);
 
   return (
-    <section className="bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
-      <div className="mb-2">
+    <section className="bg-white/50 dark:bg-black/20 rounded-lg p-4 border border-gray-200 dark:border-gray-700" aria-label="Planner map">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-xl font-medium">Map</h2>
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          {zoneOverlay && <>
+            <label className="inline-flex items-center gap-2 cursor-pointer rounded-full border border-slate-200 dark:border-slate-700 px-3 py-1.5">
+              <input type="checkbox" checked={zoneOverlay.visible} onChange={(event) => onShowZonesChange(event.target.checked)} className="peer sr-only" />
+              <span aria-hidden="true" className="relative h-4 w-7 rounded-full bg-slate-300 transition-colors peer-checked:bg-teal-500 peer-focus-visible:ring-2 peer-focus-visible:ring-teal-400 peer-focus-visible:ring-offset-2 after:absolute after:left-0.5 after:top-0.5 after:h-3 after:w-3 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-3 dark:bg-slate-700" />Show zones
+            </label>
+          </>}
+        </div>
       </div>
+      {zoneOverlay && (!zoneBounds || !zoneRules) && <p role="status" className="mb-3 text-sm text-slate-600 dark:text-slate-300">
+        {!zoneRules ? 'Loading Ansiblex zones…' : 'Configure an Ansiblex network or sign in to locate its capital and show zones.'}
+      </p>}
+      {!hasRoute && <div className="mb-3 text-sm text-slate-600 dark:text-slate-300">
+        <p>{!hasBase ? 'Select a staging system and destination to plan a route.' : statusMessage || 'No route to display yet.'}</p>
+        {baselineJumps != null && <p>Direct route: {baselineJumps}j without bridge</p>}
+      </div>}
 
+      {canRender && <>
       <div
         ref={containerRef}
-        className={`relative w-full h-[480px] overflow-hidden ${isPanning ? 'cursor-grabbing' : hoveredId != null ? 'cursor-pointer' : 'cursor-grab'}`}
+        aria-label="System map; drag to pan, click a system for details"
+        className={`relative w-full h-[360px] sm:h-[480px] overflow-hidden rounded-md ${isPanning ? 'cursor-grabbing' : hoveredId != null ? 'cursor-pointer' : 'cursor-grab'}`}
         onClick={handleMapClick}
         onDoubleClick={handleMapDoubleClick}
         onPointerDown={handlePointerDown}
@@ -994,10 +989,10 @@ export function BridgePlannerMap({
           <button
             type="button"
             className="w-9 h-9 p-1.5 rounded-md inline-flex items-center justify-center leading-none border border-gray-300 text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800 disabled:opacity-50"
-            onClick={resetViewport}
-            disabled={resetDisabled}
-            aria-label="Reset view"
-            title="Reset view"
+            onClick={() => { if (fitTarget) fitMap(fitTarget.bounds, fitTarget.mode); }}
+            disabled={!fitTarget}
+            aria-label="Fit map"
+            title="Fit map"
           >
             <Icon name="scope" size={18} />
           </button>
@@ -1009,22 +1004,25 @@ export function BridgePlannerMap({
             <span
               key={`label-${id}`}
               ref={(node) => setLabelRef(id, node)}
-              className="absolute whitespace-nowrap leading-4"
+              className="absolute whitespace-nowrap leading-4 rounded bg-white/75 dark:bg-slate-950/70 px-1"
               style={{ left: 0, top: 0, fontFamily }}
             >
-              {nameFor(id)}
+              {showZones && id === capitalId ? '★ ' : ''}{nameFor(id)}{showZones && id === capitalId ? ' · Capital' : ''}
             </span>
           ))}
           {hoveredId != null && hoveredId !== selectedId && (() => {
             const system = graph?.systems[String(hoveredId)];
             const sVal = typeof system?.security === 'number' ? system.security : 0;
+            const zone = systemZones.get(hoveredId);
             return (
               <span
                 ref={hoverLabelRef}
-                className="absolute whitespace-nowrap leading-4"
+                role="tooltip"
+                className="absolute max-w-[90%] rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-slate-900 px-2 py-1 leading-4 shadow"
                 style={{ left: 0, top: 0, fontFamily }}
               >
                 {nameFor(hoveredId)} <span style={{ color: securityColor(sVal), fontWeight: 700 }}>{sVal.toFixed(1)}</span>
+                {zoneOverlay && <span className="block">{zone ? `Zone ${zone.zone} · ${zone.distanceLy.toFixed(2)} LY from ${capitalName}` : 'Zone unknown · capital unavailable'}</span>}
               </span>
             );
           })()}
@@ -1034,11 +1032,12 @@ export function BridgePlannerMap({
             ref={selectedPopupRef}
             data-map-no-pan="true"
             onClick={(event) => event.stopPropagation()}
-            className="pointer-events-auto absolute z-10 rounded-md border border-solid border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1 shadow text-xs leading-5 whitespace-nowrap"
+            className="pointer-events-auto absolute z-10 rounded-md border border-solid border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1 shadow text-xs leading-5"
             style={{
               left: 0,
               top: 0,
-              width: selected.approxWidth,
+              width: Math.min(360, selected.approxWidth),
+              maxWidth: '90%',
               minHeight: selected.approxHeight,
               fontSize: 12,
               fontFamily,
@@ -1046,22 +1045,45 @@ export function BridgePlannerMap({
           >
             <span>{selected.name} </span>
             <span style={{ color: selected.secColor, fontWeight: 700 }}>{selected.secLabel}</span>
-            <span>{` • ${selected.regionName} • ${selected.jumps == null ? 'unreachable' : `${selected.jumps}j`} • ${selected.ly.toFixed(2)}ly`}</span>
+            <span>{` • ${selected.regionName}`}{selected.ly != null ? ` • ${selected.jumps == null ? 'unreachable' : `${selected.jumps}j`} • ${selected.ly.toFixed(2)} LY from staging` : ''}</span>
+            {zoneOverlay && <p className="mt-1">{selectedZone ? `Zone ${selectedZone.zone} · ${selectedZone.distanceLy.toFixed(2)} LY from ${capitalName}` : 'Zone unknown · capital unavailable'}</p>}
+            {itineraryAnsiblexes.filter((edge) => edge.from === selectedId).map((edge, index) => (
+              <div key={`${edge.from}-${edge.to}-${index}`} className="mt-1 text-xs">
+                Ansiblex → {nameFor(edge.to)} · {edge.zone == null ? 'Zone unknown' : `Zone ${edge.zone}`}
+              </div>
+            ))}
           </div>
         )}
       </div>
 
-      <div className="text-sm text-gray-600 dark:text-gray-400 mt-2 flex flex-wrap gap-4">
+      {hasRoute && <div className="text-xs text-gray-600 dark:text-gray-400 mt-3 flex flex-wrap gap-x-4 gap-y-2">
         <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{ background: '#2563eb' }}></span>Staging</span>
         <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{ background: '#f59e0b' }}></span>Parking systems</span>
         <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{ background: '#ef4444' }}></span>Destination</span>
         <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{ background: '#a855f7' }}></span>Bridge endpoints</span>
         <span className="inline-flex items-center gap-1"><span className="inline-block w-4 h-px" style={{ background: '#facc15' }}></span>Gates</span>
         <span className="inline-flex items-center gap-1"><span className="inline-block w-4 h-px" style={{ background: '#22c55e' }}></span>Ansiblex</span>
+        {itineraryAnsiblexes.some((edge) => edge.zone == null) && <span className="text-amber-600 dark:text-amber-400">Amber: zone unknown</span>}
         <span className="inline-flex items-center gap-1"><img src={`${base}eve/cynosuralBeacon.png`} alt="" className="w-4 h-4 opacity-90" style={{ filter: isDarkMode ? undefined : 'invert(1)' }} />Cyno beacon</span>
-        <span className="inline-flex items-center gap-1"><span className="inline-block w-4 h-px border-t-2 border-dashed" style={{ borderColor: '#facc15' }}></span>Post-bridge route</span>
         <span className="inline-flex items-center gap-1"><span className="inline-block w-4 h-px border-t-2 border-dashed" style={{ borderColor: '#9333ea' }}></span>Titan bridge</span>
-      </div>
+      </div>}
+      </>}
+      {showZones && zoneRules && <div className="mt-4 border-t border-gray-200 dark:border-gray-700 pt-3 text-xs" aria-label="Ansiblex zone legend">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <p className="font-medium"><span className="text-amber-500">★</span> {capitalName} <span className="font-normal text-slate-500 dark:text-slate-400">· {zoneOverlay?.allianceName ?? 'Alliance unknown'}</span></p>
+          <span className="text-[11px] text-slate-500 dark:text-slate-400">{zoneOverlay?.referenceLabel}</span>
+        </div>
+        <div className="mt-3 grid grid-cols-5 gap-1.5 sm:gap-2">
+          {ANSIBLEX_ZONES.map((zone) => <div key={zone} className={`min-w-0 rounded-lg border px-2 py-2 sm:px-3 ${zone > maxZone ? 'opacity-40' : ''}`}
+            style={{ borderColor: `${ANSIBLEX_ZONE_COLORS[zone]}35`, backgroundColor: `${ANSIBLEX_ZONE_COLORS[zone]}0a` }}>
+            <div className="mb-1.5 h-0.5 w-5 rounded-full" style={{ background: ANSIBLEX_ZONE_COLORS[zone] }} />
+            <span className="font-semibold">Zone {zone}</span>
+            <div className="mt-0.5 whitespace-nowrap text-[10px] sm:text-xs text-slate-600 dark:text-slate-300">{zoneRangeLabel(zone, zoneRules)}</div>
+            <div className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">{zone <= maxZone ? 'Allowed' : 'Excluded'}</div>
+          </div>)}
+        </div>
+        <p className="mt-2 text-slate-500">Areas group systems by 3D distance to {capitalName}; they are not sovereignty borders. Ansiblex limits use each departure owner’s capital.</p>
+      </div>}
     </section>
   );
 }
